@@ -3,6 +3,19 @@ import {ready,db,supa,identity,banned,expire,audit,queue,publicData} from '../..
 import {checkCapacity,normalizePhone,active as activeBooking} from '../../server/rules.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
+const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
+async function paypalToken(){
+ if(!process.env.PAYPAL_CLIENT_ID||!process.env.PAYPAL_CLIENT_SECRET)throw Error('PayPal invoicing is not connected yet.');
+ const auth=Buffer.from(process.env.PAYPAL_CLIENT_ID+':'+process.env.PAYPAL_CLIENT_SECRET).toString('base64');
+ const r=await fetch(paypalBase()+'/v1/oauth2/token',{method:'POST',headers:{Authorization:'Basic '+auth,'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=client_credentials',signal:AbortSignal.timeout(10000)});
+ const v=await r.json();if(!r.ok)throw Error('PayPal authentication failed.');return v.access_token;
+}
+async function paypalRequest(path,{method='GET',body,requestId}={}){
+ const token=await paypalToken(),headers={Authorization:'Bearer '+token,'Content-Type':'application/json','Accept':'application/json'};
+ if(requestId)headers['PayPal-Request-Id']=requestId;
+ const r=await fetch(paypalBase()+path,{method,headers,body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(12000)});
+ const v=r.status===204?{}:await r.json().catch(()=>({}));if(!r.ok){console.error('PayPal request failed',r.status,v?.name||'');throw Error('PayPal could not create or send the invoice.');}return v;
+}
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const required=(s,n,max=200)=>{if(typeof s!=='string'||!s.trim()||s.length>max)throw Error('Please check '+n);return s.trim();};
 export default async req=>{
@@ -93,7 +106,7 @@ export default async req=>{
  if(action==='rsvp-list')return json(await sql`select r.id,r.event_id,r.name,r.email,r.party_size,r.referral_source,r.referral_group,e.date,l.name location from market.shopper_rsvps r join market.events e on e.id=r.event_id join market.locations l on l.id=e.location_id order by e.date,r.name`);
  if(action==='manager')return json({events:await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id order by e.date desc`,applications:await sql`select b.id,b.application_id,b.event_id,b.space,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`});
 
- if(action==='admin')return json({...(await publicData()),locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY}});
+ if(action==='admin')return json({...(await publicData()),locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
@@ -124,6 +137,32 @@ export default async req=>{
  await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null});
  if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);}
  });return json({ok:true});
+ }
+ if(action==='paypal-invoice'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  if(!p.id)throw Error('Booking not found.');
+  const [b]=await sql`select b.*,a.name,a.email,a.billing_address,a.business,e.date,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${p.id}`;
+  if(!b)throw Error('Booking not found.');
+  if(b.status!=='approved')throw Error('Approve the booking before sending an invoice.');
+  if(b.invoice_reference)throw Error('This booking already has an invoice reference.');
+  const invoice=await paypalRequest('/v2/invoicing/invoices',{method:'POST',requestId:'market-'+b.id,body:{
+   detail:{currency_code:'USD',note:'Trinity Crafters Market vendor booth. Payment is due within 24 hours of invoice delivery.',terms_and_conditions:'Vendor payments are nonrefundable. Market operates rain or shine.',memo:'Booking '+b.id},
+   primary_recipients:[{billing_info:{name:{given_name:String(b.name||b.business).slice(0,140)},email_address:b.email}}],
+   items:[{name:(b.space==='indoor'?'Indoor':'Outdoor')+' vendor space — '+String(b.date).slice(0,10),description:b.business+' · '+b.location,quantity:'1',unit_amount:{currency_code:'USD',value:(b.price/100).toFixed(2)},unit_of_measure:'QUANTITY'}],
+   configuration:{allow_tip:false,partial_payment:{allow_partial_payment:false}}
+  }});
+  await paypalRequest('/v2/invoicing/invoices/'+encodeURIComponent(invoice.id)+'/send',{method:'POST',requestId:'market-send-'+b.id,body:{send_to_invoicer:true,send_to_recipient:true}});
+  await sql.begin(async tx=>{await tx`update market.bookings set status='held',hold_until=now()+interval '24 hours',invoice_reference=${invoice.id} where id=${b.id} and status='approved'`;await audit(tx,u,'paypal invoice sent',{id:b.id,invoice_id:invoice.id});});
+  return json({ok:true,invoice_id:invoice.id});
+ }
+ if(action==='paypal-sync'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const [b]=await sql`select * from market.bookings where id=${p.id}`;if(!b?.invoice_reference)throw Error('No PayPal invoice is linked to this booking.');
+  const inv=await paypalRequest('/v2/invoicing/invoices/'+encodeURIComponent(b.invoice_reference));
+  if(['PAID','MARKED_AS_PAID','PAID_EXTERNAL'].includes(inv.status)){
+   await sql.begin(async tx=>{await tx`update market.bookings set status='paid',payment_reference=${b.invoice_reference},payment_method='PayPal',paid_at=coalesce(paid_at,now()) where id=${b.id} and status in ('approved','held','expired')`;await audit(tx,u,'paypal payment synced',{id:b.id,invoice_id:b.invoice_reference,status:inv.status});});
+  }
+  return json({ok:true,status:inv.status});
  }
  if(action==='attendance'){
   if(!p.id||!['checked_in','no_show','clear'].includes(p.state))throw Error('Choose an attendance status.');
