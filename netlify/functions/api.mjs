@@ -149,7 +149,13 @@ export default async req=>{
   json_agg(json_build_object('id',i.id,'date',e.date,'status',coalesce(i.status,'Imported'),'space',i.space,'price',0,'payment_method','PDF import')) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
   '[]'::json payments
   from market.imported_attendees i join market.events e on e.id=i.event_id
-  where i.id in (select distinct on (lower(coalesce(nullif(email,''),name))) id from market.imported_attendees order by lower(coalesce(nullif(email,''),name)),created_at desc)
+  where i.id in (select distinct on (lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name))) id from market.imported_attendees order by lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name)),created_at desc)
+  and not exists (
+    select 1 from market.applications a2
+    where (nullif(trim(i.email),'') is not null and lower(trim(a2.email))=lower(trim(i.email)))
+       or (nullif(trim(i.phone),'') is not null and regexp_replace(a2.phone,'[^0-9]','','g')=regexp_replace(i.phone,'[^0-9]','','g'))
+       or (nullif(trim(i.business),'') is not null and lower(trim(a2.business))=lower(trim(i.business)))
+  )
   order by business,name`);
  }
  if(action==='admin')return json({...(await publicData()),importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});
