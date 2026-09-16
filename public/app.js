@@ -34,24 +34,32 @@ async function parseAttendeePdf(file){
  notice('Reading PDF…');
  const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.mjs');
  pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.mjs';
- const pdf=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
- const items=[];
- for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),content=await page.getTextContent();for(const x of content.items){const str=String(x.str||'').trim();if(str)items.push({str,x:x.transform?.[4]||0,y:x.transform?.[5]||0});}}
+ const pdf=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,items=[];
+ for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),content=await page.getTextContent();for(const z of content.items){const str=String(z.str||'').trim();if(str)items.push({str,x:z.transform?.[4]||0,y:z.transform?.[5]||0,page:n});}}
  if(!items.length)throw Error('No readable text was found. This may be a scanned PDF.');
- const rowsByY=[];items.sort((a,b)=>b.y-a.y||a.x-b.x).forEach(it=>{let row=rowsByY.find(r=>Math.abs(r.y-it.y)<3);if(!row){row={y:it.y,items:[]};rowsByY.push(row);}row.items.push(it);});
- const rows=rowsByY.sort((a,b)=>b.y-a.y).map(r=>r.items.sort((a,b)=>a.x-b.x));
- const header=rows.find(r=>{const t=r.map(x=>x.str.toLowerCase()).join(' ');return t.includes('first name')&&t.includes('last name')&&t.includes('phone')&&t.includes('email');});
- if(header){
-   const hs=header.map(x=>({name:x.str.toLowerCase(),x:x.x})).sort((a,b)=>a.x-b.x);
-   const col=(names,fallback)=>{const h=hs.find(h=>names.some(n=>h.name.includes(n)));return h?h.x:fallback;};
-   const starts=[col(['first name'],0),col(['last name'],140),col(['phone'],280),col(['email'],420),col(['selling','category'],560),col(['business'],700)];
-   const val=(r,i)=>r.filter(x=>x.x>=starts[i]&&(i===5||x.x<starts[i+1])).map(x=>x.str).join(' ').trim();
-   const data=rows.filter(r=>r!==header&&r.some(x=>x.y<header[0].y-3)).map(r=>({name:[val(r,0),val(r,1)].filter(Boolean).join(' ').trim(),phone:val(r,2),email:val(r,3),category:val(r,4),business:val(r,5),space:''})).filter(r=>r.name||r.business||r.phone||r.email);
-   if(data.length)return data.slice(0,500);
+ const byPage=new Map();for(const it of items){if(!byPage.has(it.page))byPage.set(it.page,[]);byPage.get(it.page).push(it);}
+ const out=[];
+ for(const pageItems of byPage.values()){
+  const ys=[];pageItems.sort((a,b)=>b.y-a.y||a.x-b.x).forEach(it=>{let row=ys.find(r=>Math.abs(r.y-it.y)<2.5);if(!row){row={y:it.y,items:[]};ys.push(row);}row.items.push(it);});
+  const rows=ys.sort((a,b)=>b.y-a.y).map(r=>({y:r.y,items:r.items.sort((a,b)=>a.x-b.x)}));
+  const hi=rows.findIndex(r=>{const t=r.items.map(x=>x.str.toLowerCase()).join(' ');return t.includes('first name')&&t.includes('last name')&&t.includes('phone')&&t.includes('email')&&t.includes('category')&&t.includes('space');});
+  if(hi<0)continue;
+  const h=rows[hi].items, findX=(label)=>h.find(x=>x.str.toLowerCase().includes(label))?.x;
+  const xs=[findX('first name'),findX('last name'),findX('phone'),findX('email'),findX('category'),findX('space')];
+  if(xs.some(x=>x==null))continue;
+  const cuts=[-Infinity,...xs.slice(1).map((x,i)=>(xs[i]+x)/2),Infinity];
+  const cell=(r,i)=>r.items.filter(z=>z.x>=cuts[i]&&z.x<cuts[i+1]).map(z=>z.str).join(' ').trim();
+  for(const r of rows.slice(hi+1)){
+   const raw=r.items.map(x=>x.str).join(' ').trim();
+   if(!raw||/^(outside spot|vendor list)$/i.test(raw))continue;
+   let first=cell(r,0),last=cell(r,1),phone=cell(r,2),email=cell(r,3).replace(/,+$/,''),category=cell(r,4),space=cell(r,5);
+   if(!first&&!last&&!phone&&!email&&!category&&!space)continue;
+   if(!/^(inside|outside)$/i.test(space))continue;
+   out.push({name:[first,last].filter(Boolean).join(' ').trim(),business:'',email,phone,category,space:/^outside$/i.test(space)?'Outside':'Inside'});
+  }
  }
- const lines=rows.map(r=>r.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean).filter(x=>!/^(first name|attendee|vendor|name|business|email|phone|category|space|booth|market|date)(\s|$)/i.test(x));
- const emailRe=/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,phoneRe=/(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/;
- return lines.slice(0,500).map(line=>{const email=(line.match(emailRe)||[''])[0],phone=(line.match(phoneRe)||[''])[0];let rest=line.replace(email,'').replace(phone,'').trim();return {name:rest,business:'',email,phone,category:'',space:''};}).filter(r=>r.name||r.business);
+ if(!out.length)throw Error('I could not recognize the attendee table. Make sure the PDF has First name, Last name, Phone, Email, Category and Space columns.');
+ return out.slice(0,500);
 }
 function pdfImportModal(a){
  modal(`<h2>Import attendees from PDF</h2><p>Choose the market date and PDF. You can edit every row before anything is saved.</p><form id="pdf-import-form"><label>Market date<select name="event_id" required>${a.allEvents.map(e=>`<option value="${e.id}">${nice(e.date)} — ${esc(a.locations.find(l=>l.id===e.location_id)?.name||'')}</option>`).join('')}</select></label><label>Attendee PDF<input name="pdf" type="file" accept="application/pdf" required></label><button id="read-pdf" type="button">Read PDF</button><div id="pdf-review"></div></form>`);
