@@ -97,6 +97,8 @@ We will supply your tables and chairs through the end of this year. Please use y
 IMPORTANT:
 Please do not display or sell anything that you have not been approved for.
 
+If you need to cancel for any reason, please email trinitycraftersmarket@gmail.com as soon as possible.
+
 Thank you for helping us keep setup organized and the market enjoyable for our vendors and shoppers.
 
 Trinity Crafters Market`;
