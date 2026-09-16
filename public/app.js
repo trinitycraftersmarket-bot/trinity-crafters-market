@@ -35,12 +35,23 @@ async function parseAttendeePdf(file){
  const pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.mjs');
  pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.mjs';
  const pdf=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
- let text='';
- for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),content=await page.getTextContent();for(const item of content.items){text+=item.str+(item.hasEOL?'\n':' ');}text+='\n';}
- const lines=text.split(/\n+/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean).filter(x=>!/^(attendee|attendees|vendor|vendors|name|business|email|phone|category|space|booth|market|date)(\s|$)/i.test(x));
- if(!lines.length)throw Error('No readable text was found. This may be a scanned PDF; use a text-based PDF or enter attendees manually.');
+ const items=[];
+ for(let n=1;n<=pdf.numPages;n++){const page=await pdf.getPage(n),content=await page.getTextContent();for(const x of content.items){const str=String(x.str||'').trim();if(str)items.push({str,x:x.transform?.[4]||0,y:x.transform?.[5]||0});}}
+ if(!items.length)throw Error('No readable text was found. This may be a scanned PDF.');
+ const rowsByY=[];items.sort((a,b)=>b.y-a.y||a.x-b.x).forEach(it=>{let row=rowsByY.find(r=>Math.abs(r.y-it.y)<3);if(!row){row={y:it.y,items:[]};rowsByY.push(row);}row.items.push(it);});
+ const rows=rowsByY.sort((a,b)=>b.y-a.y).map(r=>r.items.sort((a,b)=>a.x-b.x));
+ const header=rows.find(r=>{const t=r.map(x=>x.str.toLowerCase()).join(' ');return t.includes('first name')&&t.includes('last name')&&t.includes('phone')&&t.includes('email');});
+ if(header){
+   const hs=header.map(x=>({name:x.str.toLowerCase(),x:x.x})).sort((a,b)=>a.x-b.x);
+   const col=(names,fallback)=>{const h=hs.find(h=>names.some(n=>h.name.includes(n)));return h?h.x:fallback;};
+   const starts=[col(['first name'],0),col(['last name'],140),col(['phone'],280),col(['email'],420),col(['selling','category'],560),col(['business'],700)];
+   const val=(r,i)=>r.filter(x=>x.x>=starts[i]&&(i===5||x.x<starts[i+1])).map(x=>x.str).join(' ').trim();
+   const data=rows.filter(r=>r!==header&&r.some(x=>x.y<header[0].y-3)).map(r=>({name:[val(r,0),val(r,1)].filter(Boolean).join(' ').trim(),phone:val(r,2),email:val(r,3),category:val(r,4),business:val(r,5),space:''})).filter(r=>r.name||r.business||r.phone||r.email);
+   if(data.length)return data.slice(0,500);
+ }
+ const lines=rows.map(r=>r.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean).filter(x=>!/^(first name|attendee|vendor|name|business|email|phone|category|space|booth|market|date)(\s|$)/i.test(x));
  const emailRe=/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,phoneRe=/(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/;
- return lines.slice(0,500).map(line=>{const email=(line.match(emailRe)||[''])[0],phone=(line.match(phoneRe)||[''])[0];let rest=line.replace(email,'').replace(phone,'').replace(/\s{2,}/g,' ').trim();let parts=rest.split(/\s+[|•·]\s+|\t+/).map(x=>x.trim()).filter(Boolean);if(parts.length===1)parts=rest.split(/\s{2,}/).map(x=>x.trim()).filter(Boolean);return {name:parts[0]||rest,business:parts[1]||'',email,phone,category:parts[2]||'',space:''};}).filter(r=>r.name||r.business);
+ return lines.slice(0,500).map(line=>{const email=(line.match(emailRe)||[''])[0],phone=(line.match(phoneRe)||[''])[0];let rest=line.replace(email,'').replace(phone,'').trim();return {name:rest,business:'',email,phone,category:'',space:''};}).filter(r=>r.name||r.business);
 }
 function pdfImportModal(a){
  modal(`<h2>Import attendees from PDF</h2><p>Choose the market date and PDF. You can edit every row before anything is saved.</p><form id="pdf-import-form"><label>Market date<select name="event_id" required>${a.allEvents.map(e=>`<option value="${e.id}">${nice(e.date)} — ${esc(a.locations.find(l=>l.id===e.location_id)?.name||'')}</option>`).join('')}</select></label><label>Attendee PDF<input name="pdf" type="file" accept="application/pdf" required></label><button id="read-pdf" type="button">Read PDF</button><div id="pdf-review"></div></form>`);
