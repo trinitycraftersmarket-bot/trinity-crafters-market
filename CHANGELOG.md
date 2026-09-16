@@ -21,3 +21,5 @@
 - Added server-enforced Manager access for application decisions, private vendor messages, and attendee printing. Owner-only Manager assignments; Ashley awaits verified sign-in email.
 - Added free shopper RSVPs with verified email, party size, referral source, Facebook group, and staff RSVP reports.
 - Added private two-way vendor messages accessible from My bookings.
+
+- Upload photos directly to private storage with signed URLs to support the full 10 MB limit; validate saved image content and show storage errors instead of generic failures.

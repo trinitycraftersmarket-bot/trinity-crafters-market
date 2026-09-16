@@ -15,6 +15,24 @@ export default async req=>{
  if(action==='me')return json(u);
  if(req.method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin)return json({error:'Invalid request origin'},403);
  if(action==='mine')return json(await sql`select b.*,e.date,a.business from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id where a.user_id=${u.id} order by e.date`);
+ if(action==='upload-ticket'&&req.method==='POST'){
+ const p=await req.json();if(!['image/jpeg','image/png','image/webp'].includes(p.type))throw Error('Choose a JPG, PNG or WebP photo.');
+ if(!Number.isInteger(p.size)||p.size<12||p.size>10485760)throw Error('Each photo must be 10 MB or smaller.');
+ const count=await sql`select count(*)::int n from market.audit where actor=${u.email} and action='upload ticket' and created_at>now()-interval '1 day'`;if(count[0].n>=60)throw Error('Daily photo upload limit reached.');
+ const path=u.id+'/'+crypto.randomUUID()+'.'+(p.type==='image/jpeg'?'jpg':p.type.split('/')[1]);
+ const {data,error}=await supa().storage.from('vendor-photos').createSignedUploadUrl(path);
+ if(error){const code=String(error.statusCode||error.status||'unknown');console.error('Storage upload authorization failed',code);throw Error('Photo storage could not authorize the upload (status '+code+'). Please contact the organizer.');}
+ await audit(sql,u,'upload ticket',{path});return json({path,url:data.signedUrl});
+ }
+ if(action==='upload-complete'&&req.method==='POST'){
+ const p=await req.json();if(typeof p.path!=='string'||!p.path.startsWith(u.id+'/')||p.path.includes('..'))throw Error('Invalid photo path.');
+ const {data,error}=await supa().storage.from('vendor-photos').download(p.path);
+ if(error)throw Error('The photo was not saved. Please select it again and retry.');
+ const bytes=Buffer.from(await data.arrayBuffer());
+ const valid=bytes.length>=12&&bytes.length<=10485760&&((bytes[0]===255&&bytes[1]===216)||bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))||(bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'));
+ if(!valid){await supa().storage.from('vendor-photos').remove([p.path]);throw Error('This file is not a supported photo. Choose a JPG, PNG or WebP under 10 MB.');}
+ await audit(sql,u,'upload',{path:p.path});return json({path:p.path});
+ }
  if(action==='upload'&&req.method==='POST'){
  const type=req.headers.get('content-type');if(!['image/jpeg','image/png','image/webp'].includes(type))throw Error('Use JPG, PNG or WebP photos.');
  const bytes=Buffer.from(await req.arrayBuffer());if(bytes.length>10*1024*1024||bytes.length<12)throw Error('Photos must be under 10 MB.');
