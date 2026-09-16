@@ -25,6 +25,21 @@ async function paypalRequest(path,{method='GET',body,requestId}={}){
  const r=await fetch(paypalBase()+path,{method,headers,body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(12000)});
  const v=r.status===204?{}:await r.json().catch(()=>({}));if(!r.ok){console.error('PayPal request failed',r.status,v?.name||'');throw Error('PayPal could not create or send the invoice.');}return v;
 }
+async function createAndSendPayPalInvoice(sql,u,bookingId){
+ const [b]=await sql`select b.*,a.name,a.email,a.billing_address,a.business,e.date,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${bookingId}`;
+ if(!b)throw Error('Booking not found.');
+ if(b.status!=='approved')throw Error('Approve the booking before sending an invoice.');
+ if(b.invoice_reference)throw Error('This booking already has a PayPal invoice.');
+ const invoice=await paypalRequest('/v2/invoicing/invoices',{method:'POST',requestId:'market-'+b.id,body:{
+  detail:{currency_code:'USD',note:'Trinity Crafters Market vendor booth. Payment is due within 24 hours of invoice delivery.',terms_and_conditions:'Vendor payments are nonrefundable. Market operates rain or shine.',memo:'Booking '+b.id},
+  primary_recipients:[{billing_info:{name:{given_name:String(b.name||b.business).slice(0,140)},email_address:b.email,address:paypalAddress(b.billing_address)}}],
+  items:[{name:(b.space==='indoor'?'Indoor':'Outdoor')+' vendor space — '+String(b.date).slice(0,10),description:b.business+' · '+b.location,quantity:'1',unit_amount:{currency_code:'USD',value:(b.price/100).toFixed(2)},unit_of_measure:'QUANTITY'}],
+  configuration:{allow_tip:false,partial_payment:{allow_partial_payment:false}}
+ }});
+ await paypalRequest('/v2/invoicing/invoices/'+encodeURIComponent(invoice.id)+'/send',{method:'POST',requestId:'market-send-'+b.id,body:{send_to_invoicer:true,send_to_recipient:true}});
+ await sql.begin(async tx=>{await tx`update market.bookings set status='held',hold_until=now()+interval '24 hours',invoice_reference=${invoice.id} where id=${b.id} and status='approved'`;await audit(tx,u,'paypal invoice sent',{id:b.id,invoice_id:invoice.id});});
+ return invoice;
+}
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const required=(s,n,max=200)=>{if(typeof s!=='string'||!s.trim()||s.length>max)throw Error('Please check '+n);return s.trim();};
 export default async req=>{
