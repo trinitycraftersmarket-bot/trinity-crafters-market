@@ -140,6 +140,14 @@ export default async req=>{
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
+ if(action==='setup-email'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const [event]=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;if(!event)throw Error('Market date not found.');
+  const recipients=await sql`select distinct email from (select a.email from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('approved','held','paid') union all select i.email from market.imported_attendees i where i.event_id=${event.id}) q where nullif(trim(email),'') is not null`;
+  if(!recipients.length)throw Error('No attendee email addresses are available for this date.');
+  const subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
+  await sql.begin(async tx=>{for(const r of recipients)await queue(tx,r.email,subject,body);await audit(tx,u,'setup instructions email',{event_id:event.id,recipients:recipients.length});});await flushMail();return json({ok:true,count:recipients.length});
+ }
  if(action==='import-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.event_id)throw Error('Choose a market date.');
