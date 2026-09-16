@@ -23,7 +23,9 @@ async function paypalRequest(path,{method='GET',body,requestId}={}){
  const token=await paypalToken(),headers={Authorization:'Bearer '+token,'Content-Type':'application/json','Accept':'application/json'};
  if(requestId)headers['PayPal-Request-Id']=requestId;
  const r=await fetch(paypalBase()+path,{method,headers,body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(12000)});
- const v=r.status===204?{}:await r.json().catch(()=>({}));if(!r.ok){console.error('PayPal request failed',r.status,v?.name||'');throw Error('PayPal could not create or send the invoice.');}return v;
+ const v=r.status===204?{}:await r.json().catch(()=>({}));
+ if(!r.ok){const detail=String(v?.message||v?.name||v?.details?.map(x=>x.description||x.issue||x.field).filter(Boolean).join('; ')||'Unknown PayPal error').slice(0,600);console.error('PayPal request failed',r.status,detail);throw Error('PayPal '+r.status+': '+detail);}
+ return v;
 }
 async function createAndSendPayPalInvoice(sql,u,bookingId){
  const [b]=await sql`select b.*,a.name,a.email,a.billing_address,a.business,e.date,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${bookingId}`;
