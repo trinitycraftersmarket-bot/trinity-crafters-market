@@ -1,5 +1,5 @@
 import {ready,db,supa,identity,banned,expire,audit,queue,publicData} from '../../server/core.mjs';
-import {checkCapacity,normalizePhone} from '../../server/rules.mjs';
+import {checkCapacity,normalizePhone,active as activeBooking} from '../../server/rules.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
@@ -16,41 +16,51 @@ export default async req=>{
  if(action==='mine')return json(await sql`select b.*,e.date,a.business from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id where a.user_id=${u.id} order by e.date`);
  if(action==='upload'&&req.method==='POST'){
  const type=req.headers.get('content-type');if(!['image/jpeg','image/png','image/webp'].includes(type))throw Error('Use JPG, PNG or WebP photos.');
- const bytes=Buffer.from(await req.arrayBuffer());if(bytes.length>3*1024*1024||bytes.length<12)throw Error('Photos must be under 3 MB.');
+ const bytes=Buffer.from(await req.arrayBuffer());if(bytes.length>10*1024*1024||bytes.length<12)throw Error('Photos must be under 10 MB.');
  const valid=type==='image/jpeg'?bytes[0]===255&&bytes[1]===216:type==='image/png'?bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP';if(!valid)throw Error('Invalid image format.');
  const count=await sql`select count(*)::int n from market.audit where actor=${u.email} and action='upload' and created_at>now()-interval '1 day'`;if(count[0].n>=30)throw Error('Daily photo upload limit reached.');
  const path=u.id+'/'+crypto.randomUUID()+'.'+(type==='image/jpeg'?'jpg':type.split('/')[1]);
  const {error}=await supa().storage.from('vendor-photos').upload(path,bytes,{contentType:type});if(error)throw Error('Photo upload failed. Please try again.');await audit(sql,u,'upload',{path});return json({path});
  }
  if(action==='apply'&&req.method==='POST'){
- const p=await req.json();required(p.name,'name');required(p.business,'business');required(p.description,'product description',5000);const phone=normalizePhone(p.phone);if(phone.length<10||phone.length>15)throw Error('Enter a valid phone number.');
+ const p=await req.json();required(p.name,'name');required(p.business,'business');required(p.description,'product description',5000);required(p.billing_address,'billing address',500);required(p.referral_source,'how you heard about us',200);if(p.referral_source==='Facebook')required(p.referral_group,'Facebook group',200);const phone=normalizePhone(p.phone);if(phone.length<10||phone.length>15)throw Error('Enter a valid phone number.');
  if(!Array.isArray(p.photos)||p.photos.length<1||p.photos.length>5||p.photos.some(x=>typeof x!=='string'||!x.startsWith(u.id+'/')||x.includes('..')))throw Error('Upload 1–5 product photos.');
- if(!['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane'].every(k=>p.agreements?.[k]===true))throw Error('All agreements are required.');
+ if(!['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','contract'].every(k=>p.agreements?.[k]===true)||typeof p.agreements?.signature!=='string'||p.agreements.signature.trim().length<2||p.agreements.signature.length>200)throw Error('Read the agreement, check the box, and type your full legal name.');
  if(!Array.isArray(p.dates)||!p.dates.length||p.dates.length>50||new Set(p.dates.map(d=>d.id)).size!==p.dates.length)throw Error('Select distinct market dates.');
  const result=await sql.begin(async tx=>{
  await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);if(await banned(tx,u,phone))throw Error('Your vendor access is restricted. Contact the organizer.');
  const recent=await tx`select count(*)::int n from market.applications where user_id=${u.id} and created_at>now()-interval '1 day'`;if(recent[0].n>=10)throw Error('Daily application limit reached.');
  const [cat]=await tx`select * from market.categories where id=${p.category} and active`;if(!cat)throw Error('Choose an active category.');
- const [app]=await tx`insert into market.applications(user_id,name,email,phone,business,description,category_id,exception_reason,photos,agreements) values(${u.id},${p.name.trim()},${u.email},${phone},${p.business.trim()},${p.description.trim()},${cat.id},${String(p.exception||'').slice(0,2000)},${tx.json(p.photos)},${tx.json(p.agreements)}) returning id`;
+ const banMatches=await tx`select name,email,phone from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${phone})`;const banReason=banMatches.map(b=>b.email===u.email?'email match':b.phone===phone?'phone match':'account match').join(', ');
+ const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,ban_flagged,ban_match_reason,photos,agreements) values(${u.id},${p.name.trim()},${u.email},${phone},${String(p.billing_address).trim()},${p.business.trim()},${p.description.trim()},${cat.id},${String(p.exception||'').slice(0,2000)},${String(p.referral_source).slice(0,200)},${String(p.referral_group||'').slice(0,200)},${banMatches.length>0},${banReason},${tx.json(p.photos)},${tx.json(p.agreements)}) returning id`;
  for(const d of p.dates){if(!['indoor','outdoor'].includes(d.space))throw Error('Choose indoor or outdoor for every date.');
  const [event]=await tx`select * from market.events where id=${d.id} and open and date>=(now() at time zone 'America/New_York')::date`;if(!event)throw Error('A selected date is no longer accepting applications.');
  const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;
- try{checkCapacity(event,existing,d.space,cat.id,cat.vendor_limit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
- const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
- await tx`insert into market.bookings(application_id,event_id,space,price) values(${app.id},${event.id},${d.space},${event[d.space+'_price']})`;}
+ const categoryFull=!p.exception?.trim()&&existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length>=cat.vendor_limit;
+ const spaceFull=existing.filter(b=>activeBooking(b)&&b.space===d.space).length>=event[d.space+'_capacity'];
+ const waitlist=event.sold_out||categoryFull||spaceFull;
+ if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,cat.vendor_limit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
+ const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','waitlist','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
+ await tx`insert into market.bookings(application_id,event_id,space,price,status) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},${waitlist?'waitlist':'pending'})`;}
  await queue(tx,'trinitycraftersmarket@gmail.com','New market application: '+p.business,`${p.name}\n${u.email}\n${phone}\n${p.description}\nReview dates and private photos: ${process.env.SITE_URL}/#admin`);await audit(tx,u,'apply',{id:app.id});return app;
  });return json(result);
  }
  if(!u.admin)return json({error:'Administrator access required.'},403);
- if(action==='admin')return json({...(await publicData()),locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.user_id,a.agreements,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY}});
+ if(action==='admin')return json({...(await publicData()),locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY}});
  if(action==='photo'){const path=url.searchParams.get('path');const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
  if(action==='sync')return json(await syncCalendar());
+ if(action==='review'){
+  if(!p.id)throw Error('Application not found.');
+  await sql`update market.applications set review_notes=${String(p.review_notes||'').slice(0,5000)} where id=${p.id}`;
+  await audit(sql,u,'review notes',{id:p.id});
+  return json({ok:true});
+ }
  if(action==='booking'){
  await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);
  const [b]=await tx`select b.*,a.category_id,a.user_id,a.email,a.phone,a.name,c.vendor_limit from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id where b.id=${p.id}`;if(!b)throw Error('Booking not found.');
- const transitions={pending:['approved','declined'],approved:['held','cancelled'],held:['paid','cancelled'],expired:['approved','cancelled'],paid:['cancelled'],declined:[],cancelled:[]};
+ const transitions={pending:['approved','declined'],waitlist:['approved','declined','cancelled'],approved:['held','cancelled'],held:['paid','cancelled'],expired:['approved','cancelled'],paid:['cancelled'],declined:[],cancelled:[]};
  if(p.status==='declined')required(p.reason,'the denial reason',2000);
  if(!transitions[b.status].includes(p.status))throw Error('Refresh the dashboard; this action is no longer available.');
  if(['approved','held','paid'].includes(p.status)){
@@ -61,10 +71,17 @@ export default async req=>{
  }
  if(p.status==='held'&&!p.reference?.trim())throw Error('Enter the invoice reference before starting the hold.');
  if(p.status==='paid'&&!p.reference?.trim())throw Error('Enter a payment reference.');
- await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
+ await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,payment_method=case when ${p.status}='paid' then ${String(p.payment_method||'').slice(0,100)} else payment_method end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
  await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null});
  if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);}
  });return json({ok:true});
+ }
+ if(action==='attendance'){
+  if(!p.id||!['checked_in','no_show','clear'].includes(p.state))throw Error('Choose an attendance status.');
+  const [b]=await sql`select id,status from market.bookings where id=${p.id}`;if(!b)throw Error('Booking not found.');
+  if(!['approved','held','paid'].includes(b.status))throw Error('Only approved vendors can be marked present or absent.');
+  const checked=p.state==='checked_in',absent=p.state==='no_show';
+  await sql`update market.bookings set checked_in=${checked},no_show=${absent} where id=${p.id}`;await audit(sql,u,'attendance',{id:p.id,state:p.state});return json({ok:true});
  }
  if(action==='ban'){
  await sql.begin(async tx=>{
@@ -81,9 +98,14 @@ export default async req=>{
  required(p.name,'location');required(p.address,'address');const vals=['indoor_capacity','outdoor_capacity','indoor_price','outdoor_price'];for(const k of vals)if(!Number.isInteger(p[k])||p[k]<0)throw Error('Check capacity and prices.');
  if(p.id)await sql`update market.locations set name=${p.name},address=${p.address},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price} where id=${p.id}`;else await sql`insert into market.locations(name,address,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price) values(${p.name},${p.address},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price})`;await audit(sql,u,'location',p);return json({ok:true});
  }
+ if(action==='expense'){
+  if(p.id)await sql`delete from market.expenses where id=${p.id}`;
+  else{if(!/^\d{4}-\d{2}-\d{2}$/.test(p.expense_date))throw Error('Choose an expense date.');required(p.description,'expense description',300);if(!Number.isInteger(p.amount)||p.amount<=0||p.amount>100000000)throw Error('Enter a valid expense amount.');await sql`insert into market.expenses(expense_date,event_id,description,category,amount,notes) values(${p.expense_date},${p.event_id||null},${p.description.trim()},${String(p.category||'General').slice(0,100)},${p.amount},${String(p.notes||'').slice(0,1000)})`;}
+  await audit(sql,u,p.id?'delete expense':'expense',p);return json({ok:true});
+ }
  if(action==='event'){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(p.date))throw Error('Choose a date.');for(const k of ['indoor_capacity','outdoor_capacity','indoor_price','outdoor_price'])if(!Number.isInteger(p[k])||p[k]<0)throw Error('Check spaces and prices.');
- await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;if(p.id){const used=await tx`select space,count(*)::int n from market.bookings where event_id=${p.id} and (status in ('approved','paid') or(status='held' and hold_until>now())) group by space`;for(const x of used)if(p[x.space+'_capacity']<x.n)throw Error('Capacity cannot be lower than current reservations.');await tx`update market.events set date=${p.date},location_id=${p.location_id},title=${p.title||'Trinity Crafters Market'},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},open=${p.open===true},sync_alert=null where id=${p.id}`;}else await tx`insert into market.events(date,location_id,title,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,open) values(${p.date},${p.location_id},${p.title||'Trinity Crafters Market'},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${p.open===true})`;await audit(tx,u,'event',p);});return json({ok:true});
+ await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;if(p.id){const used=await tx`select space,count(*)::int n from market.bookings where event_id=${p.id} and (status in ('approved','paid') or(status='held' and hold_until>now())) group by space`;for(const x of used)if(p[x.space+'_capacity']<x.n)throw Error('Capacity cannot be lower than current reservations.');await tx`update market.events set date=${p.date},location_id=${p.location_id},title=${p.title||'Trinity Crafters Market'},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},open=${p.open===true},sold_out=${p.sold_out===true},sync_alert=null where id=${p.id}`;}else await tx`insert into market.events(date,location_id,title,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,open,sold_out) values(${p.date},${p.location_id},${p.title||'Trinity Crafters Market'},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${p.open===true},${p.sold_out===true})`;await audit(tx,u,'event',p);});return json({ok:true});
  }
  if(action==='category'){required(p.name,'category');if(!Number.isInteger(p.vendor_limit)||p.vendor_limit<1)throw Error('Limit must be at least 1.');if(p.id)await sql`update market.categories set name=${p.name},vendor_limit=${p.vendor_limit},active=${p.active===true} where id=${p.id}`;else await sql`insert into market.categories(name,vendor_limit) values(${p.name},${p.vendor_limit})`;await audit(sql,u,'category',p);return json({ok:true});}
  if(action==='post'){

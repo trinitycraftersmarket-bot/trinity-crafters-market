@@ -28,6 +28,7 @@ export async function publicData(){
  const sql=db();await expire(sql);
  const events=await sql`select e.*,l.name as location,l.address,(select count(*)::int from market.bookings b where b.event_id=e.id and b.space='indoor' and (b.status in ('approved','paid') or (b.status='held' and b.hold_until>now()))) as indoor_used,(select count(*)::int from market.bookings b where b.event_id=e.id and b.space='outdoor' and (b.status in ('approved','paid') or (b.status='held' and b.hold_until>now()))) as outdoor_used from market.events e join market.locations l on l.id=e.location_id where e.date >= (now() at time zone 'America/New_York')::date order by e.date`;
  const categories=await sql`select * from market.categories where active order by name`;
+ const locations=await sql`select id,name,address from market.locations order by name`;
  const counts=await sql`select b.event_id,a.category_id,count(*)::int as used from market.bookings b join market.applications a on a.id=b.application_id where b.status in ('approved','paid') or (b.status='held' and b.hold_until>now()) group by b.event_id,a.category_id`;
- return {events,categories,counts};
+ return {events,categories,locations,counts};
 }
