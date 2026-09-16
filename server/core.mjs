@@ -22,7 +22,7 @@ export async function queue(tx,to,subject,body){await tx`insert into market.outb
 export async function flushMail(){
  if(!process.env.RESEND_API_KEY||!process.env.MAIL_FROM)return;
  await db().begin(async tx=>{const rows=await tx`select * from market.outbox where sent_at is null order by created_at limit 10 for update skip locked`;
- for(const r of rows){try{const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body}),signal:AbortSignal.timeout(8000)});if(!res.ok)throw Error('Email delivery failed: '+res.status);await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;}catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;}}
+ for(const r of rows){try{const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body}),signal:AbortSignal.timeout(8000)});if(!res.ok){const info=await res.json().catch(()=>({}));const detail=String(info.message||info.error||info.name||'').slice(0,300);throw Error('Email delivery failed: '+res.status+(detail?' — '+detail:''));}await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;}catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;}}
  });
 }
 export async function publicData(){
