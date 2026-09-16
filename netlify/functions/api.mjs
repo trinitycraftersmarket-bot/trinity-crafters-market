@@ -10,6 +10,15 @@ async function paypalToken(){
  const r=await fetch(paypalBase()+'/v1/oauth2/token',{method:'POST',headers:{Authorization:'Basic '+auth,'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=client_credentials',signal:AbortSignal.timeout(10000)});
  const v=await r.json();if(!r.ok)throw Error('PayPal authentication failed.');return v.access_token;
 }
+function paypalAddress(raw){
+ const s=String(raw||'').trim(); if(!s)return undefined;
+ const parts=s.split(',').map(x=>x.trim()).filter(Boolean);
+ if(parts.length>=3){
+   const m=parts[parts.length-2].match(/^([A-Za-z .'-]+)\s+([0-9]{5}(?:-[0-9]{4})?)$/);
+   if(m)return {address_line_1:parts.slice(0,-2).join(', '),admin_area_2:parts[parts.length-3]||'',admin_area_1:m[1].trim(),postal_code:m[2],country_code:'US'};
+ }
+ return {address_line_1:s,country_code:'US'};
+}
 async function paypalRequest(path,{method='GET',body,requestId}={}){
  const token=await paypalToken(),headers={Authorization:'Bearer '+token,'Content-Type':'application/json','Accept':'application/json'};
  if(requestId)headers['PayPal-Request-Id']=requestId;
@@ -147,7 +156,7 @@ export default async req=>{
   if(b.invoice_reference)throw Error('This booking already has an invoice reference.');
   const invoice=await paypalRequest('/v2/invoicing/invoices',{method:'POST',requestId:'market-'+b.id,body:{
    detail:{currency_code:'USD',note:'Trinity Crafters Market vendor booth. Payment is due within 24 hours of invoice delivery.',terms_and_conditions:'Vendor payments are nonrefundable. Market operates rain or shine.',memo:'Booking '+b.id},
-   primary_recipients:[{billing_info:{name:{given_name:String(b.name||b.business).slice(0,140)},email_address:b.email}}],
+   primary_recipients:[{billing_info:{name:{given_name:String(b.name||b.business).slice(0,140)},email_address:b.email,address:paypalAddress(b.billing_address)}}],
    items:[{name:(b.space==='indoor'?'Indoor':'Outdoor')+' vendor space — '+String(b.date).slice(0,10),description:b.business+' · '+b.location,quantity:'1',unit_amount:{currency_code:'USD',value:(b.price/100).toFixed(2)},unit_of_measure:'QUANTITY'}],
    configuration:{allow_tip:false,partial_payment:{allow_partial_payment:false}}
   }});
