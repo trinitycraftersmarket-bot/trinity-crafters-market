@@ -146,7 +146,7 @@ export default async req=>{
   const recipients=await sql`select distinct email from (select a.email from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('approved','held','paid') union all select i.email from market.imported_attendees i where i.event_id=${event.id}) q where nullif(trim(email),'') is not null`;
   if(!recipients.length)throw Error('No attendee email addresses are available for this date.');
   const subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
-  await sql.begin(async tx=>{for(const r of recipients)await queue(tx,r.email,subject,body);await audit(tx,u,'setup instructions email',{event_id:event.id,recipients:recipients.length});});await flushMail();return json({ok:true,count:recipients.length});
+  await sql.begin(async tx=>{for(const r of recipients)await queue(tx,r.email,subject,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nRecipients: '+recipients.length);await audit(tx,u,'setup instructions email',{event_id:event.id,recipients:recipients.length});});await flushMail();return json({ok:true,count:recipients.length});
  }
  if(action==='import-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
@@ -163,7 +163,8 @@ export default async req=>{
   return json({ok:true});
  }
  if(action==='imported-attendance'){
-  if(!p.id||!['checked_in','no_show','clear'].includes(p.state))throw Error('Choose an attendance status.');
+  if(!p.id||!['checked_in','no_show','clear','remove'].includes(p.state))throw Error('Choose an attendance status.');
+  if(p.state==='remove'){await sql`delete from market.imported_attendees where id=${p.id}`;await audit(sql,u,'remove imported attendee',{id:p.id});return json({ok:true});}
   const state=p.state==='clear'?'not_marked':p.state;
   await sql`update market.imported_attendees set attendance_state=${state} where id=${p.id}`;
   await audit(sql,u,'imported attendance',{id:p.id,state});return json({ok:true});
