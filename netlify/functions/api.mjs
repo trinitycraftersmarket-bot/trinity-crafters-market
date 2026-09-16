@@ -313,16 +313,6 @@ export default async req=>{
  return json({error:'Unknown action'},404);
  }catch(e){console.error('Market request failed',e.code||e.name);return json({error:e.code?'The request could not be saved. Check for duplicate dates and try again.':e.message},400);}
 };
-+(x.price/100).toFixed(2)+' — '+x.space).join('\n')}\n\nTotal recorded paid bookings: ${(total/100).toFixed(2)}\n\nThis statement summarizes payments recorded by Trinity Crafters Market and is provided for recordkeeping. It is not tax advice or an IRS tax form.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;await sql.begin(async tx=>{await queue(tx,v.email,`Trinity Crafters Market ${year} Year-End Statement`,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+year+' Statement — '+(v.business||v.name),body);});await flushMail();return json({ok:true});
- }
- if(action==='setup-email'){
-  if(!u.admin)return json({error:'Organizer access only'},403);
-  const [event]=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;if(!event)throw Error('Market date not found.');
-  const recipients=await sql`select distinct email from (select a.email from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('approved','held','paid') union all select i.email from market.imported_attendees i where i.event_id=${event.id}) q where nullif(trim(email),'') is not null`;
-  if(!recipients.length)throw Error('No attendee email addresses are available for this date.');
-  const subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
-  await sql.begin(async tx=>{for(const r of recipients)await queue(tx,r.email,subject,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nRecipients: '+recipients.length);await audit(tx,u,'setup instructions email',{event_id:event.id,recipients:recipients.length});});await flushMail();return json({ok:true,count:recipients.length});
- }
  if(action==='import-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.event_id)throw Error('Choose a market date.');
