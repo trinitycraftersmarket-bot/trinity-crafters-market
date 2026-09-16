@@ -16,3 +16,8 @@
 - Added CSV export to the organizer attendance report.
 - Expanded the database setup for review notes, wait-list offer tracking, payment method, and expense categories.
 - Connected organizer review notes, payment-method capture, and expense-category persistence to the API.
+
+## 2026-09-16
+- Added server-enforced Manager access for application decisions, private vendor messages, and attendee printing. Owner-only Manager assignments; Ashley awaits verified sign-in email.
+- Added free shopper RSVPs with verified email, party size, referral source, Facebook group, and staff RSVP reports.
+- Added private two-way vendor messages accessible from My bookings.

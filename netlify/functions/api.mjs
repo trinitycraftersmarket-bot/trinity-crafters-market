@@ -1,3 +1,4 @@
+import {staffActionAllowed} from '../../server/permissions.mjs';
 import {ready,db,supa,identity,banned,expire,audit,queue,publicData} from '../../server/core.mjs';
 import {checkCapacity,normalizePhone,active as activeBooking} from '../../server/rules.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
@@ -45,9 +46,37 @@ export default async req=>{
  await queue(tx,'trinitycraftersmarket@gmail.com','New market application: '+p.business,`${p.name}\n${u.email}\n${phone}\n${p.description}\nReview dates and private photos: ${process.env.SITE_URL}/#admin`);await audit(tx,u,'apply',{id:app.id});return app;
  });return json(result);
  }
- if(!u.admin)return json({error:'Administrator access required.'},403);
+ if(action==='rsvp'&&req.method==='POST'){
+ const p=await req.json();required(p.name,'name');required(p.referral_source,'how you heard about us');
+ if(p.referral_source==='Facebook')required(p.referral_group,'Facebook group');
+ if(!Number.isInteger(p.party_size)||p.party_size<1||p.party_size>20)throw Error('Choose 1–20 guests.');
+ const [e]=await sql`select id from market.events where id=${p.event_id} and date >= (now() at time zone 'America/New_York')::date`;
+ if(!e)throw Error('Choose an upcoming market.');
+ await sql`insert into market.shopper_rsvps(event_id,user_id,name,email,party_size,referral_source,referral_group) values(${e.id},${u.id},${p.name.trim()},${u.email},${p.party_size},${p.referral_source.trim()},${String(p.referral_group||'').slice(0,200)}) on conflict(event_id,user_id) do update set name=excluded.name,party_size=excluded.party_size,referral_source=excluded.referral_source,referral_group=excluded.referral_group`;
+ return json({ok:true});
+ }
+ if(action==='messages'){
+ if(req.method==='POST'){
+ const p=await req.json();required(p.body,'message',4000);
+ const [a]=await sql`select id,user_id from market.applications where id=${p.application_id}`;
+ if(!a||(!u.admin&&!u.manager&&a.user_id!==u.id))return json({error:'Access denied'},403);
+ await sql`insert into market.vendor_messages(application_id,sender,body) values(${a.id},${u.email},${p.body.trim()})`;
+ await audit(sql,u,'vendor message',{application_id:a.id});return json({ok:true});
+ }
+ return json(await sql`select m.id,m.application_id,m.sender,m.body,m.created_at from market.vendor_messages m join market.applications a on a.id=m.application_id where a.user_id=${u.id} or ${u.admin||u.manager} order by m.created_at`);
+ }
+ if(!staffActionAllowed(u,action))return json({error:'Access denied'},403);
+ if(action==='staff-list')return json(await sql`select email,name,active from market.staff order by name`);
+ if(action==='staff-save'&&req.method==='POST'){
+ const p=await req.json();required(p.email,'email');required(p.name,'name');const email=p.email.trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Enter a valid email.');
+ await sql`insert into market.staff(email,name,active) values(${email},${p.name.trim()},${p.active===true}) on conflict(email) do update set name=excluded.name,active=excluded.active`;
+ await audit(sql,u,'manager access',{email,active:p.active===true});return json({ok:true});
+ }
+ if(action==='rsvp-list')return json(await sql`select r.id,r.event_id,r.name,r.email,r.party_size,r.referral_source,r.referral_group,e.date,l.name location from market.shopper_rsvps r join market.events e on e.id=r.event_id join market.locations l on l.id=e.location_id order by e.date,r.name`);
+ if(action==='manager')return json({events:await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id order by e.date desc`,applications:await sql`select b.id,b.application_id,b.event_id,b.space,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`});
+
  if(action==='admin')return json({...(await publicData()),locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY}});
- if(action==='photo'){const path=url.searchParams.get('path');const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
+ if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
  if(action==='sync')return json(await syncCalendar());
@@ -58,8 +87,10 @@ export default async req=>{
   return json({ok:true});
  }
  if(action==='booking'){
+ if(u.manager&&(!['approved','declined'].includes(p.status)||p.exception===true))return json({error:'Managers may approve or decline applications only.'},403);
  await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);
  const [b]=await tx`select b.*,a.category_id,a.user_id,a.email,a.phone,a.name,c.vendor_limit from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id where b.id=${p.id}`;if(!b)throw Error('Booking not found.');
+ if(u.manager&&!['pending','waitlist'].includes(b.status))throw Error('This application has already been reviewed.');
  const transitions={pending:['approved','declined'],waitlist:['approved','declined','cancelled'],approved:['held','cancelled'],held:['paid','cancelled'],expired:['approved','cancelled'],paid:['cancelled'],declined:[],cancelled:[]};
  if(p.status==='declined')required(p.reason,'the denial reason',2000);
  if(!transitions[b.status].includes(p.status))throw Error('Refresh the dashboard; this action is no longer available.');
