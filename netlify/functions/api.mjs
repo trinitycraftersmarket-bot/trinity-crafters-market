@@ -158,23 +158,11 @@ export default async req=>{
  await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,payment_method=case when ${p.status}='paid' then ${String(p.payment_method||'').slice(0,100)} else payment_method end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
  await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null});
  if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);}
- });return json({ok:true});
+ });if(p.status==='approved'&&process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET){const invoice=await createAndSendPayPalInvoice(sql,u,p.id);return json({ok:true,invoice_id:invoice.id,invoiced:true});}return json({ok:true});
  }
  if(action==='paypal-invoice'){
   if(!u.admin)return json({error:'Organizer access only'},403);
-  if(!p.id)throw Error('Booking not found.');
-  const [b]=await sql`select b.*,a.name,a.email,a.billing_address,a.business,e.date,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${p.id}`;
-  if(!b)throw Error('Booking not found.');
-  if(b.status!=='approved')throw Error('Approve the booking before sending an invoice.');
-  if(b.invoice_reference)throw Error('This booking already has an invoice reference.');
-  const invoice=await paypalRequest('/v2/invoicing/invoices',{method:'POST',requestId:'market-'+b.id,body:{
-   detail:{currency_code:'USD',note:'Trinity Crafters Market vendor booth. Payment is due within 24 hours of invoice delivery.',terms_and_conditions:'Vendor payments are nonrefundable. Market operates rain or shine.',memo:'Booking '+b.id},
-   primary_recipients:[{billing_info:{name:{given_name:String(b.name||b.business).slice(0,140)},email_address:b.email,address:paypalAddress(b.billing_address)}}],
-   items:[{name:(b.space==='indoor'?'Indoor':'Outdoor')+' vendor space — '+String(b.date).slice(0,10),description:b.business+' · '+b.location,quantity:'1',unit_amount:{currency_code:'USD',value:(b.price/100).toFixed(2)},unit_of_measure:'QUANTITY'}],
-   configuration:{allow_tip:false,partial_payment:{allow_partial_payment:false}}
-  }});
-  await paypalRequest('/v2/invoicing/invoices/'+encodeURIComponent(invoice.id)+'/send',{method:'POST',requestId:'market-send-'+b.id,body:{send_to_invoicer:true,send_to_recipient:true}});
-  await sql.begin(async tx=>{await tx`update market.bookings set status='held',hold_until=now()+interval '24 hours',invoice_reference=${invoice.id} where id=${b.id} and status='approved'`;await audit(tx,u,'paypal invoice sent',{id:b.id,invoice_id:invoice.id});});
+  const invoice=await createAndSendPayPalInvoice(sql,u,p.id);
   return json({ok:true,invoice_id:invoice.id});
  }
  if(action==='paypal-sync'){
