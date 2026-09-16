@@ -1,5 +1,5 @@
 import {staffActionAllowed} from '../../server/permissions.mjs';
-import {ready,db,supa,identity,banned,expire,audit,queue,publicData} from '../../server/core.mjs';
+import {ready,db,supa,identity,banned,expire,audit,queue,publicData,flushMail} from '../../server/core.mjs';
 import {checkCapacity,normalizePhone,active as activeBooking} from '../../server/rules.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
@@ -119,6 +119,19 @@ export default async req=>{
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
+ if(action==='email-test'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  await queue(sql,u.email,'Trinity Crafters Market email test','This is a test email from the Trinity Crafters Market website. If you received it, Resend is connected correctly.');
+  await flushMail();
+  const [row]=await sql`select sent_at,error from market.outbox where recipient=${u.email} and subject='Trinity Crafters Market email test' order by created_at desc limit 1`;
+  if(row?.error)throw Error(row.error);
+  return json({ok:!!row?.sent_at});
+ }
+ if(action==='paypal-test'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  await paypalToken();
+  return json({ok:true,environment:process.env.PAYPAL_ENV==='live'?'live':'sandbox'});
+ }
  if(action==='sync')return json(await syncCalendar());
  if(action==='review'){
   if(!p.id)throw Error('Application not found.');
