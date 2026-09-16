@@ -59,7 +59,7 @@ function pdfImportModal(a){
  $('#read-pdf').onclick=()=>run(async()=>{const file=form.pdf.files[0];filename=file?.name||'';rows=await parseAttendeePdf(file);draw();notice('PDF read. Review the attendee rows before importing.');});draw();
 }
 function reportPanel(a,p){
- const active=a.applications.filter(b=>['approved','held','paid','cancelled'].includes(b.status));
+ const active=a.applications.filter(b=>['approved','held','paid'].includes(b.status));
  p.innerHTML=`<style>@media print{body{background:#fff;color:#000}header,nav,footer,.tabs,.actions,#notice,.report-actions{display:none!important}main{padding:0}.printable-report{box-shadow:none;border:0;max-width:none}.printable-report table{width:100%;border-collapse:collapse}.printable-report th,.printable-report td{border:1px solid #777;padding:8px;text-align:left}}</style><div class="actions"><label>Market date<select id="report-date">${a.allEvents.map(e=>`<option value="${e.id}">${nice(e.date)}</option>`).join('')}</select></label><button id="import-pdf">Import attendees from PDF</button><button id="print-report">Print attendance list</button><button class="secondary" id="export-report">Export CSV</button></div><div id="report-output"></div>`;
  const getRows=id=>[
   ...active.filter(b=>b.event_id===id).map(b=>({...b,attendance:b.checked_in?'Checked in':b.no_show?'No show':'Not marked',imported:false})),
