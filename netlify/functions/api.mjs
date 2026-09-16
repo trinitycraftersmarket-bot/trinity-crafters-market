@@ -134,7 +134,7 @@ export default async req=>{
 
  if(action==='vendor-list'){
   if(!u.admin)return json({error:'Organizer access only'},403);
-  return json(await sql`select a.id,a.user_id,a.name,a.email,a.phone,a.business,a.billing_address,a.description,a.referral_source,a.referral_group,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,a.created_at,c.name category,
+  return json(await sql`select a.id,a.user_id,a.name,a.email,a.phone,a.business,a.billing_address,a.description,a.referral_source,a.referral_group,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,a.created_at,c.name category,'application' source,
   coalesce((select count(*) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int shows,
   coalesce((select sum(b.price) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int booking_spend,
   coalesce((select sum(vp.amount) from market.vendor_payments vp where vp.application_id=a.id),0)::int recorded_payments,
@@ -142,12 +142,23 @@ export default async req=>{
   coalesce((select json_agg(json_build_object('id',vp.id,'amount',vp.amount,'payment_method',vp.payment_method,'paid_at',vp.paid_at,'note',vp.note,'receipt_sent_at',vp.receipt_sent_at) order by vp.paid_at desc) from market.vendor_payments vp where vp.application_id=a.id),'[]'::json) payments
   from market.applications a left join market.categories c on c.id=a.category_id
   where a.id in (select distinct on (lower(email)) id from market.applications order by lower(email),created_at desc)
-  order by lower(a.business),lower(a.name)`);
+  union all
+  select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,false regular_vendor,null::integer monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,
+  count(*) over(partition by lower(coalesce(nullif(i.email,''),i.name)))::int shows,
+  0::int booking_spend,0::int recorded_payments,
+  json_agg(json_build_object('id',i.id,'date',e.date,'status',coalesce(i.status,'Imported'),'space',i.space,'price',0,'payment_method','PDF import')) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
+  '[]'::json payments
+  from market.imported_attendees i join market.events e on e.id=i.event_id
+  where i.id in (select distinct on (lower(coalesce(nullif(email,''),name))) id from market.imported_attendees order by lower(coalesce(nullif(email,''),name)),created_at desc)
+  order by business,name`);
  }
  if(action==='admin')return json({...(await publicData()),importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
+ if(action==='vendor-reengage'){
+  if(!u.admin)return json({error:'Organizer access only'},403);const ids=Array.isArray(p.ids)?p.ids:[];if(!ids.length)throw Error('Select at least one vendor.');const appRows=await sql`select id,name,business,email from market.applications where id=any(${ids}::uuid[])`;const impRows=await sql`select id,name,coalesce(nullif(business,''),name) business,email from market.imported_attendees where id=any(${ids}::uuid[])`;const vendors=[...appRows,...impRows].filter(v=>v.email);const subject=String(p.subject||'We would love to have you back at Trinity Crafters Market'),msg=String(p.body||'').trim();if(!msg)throw Error('Email message is required.');await sql.begin(async tx=>{for(const v of vendors)await queue(tx,v.email,subject,msg.replaceAll('{{name}}',v.name||'Vendor').replaceAll('{{business}}',v.business||v.name||'your business'));await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — Vendor return invitation',msg+'\n\nSent to: '+vendors.length+' vendor(s).');});await flushMail();return json({ok:true,count:vendors.length});
+ }
  if(action==='vendor-payment'){
   if(!u.admin)return json({error:'Organizer access only'},403);const [v]=await sql`select id,name,business,email from market.applications where id=${p.application_id}`;if(!v)throw Error('Vendor not found.');const amount=Math.round(Number(p.amount)*100);if(!Number.isFinite(amount)||amount<=0)throw Error('Enter a valid payment amount.');const [pay]=await sql`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note) values(${v.id},${p.booking_id||null},${amount},${p.payment_method||'cash'},${p.paid_at||new Date().toISOString()},${p.note||null}) returning *`;return json({ok:true,payment:pay});
  }
