@@ -150,7 +150,7 @@ export default async req=>{
   select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,false regular_vendor,null::integer monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,
   count(*) over(partition by lower(coalesce(nullif(i.email,''),i.name)))::int shows,
   0::int booking_spend,0::int recorded_payments,
-  json_agg(json_build_object('id',i.id,'date',e.date,'status','paid','space',i.space,'price',0,'payment_method','PDF import')) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
+  json_agg(json_build_object('id',i.id,'date',e.date,'status',i.payment_status,'space',i.space,'price',coalesce(i.invoice_amount,0),'payment_method','Imported')) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
   '[]'::json payments
   from market.imported_attendees i join market.events e on e.id=i.event_id
   where i.id in (select distinct on (lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name))) id from market.imported_attendees order by lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name)),created_at desc)
@@ -233,6 +233,13 @@ export default async req=>{
    await audit(tx,u,'pdf attendee import',{event_id:event.id,submitted:p.rows.length,imported,skipped,source_file:source});
   });
   return json({ok:true,imported,skipped,status:'approved_and_paid'});
+ }
+ if(action==='imported-payment'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  if(!p.id||!['paid','unpaid'].includes(p.status))throw Error('Choose a payment status.');
+  await sql`update market.imported_attendees set payment_status=${p.status} where id=${p.id}`;
+  await audit(sql,u,'imported payment status',{id:p.id,status:p.status});
+  return json({ok:true});
  }
  if(action==='imported-attendance'){
   if(!p.id||!['checked_in','no_show','clear','remove'].includes(p.state))throw Error('Choose an attendance status.');
