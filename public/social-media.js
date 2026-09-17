@@ -1,10 +1,12 @@
 (()=>{
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const token=()=>sessionStorage.getItem('market-token')||'';
+ const META_APP_ID='1483238073007880';
+ const META_CONFIG_ID='1083862150803166';
+ const META_CALLBACK='https://trinitylutzmarkets.com/.netlify/functions/meta-oauth-callback';
  async function meta(method='GET',body){const r=await fetch('/.netlify/functions/meta-social',{method,headers:{Authorization:'Bearer '+token(),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});const v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Meta request failed.');return v;}
- async function authInfo(){const r=await fetch('/.netlify/functions/meta-oauth-start',{headers:{Authorization:'Bearer '+token()},cache:'no-store'});const v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Could not start Meta authorization.');return v;}
  function notice(msg){const n=document.querySelector('#notice')||document.querySelector('#meta-status');if(n)n.textContent=msg;}
- async function connectMeta(btn){try{btn.disabled=true;btn.textContent='Opening Meta…';notice('Preparing secure Meta authorization…');const v=await authInfo();if(!v.url)throw Error('Meta authorization URL was not returned.');window.location.assign(v.url);}catch(e){notice(e.message);btn.disabled=false;btn.textContent='Connect Facebook & Instagram';}}
+ function connectMeta(btn){try{btn.disabled=true;btn.textContent='Opening Meta…';notice('Opening secure Meta authorization…');const url=new URL('https://www.facebook.com/dialog/oauth');url.searchParams.set('client_id',META_APP_ID);url.searchParams.set('redirect_uri',META_CALLBACK);url.searchParams.set('response_type','code');url.searchParams.set('config_id',META_CONFIG_ID);window.location.href=url.toString();}catch(e){notice(e.message);btn.disabled=false;btn.textContent='Connect Facebook & Instagram';}}
  function enhance(){
   const tab=document.querySelector('[data-tab="social"]'),panel=document.querySelector('#panel'),draft=document.querySelector('#draft');
   if(tab)tab.textContent='Social Media';
