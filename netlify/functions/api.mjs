@@ -186,7 +186,7 @@ export default async req=>{
   const recipients=await sql`select distinct email from (select a.email from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('approved','held','paid') union all select i.email from market.imported_attendees i where i.event_id=${event.id}) q where nullif(trim(email),'') is not null`;
   if(!recipients.length)throw Error('No attendee email addresses are available for this date.');
   const subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
-  await sql.begin(async tx=>{for(const r of recipients)await queue(tx,r.email,subject,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nRecipients: '+recipients.length);await audit(tx,u,'setup instructions email',{event_id:event.id,recipients:recipients.length});});await flushMail();return json({ok:true,count:recipients.length});
+  await sql.begin(async tx=>{for(const r of recipients)await queue(tx,r.email,subject,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nVENDOR EMAIL ADDRESSES FOR FLOOR PLAN FORWARDING:\n'+(recipients.length?recipients.map(r=>r.email).join('; '):'No vendor email addresses found.')+'\n\nRecipients: '+recipients.length);await audit(tx,u,'setup instructions email',{event_id:event.id,recipients:recipients.length});});await flushMail();return json({ok:true,count:recipients.length});
  }
  if(action==='import-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
