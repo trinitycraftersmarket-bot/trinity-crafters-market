@@ -1,6 +1,7 @@
 import {db,identity,queue,flushMail,audit} from '../../server/core.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const money=n=>'$'+(Number(n||0)/100).toFixed(2);
+const dateOnly=v=>{const s=String(v??'');const m=s.match(/^(\d{4}-\d{2}-\d{2})/);if(m)return m[1];const d=new Date(s);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10);};
 export default async req=>{
  try{
   const u=await identity(req),sql=db();
@@ -29,7 +30,9 @@ export default async req=>{
   if(!Number.isFinite(amount)||amount<0)throw Error('Enter a valid payment amount.');
   const [row]=await sql`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state,payment_status,invoice_amount,selling)
    values(${event.id},${name},${business},${email},${phone},${cat.name},${cat.id},false,${p.space},'Manual booking','not_marked','paid',${amount},${selling}) returning id`;
-  const d=new Date(String(event.date)+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const ymd=dateOnly(event.date);
+  if(!ymd)throw Error('Market date is invalid.');
+  const d=new Date(ymd+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
   const body=`TRINITY CRAFTERS MARKET\nBOOKING CONFIRMATION\n\nHi ${name},\n\nYour vendor space is confirmed.\n\nMarket: ${event.market_name||event.title||'Trinity Crafters Market'}\nDate: ${d}\nLocation: ${event.location}\nAddress: ${event.address||''}\nSpace: ${p.space}\nWhat you sell: ${selling}\nPayment: ${money(amount)} by ${p.payment_method}\n\nPlease keep this email for your records. Additional setup instructions will be sent before the market.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
   await sql.begin(async tx=>{await queue(tx,email,'Trinity Crafters Market Booking Confirmation — '+d,body);await audit(tx,u,'manual vendor booking',{id:row.id,event_id:event.id,email,space:p.space,payment_method:p.payment_method,amount});});
   await flushMail();
