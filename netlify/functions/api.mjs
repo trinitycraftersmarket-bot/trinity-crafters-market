@@ -146,7 +146,7 @@ export default async req=>{
   select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,false regular_vendor,null::integer monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,
   count(*) over(partition by lower(coalesce(nullif(i.email,''),i.name)))::int shows,
   0::int booking_spend,0::int recorded_payments,
-  json_agg(json_build_object('id',i.id,'date',e.date,'status',coalesce(i.status,'Imported'),'space',i.space,'price',0,'payment_method','PDF import')) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
+  json_agg(json_build_object('id',i.id,'date',e.date,'status','paid','space',i.space,'price',0,'payment_method','PDF import')) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
   '[]'::json payments
   from market.imported_attendees i join market.events e on e.id=i.event_id
   where i.id in (select distinct on (lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name))) id from market.imported_attendees order by lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name)),created_at desc)
@@ -222,8 +222,8 @@ export default async req=>{
       select i.id from market.imported_attendees i where i.event_id=${event.id} and i.category_id=${cat.id}
     ) q`;
     const sold=cat.vendor_limit>0&&existing[0].n>=cat.vendor_limit;
-    await tx`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,status,attendance_state)
-      values(${event.id},${name},${business},${email},${phone},${cat.name},${cat.id},${sold},${String(row.space||'').trim().slice(0,80)},${source},'paid','not_marked')`;
+    await tx`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state)
+      values(${event.id},${name},${business},${email},${phone},${cat.name},${cat.id},${sold},${String(row.space||'').trim().slice(0,80)},${source},'not_marked')`;
     imported++;
    }
    await audit(tx,u,'pdf attendee import',{event_id:event.id,submitted:p.rows.length,imported,skipped,source_file:source});
