@@ -96,7 +96,7 @@ export default async req=>{
  const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;
  const [imported]=await tx`select count(*)::int as category_used,
    count(*) filter (where lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space}))::int as space_used
-   from market.imported_attendees where event_id=${event.id} and category_id=${cat.id}`;
+   from market.imported_category_reservations where event_id=${event.id} and category_id=${cat.id}`;
  const [importedSpace]=await tx`select count(*)::int as used from market.imported_attendees where event_id=${event.id} and lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;
  const categoryFull=!p.exception?.trim()&&(existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length+Number(imported.category_used||0))>=cat.vendor_limit;
  const spaceFull=(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0))>=event[d.space+'_capacity'];
