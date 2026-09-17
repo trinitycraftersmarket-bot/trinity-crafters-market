@@ -94,8 +94,12 @@ export default async req=>{
  for(const d of p.dates){if(!['indoor','outdoor'].includes(d.space))throw Error('Choose indoor or outdoor for every date.');
  const [event]=await tx`select * from market.events where id=${d.id} and open and date>=(now() at time zone 'America/New_York')::date`;if(!event)throw Error('A selected date is no longer accepting applications.');
  const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;
- const categoryFull=!p.exception?.trim()&&existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length>=cat.vendor_limit;
- const spaceFull=existing.filter(b=>activeBooking(b)&&b.space===d.space).length>=event[d.space+'_capacity'];
+ const [imported]=await tx`select count(*)::int as category_used,
+   count(*) filter (where lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space}))::int as space_used
+   from market.imported_attendees where event_id=${event.id} and category_id=${cat.id}`;
+ const [importedSpace]=await tx`select count(*)::int as used from market.imported_attendees where event_id=${event.id} and lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;
+ const categoryFull=!p.exception?.trim()&&(existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length+Number(imported.category_used||0))>=cat.vendor_limit;
+ const spaceFull=(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0))>=event[d.space+'_capacity'];
  const waitlist=event.sold_out||categoryFull||spaceFull;
  if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,cat.vendor_limit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
  const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','waitlist','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
