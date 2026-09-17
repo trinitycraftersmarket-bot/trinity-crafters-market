@@ -1,0 +1,19 @@
+(()=>{
+ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const token=()=>sessionStorage.getItem('market-token')||'';
+ async function metricool(method='GET',body){const r=await fetch('/.netlify/functions/metricool',{method,headers:{Authorization:'Bearer '+token(),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});const v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Metricool request failed.');return v;}
+ function enhance(){
+  const tab=document.querySelector('[data-tab="social"]'),panel=document.querySelector('#panel'),draft=document.querySelector('#draft');
+  if(tab)tab.textContent='Social Media';
+  if(!panel||!draft||panel.querySelector('#social-publisher'))return;
+  const oldCopy=document.querySelector('#copy');if(oldCopy)oldCopy.textContent='Copy post';
+  const box=document.createElement('section');box.id='social-publisher';box.className='card section';
+  const d=new Date(Date.now()+24*60*60*1000);d.setHours(10,0,0,0);const local=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'T'+String(d.getHours()).padStart(2,'0')+':00';
+  box.innerHTML=`<span class="eyebrow">Facebook + Instagram</span><h2>Social Media Center</h2><div id="metricool-status" class="note">Checking Metricool connection…</div><div class="two"><label class="check"><input id="social-facebook" type="checkbox" checked> Facebook Page</label><label class="check"><input id="social-instagram" type="checkbox" checked> Instagram</label></div><label>Image or video URL for Instagram<input id="social-media-url" type="url" placeholder="https://…"></label><small>Instagram requires media. Use a public image/video URL that Metricool can access.</small><label>Publish date & time (Eastern)<input id="social-time" type="datetime-local" value="${esc(local)}"></label><div class="actions"><button id="social-save-draft">Send to Metricool as draft</button><button id="social-copy" class="secondary">Copy post</button></div><p class="muted">Safety mode is on: the website saves this as a Metricool draft with auto-publish OFF. Review it in Metricool before scheduling or publishing.</p>`;
+  panel.appendChild(box);
+  metricool().then(v=>{document.querySelector('#metricool-status').innerHTML=v.configured?'<strong>Metricool connected.</strong> Trinity Crafters Market is ready for Facebook + Instagram drafts.':'<strong>Metricool bridge installed.</strong> One setup step remains: add the Metricool API token in Netlify.';}).catch(e=>{document.querySelector('#metricool-status').textContent=e.message;});
+  document.querySelector('#social-copy').onclick=async()=>{await navigator.clipboard.writeText(draft.value);const n=document.querySelector('#notice');if(n)n.textContent='Post copied.';};
+  document.querySelector('#social-save-draft').onclick=async()=>{const b=document.querySelector('#social-save-draft');try{b.disabled=true;const time=document.querySelector('#social-time').value;if(!time)throw Error('Choose a publish date and time.');const v=await metricool('POST',{text:draft.value,media:document.querySelector('#social-media-url').value.trim(),dateTime:time.length===16?time+':00':time,facebook:document.querySelector('#social-facebook').checked,instagram:document.querySelector('#social-instagram').checked});const n=document.querySelector('#notice');if(n)n.textContent=v.ok?'Draft sent to Metricool for review.':'Metricool did not accept the draft.';}catch(e){const n=document.querySelector('#notice');if(n)n.textContent=e.message;}finally{b.disabled=false;}};
+ }
+ const obs=new MutationObserver(()=>setTimeout(enhance,0));obs.observe(document.body,{childList:true,subtree:true});document.addEventListener('click',e=>{if(e.target.closest?.('[data-tab="social"]'))setTimeout(enhance,80);});setTimeout(enhance,200);
+})();
