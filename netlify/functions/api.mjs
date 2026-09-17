@@ -260,10 +260,20 @@ export default async req=>{
   await audit(sql,u,'imported payment status',{id:p.id,status:p.status});
   return json({ok:true});
  }
+ if(action==='inspection'){
+  if(!(u.admin||u.manager))return json({error:'Organizer or Manager access only'},403);
+  if(!p.id||!['approved','needs_correction','refused','not_inspected'].includes(p.status))throw Error('Choose a valid inspection status.');
+  if((p.status==='needs_correction'||p.status==='refused')&&!String(p.notes||'').trim())throw Error('Inspection notes are required.');
+  const who=u.email||'Staff';
+  if(p.imported)await sql`update market.imported_attendees set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${p.status==='not_inspected'?null:new Date().toISOString()},inspected_by=${p.status==='not_inspected'?null:who} where id=${p.id}`;
+  else await sql`update market.bookings set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${p.status==='not_inspected'?null:new Date().toISOString()},inspected_by=${p.status==='not_inspected'?null:who} where id=${p.id}`;
+  await audit(sql,u,'vendor inspection',{id:p.id,imported:!!p.imported,status:p.status,notes:p.notes||null});return json({ok:true});
+ }
  if(action==='imported-attendance'){
   if(!p.id||!['checked_in','no_show','clear','remove'].includes(p.state))throw Error('Choose an attendance status.');
   if(p.state==='remove'){await sql`delete from market.imported_attendees where id=${p.id}`;await audit(sql,u,'remove imported attendee',{id:p.id});return json({ok:true});}
   const state=p.state==='clear'?'not_marked':p.state;
+  if(state==='checked_in'){const [r]=await sql`select inspection_status from market.imported_attendees where id=${p.id}`;if(r?.inspection_status!=='approved')throw Error('Inspect and approve this vendor before check-in.');}
   await sql`update market.imported_attendees set attendance_state=${state} where id=${p.id}`;
   await audit(sql,u,'imported attendance',{id:p.id,state});return json({ok:true});
  }
