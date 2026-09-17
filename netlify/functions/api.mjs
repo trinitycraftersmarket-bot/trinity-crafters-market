@@ -98,7 +98,7 @@ export default async req=>{
    count(*) filter (where lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space}))::int as space_used
    from market.imported_category_reservations where event_id=${event.id} and category_id=${cat.id}`;
  const [importedSpace]=await tx`select count(*)::int as used from market.imported_attendees where event_id=${event.id} and lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;
- const categoryFull=!p.exception?.trim()&&(existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length+Number(imported.category_used||0))>=cat.vendor_limit;
+ const [override]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`; const effectiveCategoryLimit=override?.vendor_limit??cat.vendor_limit; const categoryFull=!p.exception?.trim()&&(existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length+Number(imported.category_used||0))>=effectiveCategoryLimit;
  const spaceFull=(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0))>=event[d.space+'_capacity'];
  const waitlist=event.sold_out||categoryFull||spaceFull;
  if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,cat.vendor_limit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
