@@ -67,6 +67,20 @@ async function handleHeldPayments(){
 }
 
 
+
+async function applyMonthlyLateFees(){
+ const sql=db();
+ const rows=await sql`
+  update market.vendor_invoices
+  set late_fee=1000,late_fee_applied_at=now(),updated_at=now()
+  where status<>'paid'
+    and due_date is not null
+    and (now() at time zone 'America/New_York')::date >= due_date + 3
+    and late_fee_applied_at is null
+  returning id,vendor_email,due_date`;
+ for(const r of rows)await audit(sql,'system','monthly invoice late fee applied',{invoice_id:r.id,amount:1000,due_date:String(r.due_date)});
+}
+
 async function sendDayBeforeVendorReminders(){
  const sql=db();
  const regular=await sql`
@@ -113,6 +127,7 @@ export default async()=>{
  if(!ready())return;
  await handleHeldPayments();
  await sendDayBeforeVendorReminders();
+ await applyMonthlyLateFees();
  await flushMail();
  const [last]=await db()`select value from market.settings where key='last_sync'`;
  if(process.env.GOOGLE_REFRESH_TOKEN&&(!last||Date.now()-new Date(last.value).getTime()>3600000)){
