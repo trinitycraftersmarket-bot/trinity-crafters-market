@@ -53,7 +53,22 @@ export default async req=>{
  const u=await identity(req),sql=db();
  if(action==='me')return json(u);
  if(req.method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin)return json({error:'Invalid request origin'},403);
- if(action==='mine')return json(await sql`select b.*,e.date,a.business from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id where a.user_id=${u.id} order by e.date`);
+ if(action==='mine'){
+  const regular=await sql`select b.*,e.date,e.start_time,e.end_time,l.name location,a.business,a.name,a.email,'booking' source from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where a.user_id=${u.id}`;
+  const imported=await sql`select i.id,null::uuid application_id,i.event_id,lower(i.space) space,coalesce(i.invoice_amount,0) price,case when i.cancelled then 'cancelled' when i.payment_status='paid' then 'paid' else 'approved' end status,false category_exception,null::timestamptz hold_until,null::text invoice_reference,null::text payment_reference,null::text decision_reason,null::timestamptz paid_at,(i.attendance_state='checked_in') checked_in,(i.attendance_state='no_show') no_show,null::timestamptz waitlist_offered_at,'Imported' payment_method,i.inspection_status,i.inspection_notes,i.inspected_at,i.inspected_by,i.approved_products,i.declined_products,i.setup_arrival_time,i.setup_checkin_at,e.date,e.start_time,e.end_time,l.name location,coalesce(nullif(i.business,''),i.name) business,i.name,i.email,'imported' source from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where lower(trim(both ' ,' from i.email))=lower(${u.email})`;
+  return json([...regular,...imported].sort((a,b)=>String(a.date).localeCompare(String(b.date))));
+ }
+ if(action==='vendor-setup-checkin'&&req.method==='POST'){
+  const p=await req.json(),allowed=['08:15','08:30','08:45','09:00'];if(!allowed.includes(p.arrival_time))throw Error('Choose an available setup arrival time.');
+  if(p.source==='imported'){
+   const [x]=await sql`select i.id,e.date from market.imported_attendees i join market.events e on e.id=i.event_id where i.id=${p.id} and lower(trim(both ' ,' from i.email))=lower(${u.email}) and not i.cancelled`;if(!x)throw Error('Booking not found.');
+   await sql`update market.imported_attendees set setup_arrival_time=${p.arrival_time},setup_checkin_at=now() where id=${x.id}`;
+  }else{
+   const [x]=await sql`select b.id,e.date from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id where b.id=${p.id} and a.user_id=${u.id} and b.status in ('approved','held','paid')`;if(!x)throw Error('Booking not found.');
+   await sql`update market.bookings set setup_arrival_time=${p.arrival_time},setup_checkin_at=now() where id=${x.id}`;
+  }
+  await audit(sql,u,'vendor online check-in',{id:p.id,source:p.source,arrival_time:p.arrival_time});return json({ok:true});
+ }
  if(action==='upload-ticket'&&req.method==='POST'){
  const p=await req.json();if(!['image/jpeg','image/png','image/webp'].includes(p.type))throw Error('Choose a JPG, PNG or WebP photo.');
  if(!Number.isInteger(p.size)||p.size<12||p.size>10485760)throw Error('Each photo must be 10 MB or smaller.');
