@@ -16,9 +16,23 @@ export default async req=>{
      select id,name,business,email,phone,description selling,category_id,created_at,'application' source from market.applications
      union all
      select id,name,business,email,phone,selling,category_id,created_at,'imported' source from market.imported_attendees
+    ), identities as (
+     select lower(trim(name)) person,lower(trim(business)) business_key,min(lower(trim(email))) email
+     from records where nullif(trim(name),'') is not null and nullif(trim(business),'') is not null and nullif(trim(email),'') is not null
+     group by lower(trim(name)),lower(trim(business)) having count(distinct lower(trim(email)))=1
+    ), keyed as (
+     select r.*,coalesce(nullif(lower(trim(r.email)),''),i.email,r.source||':'||r.id::text) vendor_key
+     from records r left join identities i on nullif(trim(r.email),'') is null and lower(trim(r.name))=i.person and lower(trim(r.business))=i.business_key
     ), latest as (
-     select distinct on (coalesce(nullif(lower(trim(email)),''),source||':'||id::text)) * from records
-     order by coalesce(nullif(lower(trim(email)),''),source||':'||id::text),created_at desc nulls last,id
+     select (array_agg(id order by created_at desc nulls last,id))[1] id,
+      (array_agg(nullif(trim(name),'') order by created_at desc nulls last,id) filter(where nullif(trim(name),'') is not null))[1] name,
+      (array_agg(nullif(trim(business),'') order by created_at desc nulls last,id) filter(where nullif(trim(business),'') is not null))[1] business,
+      (array_agg(nullif(lower(trim(email)),'') order by created_at desc nulls last,id) filter(where nullif(trim(email),'') is not null))[1] email,
+      (array_agg(nullif(trim(phone),'') order by created_at desc nulls last,id) filter(where nullif(trim(phone),'') is not null))[1] phone,
+      (array_agg(nullif(trim(selling),'') order by created_at desc nulls last,id) filter(where nullif(trim(selling),'') is not null))[1] selling,
+      (array_agg(category_id order by created_at desc nulls last,id) filter(where category_id is not null))[1] category_id,
+      (array_agg(source order by created_at desc nulls last,id))[1] source
+     from keyed group by vendor_key
     ) select id,name,business,email,phone,selling,category_id,source from latest
     where strpos(lower(coalesce(name,'')),${q})>0 or strpos(lower(coalesce(business,'')),${q})>0
      or strpos(lower(coalesce(email,'')),${q})>0 or strpos(lower(coalesce(phone,'')),${q})>0
