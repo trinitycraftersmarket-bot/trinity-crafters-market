@@ -208,6 +208,23 @@ export default async req=>{
   const subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
   await sql.begin(async tx=>{for(const r of recipients)await queue(tx,r.email,subject,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nVENDOR EMAIL ADDRESSES FOR FLOOR PLAN FORWARDING:\n'+(recipients.length?recipients.map(r=>r.email).join('; '):'No vendor email addresses found.')+'\n\nRecipients: '+recipients.length);await tx`update market.events set setup_sent_at=now() where id=${event.id}`;await audit(tx,u,'setup instructions email',{event_id:event.id,recipients:recipients.length});});await flushMail();return json({ok:true,count:recipients.length});
  }
+ if(action==='floor-attendees'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  if(req.method!=='POST')return json({error:'Method not allowed'},405);
+  const p=await req.json();if(!p.event_id)throw Error('Market date is required.');
+  const rows=await sql`
+    select b.id,a.name,a.business,c.name category,lower(trim(b.space)) space,'booking' source
+    from market.bookings b
+    join market.applications a on a.id=b.application_id
+    left join market.categories c on c.id=a.category_id
+    where b.event_id=${p.event_id} and b.status in ('approved','held','paid')
+    union all
+    select i.id,i.name,i.business,coalesce(nullif(i.category,''),nullif(i.selling,'')) category,lower(trim(i.space)) space,'imported' source
+    from market.imported_attendees i
+    where i.event_id=${p.event_id} and not coalesce(i.cancelled,false)
+    order by name`;
+  return json(rows);
+ }
  if(action==='floor-plan-save'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.event_id||!p.layout||typeof p.layout!=='object')throw Error('Floor plan data is required.');
