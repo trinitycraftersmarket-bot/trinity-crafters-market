@@ -210,18 +210,17 @@ export default async req=>{
  }
  if(action==='floor-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
-  if(req.method!=='POST')return json({error:'Method not allowed'},405);
-  const p=await req.json();if(!p.event_id)throw Error('Market date is required.');
+  const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
   const rows=await sql`
     select b.id,a.name,a.business,c.name category,lower(trim(b.space)) space,'booking' source
     from market.bookings b
     join market.applications a on a.id=b.application_id
     left join market.categories c on c.id=a.category_id
-    where b.event_id=${p.event_id} and b.status in ('approved','held','paid')
+    where b.event_id=${eventId} and b.status in ('approved','held','paid')
     union all
     select i.id,i.name,i.business,nullif(i.category,'') category,lower(trim(i.space)) space,'imported' source
     from market.imported_attendees i
-    where i.event_id=${p.event_id} and not coalesce(i.cancelled,false)
+    where i.event_id=${eventId} and not coalesce(i.cancelled,false)
     order by name`;
   return json(rows);
  }
