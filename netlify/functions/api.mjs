@@ -227,6 +227,29 @@ export default async req=>{
   await sql`update market.imported_attendees set payment_status=${p.status} where id=${p.id}`;
   await audit(sql,u,'imported invoice status',{id:p.id,status:p.status});return json({ok:true});
  }
+ if(action==='imported-invoice-update'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  if(!p.id)throw Error('Invoice not found.');
+  const amount=Math.round(Number(p.amount||0)*100),due=String(p.due_date||'').trim()||null;
+  if(amount<0)throw Error('Enter a valid invoice amount.');
+  const [i]=await sql`update market.imported_attendees set invoice_amount=${amount},invoice_due_date=${due} where id=${p.id} returning *`;
+  if(!i)throw Error('Invoice not found.');
+  await audit(sql,u,'imported invoice edited',{id:p.id,amount,due_date:due});return json({ok:true,invoice:i});
+ }
+ if(action==='imported-invoice-void'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  if(!p.id)throw Error('Invoice not found.');
+  const [i]=await sql`update market.imported_attendees set invoice_amount=null,invoice_due_date=null where id=${p.id} returning id`;
+  if(!i)throw Error('Invoice not found.');
+  await audit(sql,u,'imported invoice voided',{id:p.id});return json({ok:true});
+ }
+ if(action==='imported-invoice-email'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const [i]=await sql`select i.*,e.date,l.name location from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${p.id}`;
+  if(!i)throw Error('Invoice not found.');if(!i.email)throw Error('Vendor has no email address.');
+  await queue(sql,i.email,'Trinity Crafters Market invoice — '+nice(i.date),'Hi '+(i.name||'Vendor')+',\n\nHere is your Trinity Crafters Market invoice for '+nice(i.date)+' at '+i.location+'.\n\nAmount due: '+money(i.invoice_amount||0)+(i.invoice_due_date?'\nDue date: '+nice(i.invoice_due_date):'')+'\n\nThank you,\nTrinity Crafters Market');
+  await audit(sql,u,'imported invoice emailed',{id:p.id,recipient:i.email});await flushMail();return json({ok:true});
+ }
  if(action==='import-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.event_id)throw Error('Choose a market date.');
