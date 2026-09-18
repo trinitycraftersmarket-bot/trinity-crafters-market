@@ -297,8 +297,12 @@ export default async req=>{
   if(!p.id)throw Error('Vendor not found.');
   const amount=p.monthly_billing_amount==null||p.monthly_billing_amount===''?null:Number(p.monthly_billing_amount);
   if(amount!==null&&(!Number.isInteger(amount)||amount<0||amount>10000000))throw Error('Enter a valid monthly billing amount.');
-  await sql`update market.applications set regular_vendor=${p.regular_vendor===true},monthly_billing_amount=${amount},paypal_subscription_status=case when ${p.regular_vendor===true} then paypal_subscription_status else '' end where id=${p.id}`;
-  await audit(sql,u,'vendor billing settings',{id:p.id,regular_vendor:p.regular_vendor===true,monthly_billing_amount:amount});
+  if(p.source==='pdf'){
+   await sql`update market.imported_attendees set name=coalesce(nullif(trim(${p.name||''}),''),name),business=coalesce(nullif(trim(${p.business||''}),''),business),email=lower(trim(${p.email||''})),phone=trim(${p.phone||''}),category=trim(${p.category||''}) where id=${p.id}`;
+  }else{
+   await sql`update market.applications set name=coalesce(nullif(trim(${p.name||''}),''),name),business=coalesce(nullif(trim(${p.business||''}),''),business),email=lower(trim(${p.email||''})),phone=trim(${p.phone||''}),regular_vendor=${p.regular_vendor===true},monthly_billing_amount=${amount},paypal_subscription_status=case when ${p.regular_vendor===true} then paypal_subscription_status else '' end where id=${p.id}`;
+  }
+  await audit(sql,u,'vendor settings updated',{id:p.id,source:p.source||'application',email:p.email||'',regular_vendor:p.regular_vendor===true,monthly_billing_amount:amount});
   return json({ok:true});
  }
  if(action==='email-test'){
