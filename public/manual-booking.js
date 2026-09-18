@@ -35,7 +35,8 @@
    const clearSearch=()=>{clearTimeout(timer);searchVersion++;search.value='';results.replaceChildren();status.textContent='Type at least 2 characters to search.';};
    const selectVendor=v=>{
     fields.forEach(key=>{form.elements.namedItem(key).value=v[key]||'';});
-    clearSearch();selection.textContent='Using '+(v.business||v.name||v.email)+'. Review the details below before saving.';
+    const missing=['email','phone'].filter(key=>!String(v[key]||'').trim());
+    clearSearch();selection.textContent='Using '+(v.business||v.name||v.email)+'. '+(missing.length?'No saved '+missing.join(' or ')+' found. Enter the missing details below.':'Email and phone filled from saved records. Review before saving.');
     form.elements.namedItem('name').focus();
    };
    newVendor.onclick=()=>{if(busy)return;clearSearch();fields.forEach(key=>{form.elements.namedItem(key).value='';});selection.textContent='New vendor — enter their details below. They will be added when you save the booking.';form.elements.namedItem('name').focus();};
@@ -49,7 +50,7 @@
       if(version!==searchVersion||!form.isConnected)return;
       const vendors=response.vendors||[];
       status.textContent=vendors.length?vendors.length+' match'+(vendors.length===1?'':'es')+'. Select a vendor to fill in their details.'+(vendors.length===25?' Refine your search if needed.':''):'No matching vendors. Choose Add new vendor to enter their details.';
-      vendors.forEach(v=>{const b=document.createElement('button');b.type='button';b.className='secondary';b.textContent=[v.business||v.name,v.business?v.name:'',v.email,v.phone].filter(Boolean).join(' · ');b.onclick=()=>{if(!busy)selectVendor(v);};results.appendChild(b);});
+      vendors.forEach(v=>{const b=document.createElement('button');b.type='button';b.className='secondary';b.textContent=[v.business||v.name,v.business?v.name:'',v.email||'No saved email',v.phone||'No saved phone'].filter(Boolean).join(' · ');b.onclick=()=>{if(!busy)selectVendor(v);};results.appendChild(b);});
      }catch(err){if(version===searchVersion&&form.isConnected)status.textContent='Vendor search unavailable: '+err.message+' Try searching again, or enter the vendor details below.';}
     },250);
    };
