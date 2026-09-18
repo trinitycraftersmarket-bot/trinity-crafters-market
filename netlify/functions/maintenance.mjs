@@ -66,9 +66,53 @@ async function handleHeldPayments(){
  }
 }
 
+
+async function sendDayBeforeVendorReminders(){
+ const sql=db();
+ const regular=await sql`
+  select b.id,e.date,e.start_time,e.end_time,l.name location,l.address,a.name,a.business,a.email,b.space
+  from market.bookings b
+  join market.applications a on a.id=b.application_id
+  join market.events e on e.id=b.event_id
+  join market.locations l on l.id=e.location_id
+  where b.status in ('approved','held','paid')
+    and e.date=((now() at time zone 'America/New_York')::date+1)`;
+ const imported=await sql`
+  select i.id,e.date,e.start_time,e.end_time,l.name location,l.address,i.name,i.business,i.email,i.space
+  from market.imported_attendees i
+  join market.events e on e.id=i.event_id
+  join market.locations l on l.id=e.location_id
+  where not coalesce(i.cancelled,false)
+    and nullif(trim(i.email),'') is not null
+    and e.date=((now() at time zone 'America/New_York')::date+1)`;
+ for(const v of [...regular.map(x=>({...x,source:'booking'})),...imported.map(x=>({...x,source:'imported'}))]){
+  const [sent]=await sql`select id from market.audit where action='day-before vendor reminder sent' and detail->>'id'=${v.id}::text and detail->>'source'=${v.source} limit 1`;
+  if(sent)continue;
+  const day=displayDate(v.date);
+  const start=String(v.start_time||'10:00').slice(0,5);
+  const body=`Hi ${v.name||'Vendor'},
+
+This is your reminder that ${v.business||'you'} are scheduled to appear at Trinity Crafters Market tomorrow, ${day}.
+
+Market: ${v.location}
+Address: ${v.address||''}
+Market hours: ${start}–${String(v.end_time||'15:00').slice(0,5)}
+Space: ${String(v.space||'').toLowerCase().includes('out')?'Outdoor':'Indoor'}
+
+Please sign in to your vendor account to review your booking and complete online check-in if you have not already done so.
+
+We look forward to seeing you tomorrow!
+
+Trinity Crafters Market
+trinitycraftersmarket@gmail.com`;
+  await sql.begin(async tx=>{await queue(tx,v.email,`Reminder: You're scheduled tomorrow — ${day}`,body);await audit(tx,'system','day-before vendor reminder sent',{id:v.id,source:v.source,date:String(v.date)});});
+ }
+}
+
 export default async()=>{
  if(!ready())return;
  await handleHeldPayments();
+ await sendDayBeforeVendorReminders();
  await flushMail();
  const [last]=await db()`select value from market.settings where key='last_sync'`;
  if(process.env.GOOGLE_REFRESH_TOKEN&&(!last||Date.now()-new Date(last.value).getTime()>3600000)){
