@@ -7,6 +7,25 @@ export default async req=>{
   const u=await identity(req),sql=db();
   if(!u.admin)return json({error:'Organizer access only.'},403);
   if(req.method==='GET'){
+   const params=new URL(req.url).searchParams;
+   if(params.has('q')){
+    const q=String(params.get('q')||'').trim().toLowerCase().slice(0,150);
+    if(q.length<2)return json({vendors:[]});
+    const digits=q.replace(/\D/g,'');
+    const vendors=await sql`with records as (
+     select id,name,business,email,phone,description selling,category_id,created_at,'application' source from market.applications
+     union all
+     select id,name,business,email,phone,selling,category_id,created_at,'imported' source from market.imported_attendees
+    ), latest as (
+     select distinct on (coalesce(nullif(lower(trim(email)),''),source||':'||id::text)) * from records
+     order by coalesce(nullif(lower(trim(email)),''),source||':'||id::text),created_at desc nulls last,id
+    ) select id,name,business,email,phone,selling,category_id,source from latest
+    where strpos(lower(coalesce(name,'')),${q})>0 or strpos(lower(coalesce(business,'')),${q})>0
+     or strpos(lower(coalesce(email,'')),${q})>0 or strpos(lower(coalesce(phone,'')),${q})>0
+     or (length(${digits})>=3 and strpos(regexp_replace(coalesce(phone,''),'[^0-9]','','g'),${digits})>0)
+    order by lower(coalesce(nullif(business,''),name,'')),id limit 25`;
+    return json({vendors});
+   }
    const events=await sql`select e.id,e.date,e.title,e.indoor_price,e.outdoor_price,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.date >= (now() at time zone 'America/New_York')::date order by e.date`;
    const categories=await sql`select id,name from market.categories where active order by name`;
    return json({events,categories});
@@ -23,6 +42,8 @@ export default async req=>{
   if(!event)throw Error('Market date not found.');
   const duplicate=await sql`select id from market.imported_attendees where event_id=${event.id} and lower(trim(email))=${email} and not coalesce(cancelled,false) limit 1`;
   if(duplicate.length)throw Error('This email is already booked for that market date.');
+  const onlineDuplicate=await sql`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and lower(trim(a.email))=${email} and (b.status in ('pending','waitlist','approved','paid') or (b.status='held' and b.hold_until>now())) limit 1`;
+  if(onlineDuplicate.length)throw Error('This vendor already has a booking or application for that market date. Use the existing record.');
   let [cat]=p.category_id?await sql`select id,name from market.categories where id=${p.category_id} and active`:[];
   if(!cat)[cat]=await sql`select id,name from market.categories where active and lower(name) like 'other%' order by name limit 1`;
   if(!cat)throw Error('No active vendor category is available.');
