@@ -219,7 +219,7 @@ export default async req=>{
     left join market.categories c on c.id=a.category_id
     where b.event_id=${p.event_id} and b.status in ('approved','held','paid')
     union all
-    select i.id,i.name,i.business,coalesce(nullif(i.category,''),nullif(i.selling,'')) category,lower(trim(i.space)) space,'imported' source
+    select i.id,i.name,i.business,nullif(i.category,'') category,lower(trim(i.space)) space,'imported' source
     from market.imported_attendees i
     where i.event_id=${p.event_id} and not coalesce(i.cancelled,false)
     order by name`;
