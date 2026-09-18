@@ -1,1 +1,1 @@
-export function staffActionAllowed(u,action){return u.admin===true||(u.manager===true&&['manager','booking','photo','rsvp-list','attendance','imported-attendance','inspection'].includes(action));}
+export function staffActionAllowed(u,action){return u.admin===true||(u.manager===true&&['manager','floor-attendees','booking','photo','rsvp-list','attendance','imported-attendance','inspection'].includes(action));}
