@@ -115,7 +115,8 @@ export default async req=>{
  const [importedSpace]=await tx`select count(*)::int as used from market.imported_attendees where event_id=${event.id} and lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;
  const [override]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`; const effectiveCategoryLimit=override?.vendor_limit??cat.vendor_limit; const categoryFull=!p.exception?.trim()&&(existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length+Number(imported.category_used||0))>=effectiveCategoryLimit;
  const spaceFull=(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0))>=event[d.space+'_capacity'];
- const areaClosed=d.space==='indoor'?event.indoor_open===false:event.outdoor_open===false;\n const waitlist=event.sold_out||areaClosed||categoryFull||spaceFull;
+ const areaClosed=d.space==='indoor'?event.indoor_open===false:event.outdoor_open===false;
+ const waitlist=event.sold_out||areaClosed||categoryFull||spaceFull;
  if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,cat.vendor_limit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
  const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','waitlist','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
  await tx`insert into market.bookings(application_id,event_id,space,price,status) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},${waitlist?'waitlist':'pending'})`;}
