@@ -13,7 +13,19 @@ async function paypalInvoiceStatus(token,id){
  try{const r=await fetch(paypalBase()+'/v2/invoicing/invoices/'+encodeURIComponent(id),{headers:{Authorization:'Bearer '+token,'Accept':'application/json'},signal:AbortSignal.timeout(10000)});if(!r.ok)return null;const v=await r.json();return v.status||null;}catch{return null;}
 }
 const paidStatuses=new Set(['PAID','MARKED_AS_PAID','PAID_EXTERNAL']);
-const displayDate=d=>new Date(String(d).slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});
+const dateOnly=v=>{
+ const s=String(v??'').trim();
+ const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+ if(!m)return null;
+ const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]);
+ const x=new Date(y,mo-1,d,12,0,0);
+ if(x.getFullYear()!==y||x.getMonth()!==mo-1||x.getDate()!==d)return null;
+ return x;
+};
+const displayDate=v=>{
+ const d=dateOnly(v);
+ return d?d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}):'your scheduled market date';
+};
 
 async function handleHeldPayments(){
  const sql=db(),token=await paypalToken();
@@ -34,6 +46,7 @@ async function handleHeldPayments(){
    }
   }
   const heldAt=new Date(b.held_at),remindAt=new Date(heldAt.getTime()+12*3600000),cancelAt=new Date(heldAt.getTime()+30*3600000),now=new Date();
+  if(!Number.isFinite(heldAt.getTime())){await audit(sql,'system','payment hold date invalid',{id:b.id,held_at:String(b.held_at||'')});continue;}
   // Keep inventory reserved for the full 30-hour payment window.
   if(!b.hold_until||new Date(b.hold_until).getTime()<cancelAt.getTime()-60000)await sql`update market.bookings set hold_until=${cancelAt.toISOString()} where id=${b.id} and status='held'`;
   if(now>=remindAt&&now<cancelAt){
@@ -46,7 +59,7 @@ async function handleHeldPayments(){
   if(now>=cancelAt){
    const [current]=await sql`select status from market.bookings where id=${b.id}`;
    if(current?.status==='held'){
-    const day=displayDate(b.date),body=`Hi ${b.name},\n\nYour Trinity Crafters Market reservation for ${day} has been automatically cancelled because payment was not received within 30 hours of the invoice being sent.\n\nThe space has now been released and may be booked by another vendor. If you would still like to attend this market, you will need to submit a new application, subject to current availability.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
+    const day=displayDate(b.date),body=`Hi ${b.name},\n\nYour Trinity Crafters Market reservation for ${day} has been automatically cancelled because payment was not received within 30 hours of the invoice being sent.\n\nThe space has now been released and may be booked by another vendor. If you would still like to attend this market, you will need to submit a new application, subject to current availability.\n\nMarket: ${b.location}\nSpace: ${b.space==='indoor'?'Indoor':'Outdoor'}\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
     await sql.begin(async tx=>{await tx`update market.bookings set status='cancelled',hold_until=null where id=${b.id} and status='held'`;await queue(tx,b.email,`Reservation cancelled — ${day}`,body);await audit(tx,'system','payment hold auto-cancelled',{id:b.id,held_at:heldAt.toISOString(),cancel_at:cancelAt.toISOString()});});
    }
   }
