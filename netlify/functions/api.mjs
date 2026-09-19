@@ -365,6 +365,25 @@ export default async req=>{
   await audit(sql,u,'review notes',{id:p.id});
   return json({ok:true});
  }
+ if(action==='reinstate-booking'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  required(p.reference,'payment reference');required(p.payment_method,'payment method');
+  await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;
+   const [b]=await tx`select b.*,a.category_id,a.user_id,a.email,a.phone,a.name,a.business,c.vendor_limit,e.date,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${p.id} for update`;
+   if(!b)throw Error('Booking not found.');
+   if(!['cancelled','expired'].includes(b.status))throw Error('Only cancelled or expired bookings can be reinstated.');
+   if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before reinstating.');
+   const [e]=await tx`select * from market.events where id=${b.event_id}`;
+   const others=await tx`select x.*,a.category_id from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=${b.event_id} and x.id<>${b.id}`;
+   checkCapacity(e,others,b.space,b.category_id,b.vendor_limit,b.category_exception);
+   await tx`update market.bookings set status='paid',hold_until=null,payment_reference=${p.reference.trim()},payment_method=${p.payment_method.trim().slice(0,100)},paid_at=now() where id=${b.id}`;
+   const day=new Date(String(b.date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});
+   const body=`Hi ${b.name},\n\nYour vendor booking has been reinstated and your payment has been received. Your market date is approved and confirmed.\n\n${day}\n10 AM–3 PM Eastern\n${b.location}\n${b.address}\n${b.space==='indoor'?'Indoor':'Outdoor'} space — ${(b.price/100).toFixed(2)}\n\nPayment status: PAID\n\nYour space and category are confirmed for this market date. We look forward to seeing you!\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
+   await queue(tx,b.email,`Booking confirmed — Trinity Crafters Market, ${day}`,body);
+   await audit(tx,u,'booking reinstated',{id:b.id,status:'paid',reference:p.reference,payment_method:p.payment_method});
+  });
+  await flushMail();return json({ok:true});
+ }
  if(action==='booking'){
  if(u.manager&&(!['approved','declined'].includes(p.status)||p.exception===true))return json({error:'Managers may approve or decline applications only.'},403);
  await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);
