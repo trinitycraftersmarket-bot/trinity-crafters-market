@@ -50,6 +50,44 @@ export default async req=>{
  if(action==='config')return json({ready:ready(),url:process.env.SUPABASE_URL||'',key:process.env.SUPABASE_PUBLISHABLE_KEY||''});
  if(!ready())return json({error:'The market is being set up. Applications are not open yet.'},503);
  if(action==='public')return json(await publicData());
+ if(action==='survey'){
+  const token=url.searchParams.get('token');if(!token)return json({error:'Survey link is invalid.'},400);
+  const [s]=await db()`select s.id,s.vendor_name,s.business,s.submitted_at,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id where s.token=${token}::uuid`;
+  if(!s)return json({error:'Survey link is invalid or has expired.'},404);
+  if(req.method==='GET')return json({vendor_name:s.vendor_name,business:s.business,date:s.date,location:s.location,submitted:!!s.submitted_at});
+  if(req.method!=='POST')return json({error:'Method not allowed'},405);
+  if(s.submitted_at)return json({error:'Thank you — this survey has already been submitted.'},409);
+  const p=await req.json(),rating=n=>{const x=Number(n);if(!Number.isInteger(x)||x<1||x>5)throw Error('Please complete all star ratings.');return x;};
+  const traffic=['Poor','Fair','Good','Very Good','Excellent'],returns=['Definitely','Probably','Maybe','No'],sales=['','Under $100','$100–249','$250–499','$500–749','$750+'];
+  if(!traffic.includes(p.traffic_rating)||!returns.includes(p.return_intent)||!sales.includes(p.sales_range||''))throw Error('Please complete the survey choices.');
+  const overall=rating(p.overall_rating),communication=rating(p.communication_rating),venue=rating(p.venue_rating),went=String(p.went_well||'').trim().slice(0,4000),improve=String(p.improve||'').trim().slice(0,4000),testimonial=p.testimonial_permission===true;
+  await db().begin(async tx=>{
+   await tx`update market.vendor_surveys set overall_rating=${overall},communication_rating=${communication},venue_rating=${venue},traffic_rating=${p.traffic_rating},return_intent=${p.return_intent},sales_range=${p.sales_range||''},went_well=${went},improve=${improve},testimonial_permission=${testimonial},submitted_at=now() where id=${s.id} and submitted_at is null`;
+   const body=`New post-market survey response
+
+Vendor: ${s.business||s.vendor_name}
+Contact: ${s.vendor_name}
+Market: ${String(s.date).slice(0,10)} — ${s.location}
+
+Overall: ${overall}/5
+Communication: ${communication}/5
+Venue/setup: ${venue}/5
+Shopper traffic: ${p.traffic_rating}
+Would return: ${p.return_intent}
+Sales range: ${p.sales_range||'Not provided'}
+
+What went well:
+${went||'No comment'}
+
+What could improve:
+${improve||'No comment'}
+
+Testimonial permission: ${testimonial?'Yes':'No'}`;
+   await queue(tx,'trinitycraftersmarket@gmail.com','New vendor survey — '+(s.business||s.vendor_name),body);
+   await audit(tx,'survey','post-market survey submitted',{survey_id:s.id,event_id:s.event_id,overall_rating:overall});
+  });
+  await flushMail();return json({ok:true});
+ }
  const u=await identity(req),sql=db();
  if(action==='me')return json(u);
  if(req.method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin)return json({error:'Invalid request origin'},403);
@@ -193,6 +231,10 @@ export default async req=>{
        or (nullif(trim(i.business),'') is not null and lower(trim(a2.business))=lower(trim(i.business)))
   )
   order by business,name`);
+ }
+ if(action==='survey-report'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  return json(await sql`select s.*,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id order by e.date desc,s.submitted_at desc nulls last,s.business,s.vendor_name`);
  }
  if(action==='admin'){const monthlyInvoices=await sql`select * from market.vendor_invoices where status<>'paid' order by created_at desc`;return json({...(await publicData()),monthlyInvoices,importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,categoryLimits:await sql`select * from market.event_category_limits`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});}
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
