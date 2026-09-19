@@ -123,10 +123,47 @@ trinitycraftersmarket@gmail.com`;
  }
 }
 
+async function sendPostMarketSurveys(){
+ const sql=db(),site=(process.env.SITE_URL||'https://trinitylutzmarkets.com').replace(/\/$/,'');
+ // Create survey invitations only for vendors actually marked as attended, on the morning after the market.
+ const regular=await sql`
+  select b.id booking_id,null::uuid imported_attendee_id,b.event_id,a.name vendor_name,a.business,a.email,e.date,l.name location
+  from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id
+  where b.checked_in=true and b.status in ('approved','paid') and e.date=((now() at time zone 'America/New_York')::date-1)
+ `;
+ const imported=await sql`
+  select null::uuid booking_id,i.id imported_attendee_id,i.event_id,i.name vendor_name,coalesce(nullif(i.business,''),i.name) business,i.email,e.date,l.name location
+  from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id
+  where i.attendance_state='checked_in' and not coalesce(i.cancelled,false) and e.date=((now() at time zone 'America/New_York')::date-1)
+ `;
+ for(const v of [...regular,...imported]){
+  if(!String(v.email||'').trim())continue;
+  const [s]=await sql`insert into market.vendor_surveys(event_id,booking_id,imported_attendee_id,vendor_name,business,email)
+   values(${v.event_id},${v.booking_id},${v.imported_attendee_id},${v.vendor_name||'Vendor'},${v.business||''},${v.email})
+   on conflict do nothing returning id,token`;
+  if(!s)continue;
+  const day=displayDate(v.date),link=site+'/#survey/'+s.token;
+  const body=`Hi ${v.vendor_name||'Vendor'},
+
+Thank you for vending with Trinity Crafters Market at our ${day} market. We appreciate you being part of our vendor community.
+
+We'd love to know how your experience went. Your feedback helps us improve future markets for both vendors and shoppers, and the survey takes about one minute.
+
+Take the survey:
+${link}
+
+Thank you again,
+Trinity Crafters Market
+trinitycraftersmarket@gmail.com`;
+  await sql.begin(async tx=>{await queue(tx,v.email,'Thank you for joining us! Tell us how we did',body);await tx`update market.vendor_surveys set emailed_at=now() where id=${s.id}`;await audit(tx,'system','post-market survey sent',{survey_id:s.id,event_id:v.event_id,email:v.email});});
+ }
+}
+
 export default async()=>{
  if(!ready())return;
  await handleHeldPayments();
  await sendDayBeforeVendorReminders();
+ await sendPostMarketSurveys();
  await applyMonthlyLateFees();
  await flushMail();
  const [last]=await db()`select value from market.settings where key='last_sync'`;
