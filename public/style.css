@@ -2,3 +2,5 @@
 
 @media print{header,footer,#notice,.actions,.tabs,button,form,nav{display:none!important}body{background:white;color:black}main{max-width:none;padding:0}.card{break-inside:avoid;box-shadow:none}.inspection-row.needs_correction,.inspection-row.refused{background:#f7c9c5!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 #manager-content img{max-width:100%;height:auto}
+
+.survey-stars{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 24px}.survey-stars label{margin:0;cursor:pointer;display:flex;flex-direction:column;align-items:center}.survey-stars input{position:absolute;opacity:0;width:1px;height:1px}.survey-stars span{font-size:34px;line-height:1;color:#9aa8a2}.survey-stars input:checked+span{color:#a87300}.survey-stars label:has(input:checked)~label span{color:#9aa8a2}.survey-stars small{text-align:center}.survey-stars label:has(input:focus-visible){outline:3px solid #dc951a;outline-offset:3px;border-radius:4px}
