@@ -8,6 +8,14 @@ export default async req=>{
   if(!u.admin)return json({error:'Organizer access only.'},403);
   if(req.method==='GET'){
    const params=new URL(req.url).searchParams;
+   if(params.has('backfill')){
+    const transactionId=String(params.get('transaction_id')||'').trim(),approvalCode=String(params.get('approval_code')||'').trim(),email=String(params.get('email')||'').trim().toLowerCase(),amount=Math.round(Number(params.get('amount'))*100);
+    if(!transactionId||!approvalCode||!email||!Number.isFinite(amount))return json({error:'Backfill details are incomplete.'},400);
+    const [row]=await sql`select i.id,i.name,i.business,i.email,i.invoice_amount,i.payment_method,e.date from market.imported_attendees i join market.events e on e.id=i.event_id where lower(trim(i.email))=${email} and i.invoice_amount=${amount} and lower(coalesce(i.payment_method,''))='credit card' order by i.created_at desc limit 1`;
+    if(!row)return json({error:'Matching manual credit-card booking not found.'},404);
+    await audit(sql,u,'GoDaddy payment receipt backfill',{booking_id:row.id,transaction_id:transactionId,approval_code:approvalCode,amount});
+    return json({ok:true,booking:row,transaction_id:transactionId,approval_code:approvalCode});
+   }
    if(params.has('q')){
     const q=String(params.get('q')||'').trim().toLowerCase().slice(0,150);
     if(q.length<2)return json({vendors:[]});
