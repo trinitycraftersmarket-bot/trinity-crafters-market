@@ -46,6 +46,36 @@ export default async req=>{
   }
   if(req.method!=='POST')return json({error:'Method not allowed.'},405);
   const p=await req.json();
+  let godaddyPayment=null;
+  if(p.payment_method==='credit card'){
+   const ref=String(p.payment_reference||'').trim();
+   if(!ref)throw Error('Enter the GoDaddy transaction ID / payment reference after the card is approved.');
+   const pat=Netlify.env.get('GODADDY_PAT'),storeId=Netlify.env.get('GODADDY_STORE_ID');
+   if(!pat||!storeId)throw Error('GoDaddy Payments connection is not configured.');
+   const headers={Authorization:'Bearer '+pat};
+   let transaction=null;
+   if(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ref)){
+    const rr=await fetch('https://api.godaddy.com/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions/'+encodeURIComponent(ref),{headers});
+    if(rr.ok)transaction=await rr.json();
+   }
+   if(!transaction){
+    const rr=await fetch('https://api.godaddy.com/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions?pageSize=100&sortOrder=DESC',{headers});
+    if(!rr.ok)throw Error('Could not verify the GoDaddy payment.');
+    const list=await rr.json(),items=Array.isArray(list.items)?list.items:[];
+    transaction=items.find(x=>[x.id,x.transactionId,x.transactionRefNum,x.legacyMetadata?.processorTransactionId,x.processorResponse?.legacyProcessorData?.transactionId,x.processorResponse?.legacyProcessorData?.retrievalRefNum].filter(Boolean).map(String).includes(ref));
+    if(transaction?.id&&!transaction.fundingSource){
+     const rr2=await fetch('https://api.godaddy.com/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions/'+encodeURIComponent(transaction.id),{headers});
+     if(rr2.ok)transaction=await rr2.json();
+    }
+   }
+   if(!transaction)throw Error('GoDaddy transaction not found. Check the transaction ID / payment reference.');
+   const last4=transaction.fundingSource?.cardDetail?.legacyData?.numberLast4||null;
+   const brand=transaction.fundingSource?.cardDetail?.type||transaction.fundingSource?.cardDetail?.legacyData?.type||null;
+   const approval=transaction.processorResponse?.approvalCode||transaction.legacyMetadata?.approvalCode||null;
+   const txid=transaction.id||transaction.transactionId||ref;
+   const txref=transaction.transactionRefNum||ref;
+   godaddyPayment={transaction_id:txid,transaction_reference:txref,last4,brand,approval_code:approval,status:transaction.status||null,created_at:transaction.createdAt||null};
+  }
   const name=String(p.name||'').trim(),selling=String(p.selling||'').trim(),phone=String(p.phone||'').trim(),email=String(p.email||'').trim().toLowerCase(),business=String(p.business||'').trim();
   if(!name||!selling||!phone||!email)throw Error('Name, what they sell, phone number, and email address are required.');
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))throw Error('Enter a valid email address.');
@@ -69,8 +99,8 @@ export default async req=>{
   if(!ymd)throw Error('Market date is invalid.');
   const d=new Date(ymd+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
   const body=`TRINITY CRAFTERS MARKET\nBOOKING CONFIRMATION\n\nHi ${name},\n\nYour vendor space is confirmed.\n\nMarket: ${event.market_name||event.title||'Trinity Crafters Market'}\nDate: ${d}\nLocation: ${event.location}\nAddress: ${event.address||''}\nSpace: ${p.space}\nWhat you sell: ${selling}\nPayment: ${p.payment_method==='monthly billing'?'Monthly Billing — '+money(amount)+' due; an invoice will be sent.':money(amount)+' by '+p.payment_method}\n\nPlease keep this email for your records. Additional setup instructions will be sent before the market.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
-  await sql.begin(async tx=>{await queue(tx,email,'Trinity Crafters Market Booking Confirmation — '+d,body);await audit(tx,u,'manual vendor booking',{id:row.id,event_id:event.id,email,space:p.space,payment_method:p.payment_method,amount});});
+  await sql.begin(async tx=>{await queue(tx,email,'Trinity Crafters Market Booking Confirmation — '+d,body);await audit(tx,u,'manual vendor booking',{id:row.id,event_id:event.id,email,space:p.space,payment_method:p.payment_method,amount,godaddy_payment:godaddyPayment});});
   await flushMail();
-  return json({ok:true,id:row.id,amount});
+  return json({ok:true,id:row.id,amount,godaddy_payment:godaddyPayment});
  }catch(e){console.error(e);return json({error:e.message||'Could not save manual booking.'},400);}
 };
