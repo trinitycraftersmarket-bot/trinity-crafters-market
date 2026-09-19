@@ -104,8 +104,9 @@ export default async req=>{
   if(!cat)throw Error('No active vendor category is available.');
   const amount=p.amount==null||p.amount===''?(p.space==='Inside'?Number(event.indoor_price):Number(event.outdoor_price)):Math.round(Number(p.amount)*100);
   if(!Number.isFinite(amount)||amount<0)throw Error('Enter a valid payment amount.');
-  const [row]=await sql`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state,payment_status,invoice_amount,selling,payment_method)
-   values(${event.id},${name},${business},${email},${phone},${cat.name},${cat.id},false,${p.space},'Manual booking','not_marked',${p.payment_method==='monthly billing'?'unpaid':'paid'},${amount},${selling},${p.payment_method}) returning id`;
+  await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz`;
+  const [row]=await sql`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state,payment_status,invoice_amount,selling,payment_method,payment_reference,approval_code,card_brand,card_last4,payment_processor_status,paid_at)
+   values(${event.id},${name},${business},${email},${phone},${cat.name},${cat.id},false,${p.space},'Manual booking','not_marked',${p.payment_method==='monthly billing'?'unpaid':'paid'},${amount},${selling},${p.payment_method==='credit card'?'GoDaddy Payments':p.payment_method},${godaddyPayment?.transaction_reference||godaddyPayment?.transaction_id||null},${godaddyPayment?.approval_code||null},${godaddyPayment?.brand||null},${godaddyPayment?.last4||null},${godaddyPayment?.status||null},${p.payment_method==='monthly billing'?null:(godaddyPayment?.created_at||new Date().toISOString())}) returning id`;
   const ymd=dateOnly(event.date);
   if(!ymd)throw Error('Market date is invalid.');
   const d=new Date(ymd+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
