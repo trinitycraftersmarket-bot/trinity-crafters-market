@@ -52,7 +52,7 @@ export default async req=>{
  if(action==='public')return json(await publicData());
  if(action==='survey'){
   const token=url.searchParams.get('token');if(!token)return json({error:'Survey link is invalid.'},400);
-  const [s]=await db()`select s.id,s.vendor_name,s.business,s.submitted_at,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id where s.token=${token}::uuid`;
+  const [s]=await db()`select s.id,s.event_id,s.vendor_name,s.business,s.submitted_at,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id where s.token=${token}::uuid`;
   if(!s)return json({error:'Survey link is invalid or has expired.'},404);
   if(req.method==='GET')return json({vendor_name:s.vendor_name,business:s.business,date:s.date,location:s.location,submitted:!!s.submitted_at});
   if(req.method!=='POST')return json({error:'Method not allowed'},405);
