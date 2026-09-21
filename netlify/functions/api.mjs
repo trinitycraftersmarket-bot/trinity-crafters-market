@@ -465,8 +465,8 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.id)throw Error('Vendor booking not found.');
   const postedAt=new Date().toISOString();
-  if(p.imported){const [x]=await sql\`update market.imported_attendees set featured_posted_at=\${postedAt} where id=\${p.id} returning id\`;if(!x)throw Error('Imported attendee not found.');}
-  else{const [x]=await sql\`update market.bookings set featured_posted_at=\${postedAt} where id=\${p.id} returning id\`;if(!x)throw Error('Booking not found.');}
+  if(p.imported){const [x]=await sql`update market.imported_attendees set featured_posted_at=${postedAt} where id=${p.id} returning id`;if(!x)throw Error('Imported attendee not found.');}
+  else{const [x]=await sql`update market.bookings set featured_posted_at=${postedAt} where id=${p.id} returning id`;if(!x)throw Error('Booking not found.');}
   await audit(sql,u,'featured vendor post',{id:p.id,imported:!!p.imported,posted_at:postedAt});return json({ok:true,posted_at:postedAt});
  }
  if(action==='attendance'){
