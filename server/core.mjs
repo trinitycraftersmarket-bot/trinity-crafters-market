@@ -38,5 +38,13 @@ export async function publicData(){
    union all
    select i.event_id,lower(trim(i.space)) space,case when nullif(trim(i.selling),'') is not null then trim(i.selling) when lower(coalesce(i.category,'')) like 'other%' then null else nullif(trim(i.category),'') end category from market.imported_attendees i where not coalesce(i.cancelled,false)
  ) x where category is not null and lower(trim(space)) in ('indoor','inside','outdoor','outside') order by event_id,space,category`;
- return {events,categories,locations,counts,offerings};
+ const publicVendors=await sql`select event_id,business,description,category from (
+   select b.event_id,nullif(trim(a.business),'') business,nullif(trim(a.description),'') description,nullif(trim(c.name),'') category
+   from market.bookings b join market.applications a on a.id=b.application_id left join market.categories c on c.id=a.category_id
+   where b.status in ('approved','paid') or (b.status='held' and b.hold_until>now())
+   union all
+   select i.event_id,nullif(trim(coalesce(i.business,i.name)),'') business,nullif(trim(i.selling),'') description,nullif(trim(i.category),'') category
+   from market.imported_attendees i where not coalesce(i.cancelled,false)
+ ) x where business is not null order by event_id,business`;
+ return {events,categories,locations,counts,offerings,publicVendors};
 }
