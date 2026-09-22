@@ -55,6 +55,18 @@ export default async req=>{
    }
    return json({ok:true});
   }
+  if(p.action==='request-missing-info'){
+   const recipient=clean(v.email,320);if(!recipient)throw Error('This vendor does not have an email address, so a request cannot be emailed.');
+   const missing=[];if(!clean(v.phone,50))missing.push('phone number');if(!clean(v.billing_address,500)&&!imported)missing.push('billing address');
+   if(!missing.length)throw Error('This vendor does not have any requestable contact information missing.');
+   const subject='Vendor Contact Information Update';
+   const body=`Hi ${v.name||v.business||'Vendor'},\n\nWe are updating our vendor records for Trinity Crafters Market / Lutz Crafter's Market and noticed that we are missing your ${missing.join(' and ')}.\n\nPlease reply to this email with the missing information so we can keep your vendor record current.\n\nThank you!\nTrinity Crafters Market / Lutz Crafter's Market`;
+   await sql.begin(async tx=>{await queue(tx,recipient,subject,body);});await flushMail();
+   let [delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;
+   for(let attempt=0;attempt<3&&!delivery?.sent_at&&!delivery?.error;attempt++){await flushMail();[delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;}
+   if(!delivery?.sent_at)throw Error(delivery?.error||'The request could not be delivered. Please try again.');
+   await audit(sql,u,'vendor missing info requested',{id:String(p.id),recipient,missing});return json({ok:true,recipient,missing,sent_at:delivery.sent_at});
+  }
   if(p.action==='confirm'){
    const all=p.all_dates===true;
    let rows=[v];
