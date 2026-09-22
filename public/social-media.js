@@ -99,6 +99,12 @@
        const channels=selected.map(x=>({id:x.value,service:x.dataset.service}));
        const ids=channels.map(x=>x.id);
        const media=document.querySelector('#social-media-url').value.trim();
+       const marketId=document.querySelector('#post-date')?.value||'general';
+       const serviceList=selected.map(x=>String(x.dataset.service||'').toLowerCase());
+       let postText=draft.value;
+       const base=location.origin+'/#home';
+       const tagged=(service)=>base+'?utm_source='+encodeURIComponent(service)+'&utm_medium=social&utm_campaign=market_'+encodeURIComponent(marketId);
+       if(serviceList.length===1) postText=postText.replace(base,tagged(serviceList[0]));
        const dt=document.querySelector('#social-when').value;
        if(!ids.length)throw Error('Choose Facebook, Instagram, or both.');
        if(selected.some(x=>x.dataset.service==='instagram')&&!media)throw Error('Instagram requires an image. Choose a photo above.');
@@ -106,7 +112,7 @@
        if(!confirm(dt?'Schedule this post in Buffer?':'Publish this post now through Buffer?'))return;
        button.disabled=true;
        const result=await api('POST',{
-         text:draft.value,
+         text:postText,
          media,
          channels,
          dateTime:dt?new Date(dt).toISOString():null
