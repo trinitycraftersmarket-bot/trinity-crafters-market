@@ -10,7 +10,7 @@ async function normalVendor(sql,id){
  return r;
 }
 async function importedVendor(sql,id){
- try{const [r]=await sql`select i.*,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;return r||null;}catch{return null;}
+ try{const [r]=await sql`select i.*,coalesce(nullif(v.name,''),i.name) name,coalesce(nullif(v.business,''),i.business) business,coalesce(nullif(v.email,''),i.email) email,coalesce(nullif(v.phone,''),i.phone) phone,coalesce(v.billing_address,'') billing_address,coalesce(nullif(v.description,''),i.selling,'') description,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i left join market.vendors v on v.id=i.vendor_id join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;return r||null;}catch{return null;}
 }
 export default async req=>{
  try{
@@ -29,7 +29,7 @@ export default async req=>{
    await sql.begin(async tx=>{
     await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},updated_at=now() where id=${v.vendor_id}`;
     await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where vendor_id=${v.vendor_id}`;
-    await tx`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone} where vendor_id=${v.vendor_id}`;
+    await tx`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description} where vendor_id=${v.vendor_id}`;
     await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:v.vendor_id,business:data.business});
    });
    return json({ok:true,vendor_id:v.vendor_id});
