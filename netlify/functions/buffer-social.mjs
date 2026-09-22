@@ -98,12 +98,13 @@ async function getChannels() {
   return channels;
 }
 
-async function createPost({ channelId, text, media, dateTime }) {
+async function createPost({ channelId, text, media, dateTime, type = 'post' }) {
   const input = {
     text,
     channelId,
     schedulingType: 'automatic',
-    mode: dateTime ? 'customScheduled' : 'shareNow'
+    mode: dateTime ? 'customScheduled' : 'shareNow',
+    type
   };
 
   if (dateTime) input.dueAt = dateTime;
@@ -151,7 +152,7 @@ export default async (request) => {
 
     if (request.method === 'GET') {
       const channels = await getChannels();
-      const events = await db()`select id,date,title,facebook_event_url from market.events where date >= current_date order by date`;
+      const events = await db()`select id,date::text as date,title,facebook_event_url from market.events where date >= current_date order by date`;
       return reply({ ok: true, configured: true, channels, events });
     }
 
@@ -205,7 +206,7 @@ export default async (request) => {
 
     for (const channelId of channelIds) {
       try {
-        const post = await createPost({ channelId, text, media, dateTime: isoDate });
+        const post = await createPost({ channelId, text, media, dateTime: isoDate, type: 'post' });
         created.push(post);
       } catch (error) {
         failed.push({
