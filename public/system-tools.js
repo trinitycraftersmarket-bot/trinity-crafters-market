@@ -110,6 +110,7 @@
           <h2>Event Day</h2>
           <label>Market<select id="ed-event">${d.events.map((e) => `<option value="${esc(e.id)}" ${e.id === d.event_id ? 'selected' : ''}>${esc(String(e.date).slice(0, 10) + ' — ' + (e.market_name || e.title || e.location))}</option>`).join('')}</select></label>
           <p>Quick mobile view for setup, inspection and attendance.</p>
+          <div class="actions"><button id="ed-remind">Email Vendors Missing Online Check-In</button></div>
         </section>
         <div class="list">${d.rows.map((r) => `
           <article class="card">
@@ -128,6 +129,11 @@
           </article>`).join('') || '<div class="card">No vendors for this event.</div>'}</div>`;
 
       panel.querySelector('#ed-event').onchange = (e) => renderEventDay(panel, button, tabs, e.target.value);
+      panel.querySelector('#ed-remind').onclick = async () => {
+        if (!confirm('Email every approved vendor on this date who has not completed online check-in?')) return;
+        try { const r = await request('send-checkin-reminders', { method: 'POST', body: { event_id: d.event_id } }); notice('Online check-in reminder sent to ' + r.count + ' vendor(s).'); }
+        catch (e) { notice(e.message); }
+      };
 
       const updateAttendance = async (btn, state) => {
         const imported = btn.dataset.imported === '1';
@@ -200,6 +206,8 @@
         const net = gross - Number(x.expenses || 0);
         return [String(x.date).slice(0, 10), x.market_name, (Number(x.booking_revenue || 0) / 100).toFixed(2), (Number(x.imported_revenue || 0) / 100).toFixed(2), (Number(x.expenses || 0) / 100).toFixed(2), (net / 100).toFixed(2)];
       });
+      const plRows = d.profit_loss.map((x) => { const income=Number(x.booking_income||0)+Number(x.imported_income||0), expenses=Number(x.expenses||0); return [String(x.date).slice(0,10),x.market_name,(income/100).toFixed(2),(expenses/100).toFixed(2),((income-expenses)/100).toFixed(2)]; });
+      const arRows = d.accounts_receivable.map((x) => [x.business||x.name,x.email||'',x.source,x.market_date?String(x.market_date).slice(0,10):'',(Number(x.amount||0)/100).toFixed(2),x.due_at?new Date(x.due_at).toLocaleDateString():'Due now',x.status]);
 
       panel.innerHTML = `
         <section class="card">
@@ -212,6 +220,8 @@
             <button id="r-waitlist">Wait List</button>
             <button id="r-categories">Category Summary</button>
             <button id="r-revenue">Event Revenue</button>
+            <button id="r-pl">Profit & Loss</button>
+            <button id="r-ar">A/R — Money Owed</button>
           </div>
           <div class="actions">
             <button class="secondary" id="c-vendors">Vendor CSV</button>
@@ -220,6 +230,8 @@
             <button class="secondary" id="c-waitlist">Wait List CSV</button>
             <button class="secondary" id="c-categories">Categories CSV</button>
             <button class="secondary" id="c-revenue">Revenue CSV</button>
+            <button class="secondary" id="c-pl">P&amp;L CSV</button>
+            <button class="secondary" id="c-ar">A/R CSV</button>
           </div>
         </section>`;
 
@@ -228,7 +240,363 @@
       panel.querySelector('#r-payments').onclick = () => printTable('Payments', ['Date','Vendor','Amount','Method','Note'], paymentRows.map((r) => [r[0] ? new Date(r[0]).toLocaleString() : '', r[1], '$' + r[2], r[3], r[4]]));
       panel.querySelector('#r-waitlist').onclick = () => printTable('Wait List', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
       panel.querySelector('#r-categories').onclick = () => printTable('Category Summary', ['Category','Confirmed bookings'], categoryRows);
-      panel.querySelector('#r-revenue').onclick = () => printTable('Event Revenue', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows.map((r) => [r[0], r[1], '$' + r[2], '$' + r[3], '$' + r[4], '$' + r[5]]));
+      panel.querySelector('#r-revenue').onclick = () => printTable('Event Revenue', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows.map((r) => [r[0], r[1], '
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+      panel.querySelector('#c-pl').onclick = () => exportCsv('profit-and-loss.csv', ['Date','Market','Income','Expenses','Profit / Loss'], plRows);
+      panel.querySelector('#c-ar').onclick = () => exportCsv('accounts-receivable.csv', ['Vendor','Email','Source','Market Date','Amount Due','Due Date','Status'], arRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
+ + r[2], '
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
+ + r[3], '
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
+ + r[4], '
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
+ + r[5]]));
+      panel.querySelector('#r-pl').onclick = () => printTable('Profit & Loss', ['Date','Market','Income','Expenses','Profit / Loss'], plRows.map((r) => [r[0],r[1],'
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
++r[2],'
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
++r[3],'
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
++r[4]]));
+      panel.querySelector('#r-ar').onclick = () => printTable('Accounts Receivable — Money Owed', ['Vendor','Email','Source','Market Date','Amount Due','Due Date','Status'], arRows.map((r) => [r[0],r[1],r[2],r[3],'
+
+      panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
+      panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
+      panel.querySelector('#c-payments').onclick = () => exportCsv('payments.csv', ['Date','Vendor','Amount','Method','Note'], paymentRows);
+      panel.querySelector('#c-waitlist').onclick = () => exportCsv('wait-list.csv', ['Date','Vendor','Email','Phone','Category','Space'], waitRows);
+      panel.querySelector('#c-categories').onclick = () => exportCsv('category-summary.csv', ['Category','Confirmed bookings'], categoryRows);
+      panel.querySelector('#c-revenue').onclick = () => exportCsv('event-revenue.csv', ['Date','Market','Booking Revenue','Imported Revenue','Expenses','Net'], revenueRows);
+    } catch (e) {
+      panel.innerHTML = '<div class="card"><h2>Reports Center</h2><p>' + esc(e.message) + '</p></div>';
+    }
+  }
+
+  function install() {
+    if (location.hash !== '#admin') return;
+    const tabs = document.querySelector('.tabs');
+    const panel = document.querySelector('#panel');
+    if (!tabs || !panel) return;
+
+    if (!tabs.querySelector('[data-system-health]')) {
+      const h = document.createElement('button');
+      h.textContent = 'System Health';
+      h.dataset.systemHealth = '1';
+      h.onclick = () => renderHealth(panel, h, tabs);
+      tabs.appendChild(h);
+
+      const e = document.createElement('button');
+      e.textContent = 'Event Day';
+      e.dataset.eventDay = '1';
+      e.onclick = () => renderEventDay(panel, e, tabs);
+      tabs.appendChild(e);
+
+      const r = document.createElement('button');
+      r.textContent = 'Reports Center';
+      r.dataset.reportsCenter = '1';
+      r.onclick = () => renderReports(panel, r, tabs);
+      tabs.appendChild(r);
+    }
+  }
+
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+  addEventListener('hashchange', () => setTimeout(install, 100));
+  install();
+})();
++r[4],r[5],r[6]]));
 
       panel.querySelector('#c-vendors').onclick = () => exportCsv('vendor-contacts.csv', ['Account','Business','Name','Category','Email','Phone','Everything Disclosed'], vendorRows);
       panel.querySelector('#c-invoices').onclick = () => exportCsv('monthly-billing.csv', ['Vendor','Period','Amount','Status','Due','Method'], invoiceRows);
