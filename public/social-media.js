@@ -72,9 +72,10 @@
        const sel=document.querySelector('#facebook-event-date'), url=document.querySelector('#facebook-event-url').value.trim();
        if(!sel.value)throw Error('Choose a market date.');
        if(!url)throw Error('Save the Facebook Event link for this date first.');
-       await navigator.clipboard.writeText(draft.value);
+       const postText=draft.value;
+       try{await navigator.clipboard.writeText(postText);}catch{}
        window.open(url,'_blank','noopener');
-       notice('Post copied. Paste it into the Facebook Event discussion.');
+       notice('Facebook opened. Tap “Say something…” and choose Paste. Facebook does not allow websites to prefill Event post text automatically.');
      }catch(e){notice(e.message);}
    };
 
@@ -87,7 +88,8 @@
      const button=document.querySelector('#social-publish');
      try{
        const selected=[...document.querySelectorAll('.buffer-channel:checked')];
-       const ids=selected.map(x=>x.value);
+       const channels=selected.map(x=>({id:x.value,service:x.dataset.service}));
+       const ids=channels.map(x=>x.id);
        const media=document.querySelector('#social-media-url').value.trim();
        const dt=document.querySelector('#social-when').value;
        if(!ids.length)throw Error('Choose Facebook, Instagram, or both.');
@@ -98,7 +100,7 @@
        const result=await api('POST',{
          text:draft.value,
          media,
-         channelIds:ids,
+         channels,
          dateTime:dt?new Date(dt).toISOString():null
        });
        if(result.partial){
