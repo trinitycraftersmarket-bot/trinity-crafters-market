@@ -19,8 +19,9 @@ export default async req=>{
   const p=await req.json(),sql=db(),imported=p.imported===true;
   let v=imported?await importedVendor(sql,p.id):await normalVendor(sql,p.id);if(!v)throw Error('Vendor record not found.');
   if(p.action==='get'){
-   let last=null;try{const [x]=await sql`select created_at from market.audit where action='vendor booking confirmation sent' and detail->>'id'=${String(p.id)} order by created_at desc limit 1`;last=x?.created_at||null;}catch{}
-   return json({vendor:v,last_sent:last});
+   let last=null,missing_request=null;try{const [x]=await sql`select created_at from market.audit where action='vendor booking confirmation sent' and detail->>'id'=${String(p.id)} order by created_at desc limit 1`;last=x?.created_at||null;}catch{}
+   try{const [x]=v.vendor_id?await sql`select created_at,detail from market.audit where action='vendor missing info requested' and detail->>'vendor_id'=${String(v.vendor_id)} order by created_at desc limit 1`:await sql`select created_at,detail from market.audit where action='vendor missing info requested' and detail->>'id'=${String(p.id)} order by created_at desc limit 1`;if(x)missing_request={sent_at:x.created_at,missing:x.detail?.missing||[]};}catch{}
+   return json({vendor:v,last_sent:last,missing_request});
   }
   if(p.action==='update'){
    const data={name:clean(p.name,200),business:clean(p.business,200),email:clean(p.email,320).toLowerCase(),phone:clean(p.phone,50),billing_address:clean(p.billing_address,500),description:clean(p.description,3000)};
@@ -44,7 +45,7 @@ export default async req=>{
    let [delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;
    for(let attempt=0;attempt<3&&!delivery?.sent_at&&!delivery?.error;attempt++){await flushMail();[delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;}
    if(!delivery?.sent_at)throw Error(delivery?.error||'The request could not be delivered. Please try again.');
-   await audit(sql,u,'vendor missing info requested',{id:String(p.id),recipient,missing});return json({ok:true,recipient,missing,sent_at:delivery.sent_at});
+   await audit(sql,u,'vendor missing info requested',{id:String(p.id),vendor_id:v.vendor_id?String(v.vendor_id):null,recipient,missing});return json({ok:true,recipient,missing,sent_at:delivery.sent_at});
   }
   if(p.action==='confirm'){
    const all=p.all_dates===true;
