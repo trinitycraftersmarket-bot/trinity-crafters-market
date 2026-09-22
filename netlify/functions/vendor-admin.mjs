@@ -27,11 +27,12 @@ export default async req=>{
    const data={name:clean(p.name,200),business:clean(p.business,200),email:clean(p.email,320).toLowerCase(),phone:clean(p.phone,50),billing_address:clean(p.billing_address,500),description:clean(p.description,3000)};
    if(!data.name||!data.business||!data.email)throw Error('Name, business name and email are required.');
    if(!v.vendor_id)throw Error('This vendor is not linked to a master vendor account yet.');
+   const [before]=await sql`select id,account_number,name,business,email,phone,billing_address,description from market.vendors where id=${v.vendor_id}`;
    await sql.begin(async tx=>{
     await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},updated_at=now() where id=${v.vendor_id}`;
     await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where vendor_id=${v.vendor_id}`;
     await tx`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description} where vendor_id=${v.vendor_id}`;
-    await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:v.vendor_id,business:data.business});
+    await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:v.vendor_id,business:data.business,before,after:data});
    });
    return json({ok:true,vendor_id:v.vendor_id});
   }
