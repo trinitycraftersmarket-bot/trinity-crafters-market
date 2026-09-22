@@ -113,6 +113,10 @@ export default async req=>{
   const body=`TRINITY CRAFTERS MARKET\nBOOKING CONFIRMATION\n\nHi ${name},\n\nYour vendor space is confirmed.\n\nMarket: ${event.market_name||event.title||'Trinity Crafters Market'}\nDate: ${d}\nLocation: ${event.location}\nAddress: ${event.address||''}\nSpace: ${p.space}\nWhat you sell: ${selling}\nPayment: ${p.payment_method==='monthly billing'?'Monthly Billing — '+money(amount)+' due; an invoice will be sent.':money(amount)+' by '+p.payment_method}\n\nPlease keep this email for your records. Additional setup instructions will be sent before the market.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
   await sql.begin(async tx=>{await queue(tx,email,'Trinity Crafters Market Booking Confirmation — '+d,body);await audit(tx,u,'manual vendor booking',{id:row.id,event_id:event.id,email,space:p.space,payment_method:p.payment_method,amount,godaddy_payment:godaddyPayment});});
   await flushMail();
-  return json({ok:true,id:row.id,amount,godaddy_payment:godaddyPayment});
+  // Never report a successful manual booking email unless this specific confirmation was actually accepted by the mail service.
+  const subject='Trinity Crafters Market Booking Confirmation — '+d;
+  let [delivery]=await sql`select sent_at,error from market.outbox where recipient=${email} and subject=${subject} order by created_at desc limit 1`;
+  for(let attempt=0;attempt<3&&!delivery?.sent_at&&!delivery?.error;attempt++){await flushMail();[delivery]=await sql`select sent_at,error from market.outbox where recipient=${email} and subject=${subject} order by created_at desc limit 1`;}
+  return json({ok:true,id:row.id,amount,godaddy_payment:godaddyPayment,email_delivery:{sent:!!delivery?.sent_at,sent_at:delivery?.sent_at||null,error:delivery?.error||null}});
  }catch(e){console.error(e);return json({error:e.message||'Could not save manual booking.'},400);}
 };
