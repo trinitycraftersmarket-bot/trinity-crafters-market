@@ -1,4 +1,4 @@
-import { identity } from '../../server/core.mjs';
+import { identity, db, supa } from '../../server/core.mjs';
 
 const BUFFER_API = 'https://api.buffer.com';
 
@@ -151,14 +151,40 @@ export default async (request) => {
 
     if (request.method === 'GET') {
       const channels = await getChannels();
-      return reply({ ok: true, configured: true, channels });
+      const events = await db()`select id,date,title,facebook_event_url from market.events where date >= current_date order by date`;
+      return reply({ ok: true, configured: true, channels, events });
     }
 
     if (request.method !== 'POST') {
       return reply({ error: 'Method not allowed.' }, 405);
     }
 
+    const contentType = request.headers.get('content-type') || '';
+    if (contentType.includes('multipart/form-data')) {
+      const form = await request.formData();
+      const file = form.get('image');
+      if (!(file instanceof File) || !file.size) return reply({ error: 'Choose an image to upload.' }, 400);
+      if (!['image/jpeg','image/png','image/webp','image/gif'].includes(file.type)) return reply({ error: 'Use a JPG, PNG, WEBP, or GIF image.' }, 400);
+      if (file.size > 10 * 1024 * 1024) return reply({ error: 'Image must be 10 MB or smaller.' }, 400);
+      const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-z0-9]/gi,'').toLowerCase();
+      const path = Date.now() + '-' + crypto.randomUUID() + '.' + ext;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const { error: uploadError } = await supa().storage.from('social-media').upload(path, bytes, { contentType: file.type, upsert: false });
+      if (uploadError) throw uploadError;
+      const { data } = supa().storage.from('social-media').getPublicUrl(path);
+      return reply({ ok: true, url: data.publicUrl });
+    }
+
     const body = await request.json().catch(() => ({}));
+    if (body.action === 'saveFacebookEvent') {
+      const eventId = String(body.eventId || '');
+      const url = String(body.url || '').trim();
+      if (!eventId) return reply({ error: 'Choose a market date.' }, 400);
+      if (url && !/^https:\/\/(www\.)?facebook\.com\//i.test(url)) return reply({ error: 'Enter a valid Facebook Event URL.' }, 400);
+      const rows = await db()`update market.events set facebook_event_url=${url || null} where id=${eventId} returning id,date,title,facebook_event_url`;
+      if (!rows.length) return reply({ error: 'Market date not found.' }, 404);
+      return reply({ ok: true, event: rows[0] });
+    }
     const text = String(body.text || '').trim();
     const media = String(body.media || '').trim();
     const channelIds = Array.isArray(body.channelIds) ? body.channelIds.filter(Boolean) : [];
