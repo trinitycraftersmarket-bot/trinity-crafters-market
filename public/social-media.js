@@ -1,13 +1,80 @@
 (()=>{
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const token=()=>sessionStorage.getItem('market-token')||'';
- async function api(method='GET',body){const r=await fetch('/.netlify/functions/buffer-social',{method,headers:{Authorization:'Bearer '+token(),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});const v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Buffer request failed.');return v;}
- function notice(msg){const n=document.querySelector('#notice')||document.querySelector('#buffer-status');if(n)n.textContent=msg;}
- function enhance(){const tab=document.querySelector('[data-tab="social"]'),panel=document.querySelector('#panel'),draft=document.querySelector('#draft');if(tab)tab.textContent='Social Media';if(!panel||!draft||panel.querySelector('#social-publisher'))return;
-  const box=document.createElement('section');box.id='social-publisher';box.className='card section';box.innerHTML='<span class="eyebrow">Buffer • Facebook + Instagram</span><h2>Social Media Center</h2><div id="buffer-status" class="note">Checking Buffer connection…</div><div id="buffer-channels"></div><label>Image URL<input id="social-media-url" type="url" placeholder="https://…"></label><small>Instagram posts require a publicly reachable image. Use a vendor photo or generated market graphic.</small><div class="two"><label>Schedule date & time<input id="social-when" type="datetime-local"></label><div><small>Leave blank to publish now.</small></div></div><div class="actions"><button id="social-publish">Post / Schedule</button><button id="social-copy" class="secondary">Copy post</button></div><p class="muted">Posts are sent securely from the website to Buffer. Your Buffer API key never reaches the browser.</p>';panel.appendChild(box);
-  api().then(v=>{const channels=(v.channels||[]).filter(c=>/facebook|instagram/i.test(c.service+' '+c.name));document.querySelector('#buffer-status').innerHTML='<strong>Buffer connected.</strong> Choose where this post should go.';document.querySelector('#buffer-channels').innerHTML='<div class="two">'+channels.map((c,i)=>'<label class="check"><input class="buffer-channel" type="checkbox" value="'+esc(c.id)+'" '+(i<2?'checked':'')+'> '+esc(c.name||c.username||c.service)+' <small>('+esc(c.service)+')</small></label>').join('')+'</div>';}).catch(e=>{document.querySelector('#buffer-status').textContent=e.message;});
-  document.querySelector('#social-copy').onclick=async()=>{await navigator.clipboard.writeText(draft.value);notice('Post copied.');};
-  document.querySelector('#social-publish').onclick=async()=>{const b=document.querySelector('#social-publish');try{const ids=[...document.querySelectorAll('.buffer-channel:checked')].map(x=>x.value),media=document.querySelector('#social-media-url').value.trim(),dt=document.querySelector('#social-when').value;if(!ids.length)throw Error('Choose Facebook, Instagram, or both.');if(!confirm(dt?'Schedule this post in Buffer?':'Publish this post now through Buffer?'))return;b.disabled=true;await api('POST',{text:draft.value,media,channelIds:ids,dateTime:dt?new Date(dt).toISOString():null});notice(dt?'Post scheduled successfully in Buffer.':'Post sent to Buffer for publishing.');}catch(e){notice(e.message);}finally{b.disabled=false;}};
+ async function api(method='GET',body){
+   const r=await fetch('/.netlify/functions/buffer-social',{
+     method,
+     headers:{Authorization:'Bearer '+token(),...(body?{'Content-Type':'application/json'}:{})},
+     body:body?JSON.stringify(body):undefined
+   });
+   const v=await r.json().catch(()=>({}));
+   if(!r.ok)throw Error(v.error||'Buffer request failed.');
+   return v;
  }
- new MutationObserver(()=>setTimeout(enhance,0)).observe(document.body,{childList:true,subtree:true});document.addEventListener('click',e=>{if(e.target.closest?.('[data-tab="social"]'))setTimeout(enhance,80);});setTimeout(enhance,200);
+ function notice(msg){
+   const n=document.querySelector('#notice')||document.querySelector('#buffer-status');
+   if(n)n.textContent=msg;
+ }
+ function enhance(){
+   const tab=document.querySelector('[data-tab="social"]');
+   const panel=document.querySelector('#panel');
+   const draft=document.querySelector('#draft');
+   if(tab)tab.textContent='Social Media';
+   if(!panel||!draft||panel.querySelector('#social-publisher'))return;
+   const oldCopy=document.querySelector('#copy');
+   if(oldCopy)oldCopy.textContent='Copy post';
+
+   const box=document.createElement('section');
+   box.id='social-publisher';
+   box.className='card section';
+   box.innerHTML='<span class="eyebrow">Buffer • Facebook + Instagram</span><h2>Social Media Center</h2><div id="buffer-status" class="note">Checking Buffer connection…</div><div id="buffer-channels"></div><label>Image URL<input id="social-media-url" type="url" placeholder="https://…"></label><small>Instagram requires a publicly reachable image. Facebook can use text only or an image.</small><div class="two"><label>Schedule date & time<input id="social-when" type="datetime-local"></label><div><small>Leave blank to publish now.</small></div></div><div class="actions"><button id="social-publish">Post / Schedule</button><button id="social-copy" class="secondary">Copy post</button></div><p class="muted">Posts are sent securely from the website to Buffer. Your Buffer API key never reaches the browser.</p>';
+   panel.appendChild(box);
+
+   api().then(v=>{
+     const channels=(v.channels||[]).filter(c=>/^(facebook|instagram)$/i.test(c.service||'')&&!c.locked&&!c.disconnected);
+     if(!channels.length)throw Error('Buffer is connected, but no active Facebook or Instagram channels were returned.');
+     document.querySelector('#buffer-status').innerHTML='<strong>Buffer connected.</strong> Choose Facebook, Instagram, or both.';
+     document.querySelector('#buffer-channels').innerHTML='<div class="two">'+channels.map(c=>'<label class="check"><input class="buffer-channel" type="checkbox" value="'+esc(c.id)+'" data-service="'+esc(c.service)+'" checked> '+esc(c.name)+' <small>('+esc(c.service)+')</small></label>').join('')+'</div>';
+   }).catch(e=>{
+     document.querySelector('#buffer-status').textContent=e.message;
+   });
+
+   document.querySelector('#social-copy').onclick=async()=>{
+     await navigator.clipboard.writeText(draft.value);
+     notice('Post copied.');
+   };
+
+   document.querySelector('#social-publish').onclick=async()=>{
+     const button=document.querySelector('#social-publish');
+     try{
+       const selected=[...document.querySelectorAll('.buffer-channel:checked')];
+       const ids=selected.map(x=>x.value);
+       const media=document.querySelector('#social-media-url').value.trim();
+       const dt=document.querySelector('#social-when').value;
+       if(!ids.length)throw Error('Choose Facebook, Instagram, or both.');
+       if(selected.some(x=>x.dataset.service==='instagram')&&!media)throw Error('Instagram requires an image URL.');
+       if(dt&&new Date(dt).getTime()<=Date.now())throw Error('Scheduled time must be in the future.');
+       if(!confirm(dt?'Schedule this post in Buffer?':'Publish this post now through Buffer?'))return;
+       button.disabled=true;
+       const result=await api('POST',{
+         text:draft.value,
+         media,
+         channelIds:ids,
+         dateTime:dt?new Date(dt).toISOString():null
+       });
+       if(result.partial){
+         notice('Post created on some channels. '+(result.failed||[]).map(x=>x.error).join(' | '));
+       }else{
+         notice(dt?'Post scheduled successfully in Buffer.':'Post sent to Buffer for publishing.');
+       }
+     }catch(e){
+       notice(e.message);
+     }finally{
+       button.disabled=false;
+     }
+   };
+ }
+ new MutationObserver(()=>setTimeout(enhance,0)).observe(document.body,{childList:true,subtree:true});
+ document.addEventListener('click',e=>{if(e.target.closest?.('[data-tab="social"]'))setTimeout(enhance,80);});
+ setTimeout(enhance,200);
 })();
