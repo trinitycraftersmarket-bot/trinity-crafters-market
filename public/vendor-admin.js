@@ -1,0 +1,32 @@
+// Organizer vendor profile editor + booking confirmation controls.
+(function(){
+ const api=async payload=>{const token=sessionStorage.getItem('market-token');const r=await fetch('/.netlify/functions/vendor-admin',{method:'POST',headers:{...(token?{Authorization:'Bearer '+token}:{}),'Content-Type':'application/json'},body:JSON.stringify(payload)});const v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Please try again.');return v;};
+ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ function enhance(){
+  document.querySelectorAll('.inspection-row .report-actions').forEach(actions=>{
+   const anchor=actions.querySelector('[data-attendance-id]');if(!anchor)return;
+   const id=anchor.dataset.attendanceId, imported=anchor.dataset.imported==='1';
+   let edit=actions.querySelector('[data-edit-vendor-profile]');
+   const old=[...actions.querySelectorAll('button')].find(b=>/edit what they sell/i.test(b.textContent));
+   if(old){old.textContent='Edit Vendor';old.dataset.editVendorProfile=id;old.dataset.imported=imported?'1':'0';edit=old;}
+   if(!edit){edit=document.createElement('button');edit.type='button';edit.textContent='Edit Vendor';edit.dataset.editVendorProfile=id;edit.dataset.imported=imported?'1':'0';actions.appendChild(edit);}
+   if(!actions.querySelector('[data-send-vendor-confirmation]')){const b=document.createElement('button');b.type='button';b.className='secondary';b.textContent='Send Confirmation';b.dataset.sendVendorConfirmation=id;b.dataset.imported=imported?'1':'0';actions.appendChild(b);}
+  });
+ }
+ async function editVendor(btn){
+  btn.disabled=true;try{const data=await api({action:'get',id:btn.dataset.editVendorProfile,imported:btn.dataset.imported==='1'}),v=data.vendor;
+   const dlg=document.querySelector('#modal'),root=document.querySelector('#modal-content');root.innerHTML=`<h2>Edit Vendor</h2><p class="muted">Changes here update this vendor's master information site-wide.</p><form id="master-vendor-form"><label>Name<input name="name" value="${esc(v.name)}" required></label><label>Business name<input name="business" value="${esc(v.business)}" required></label><label>Email<input type="email" name="email" value="${esc(v.email)}" required></label><label>Phone<input name="phone" value="${esc(v.phone)}"></label><label>Billing address<textarea name="billing_address" rows="2">${esc(v.billing_address)}</textarea></label><label>What they sell / approved products<textarea name="description" rows="5">${esc(v.description)}</textarea></label><div class="actions"><button type="submit">Save Vendor Site-Wide</button><button type="button" class="secondary" id="cancel-vendor-edit">Cancel</button></div></form>`;
+   dlg.showModal();root.querySelector('#cancel-vendor-edit').onclick=()=>dlg.close();root.querySelector('form').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));const save=e.submitter;save.disabled=true;save.textContent='Saving…';try{await api({action:'update',id:btn.dataset.editVendorProfile,imported:btn.dataset.imported==='1',...f});dlg.close();location.reload();}catch(err){alert(err.message);save.disabled=false;save.textContent='Save Vendor Site-Wide';}};
+  }catch(e){alert(e.message);}finally{btn.disabled=false;}
+ }
+ async function confirmVendor(btn){
+  btn.disabled=true;try{const d=await api({action:'get',id:btn.dataset.sendVendorConfirmation,imported:btn.dataset.imported==='1'}),v=d.vendor;
+   const all=!btn.dataset.imported||btn.dataset.imported!=='1'?confirm(`Send confirmation to ${v.email}?\n\nOK = ALL upcoming confirmed dates\nCancel = THIS DATE ONLY`):false;
+   // A second prompt prevents accidental email when Cancel was intended to mean abort.
+   if(!confirm(`Send ${all?'all upcoming dates':'this date only'} confirmation to ${v.email} now?`))return;
+   const r=await api({action:'confirm',id:btn.dataset.sendVendorConfirmation,imported:btn.dataset.imported==='1',all_dates:all});btn.textContent='Resend Confirmation';const stamp=document.createElement('small');stamp.style.display='block';stamp.textContent='Confirmation sent '+new Date(r.sent_at).toLocaleString();btn.insertAdjacentElement('afterend',stamp);
+  }catch(e){alert(e.message);}finally{btn.disabled=false;}
+ }
+ document.addEventListener('click',e=>{const edit=e.target.closest('[data-edit-vendor-profile]');if(edit){e.preventDefault();e.stopImmediatePropagation();editVendor(edit);return;}const send=e.target.closest('[data-send-vendor-confirmation]');if(send){e.preventDefault();e.stopImmediatePropagation();confirmVendor(send);}},true);
+ new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',enhance);enhance();
+})();
