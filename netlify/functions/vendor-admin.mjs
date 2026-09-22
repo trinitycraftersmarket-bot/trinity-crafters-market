@@ -6,11 +6,11 @@ const fmtDate=d=>{const s=String(d||'').slice(0,10);const m=s.match(/^(\d{4})-(\
 const fmtTime=t=>{const raw=String(t||'').trim();if(!raw)return '';const match=raw.match(/(?:T|^)(\d{1,2}):(\d{2})/);if(!match)return raw;const h=Number(match[1]),m=Number(match[2]);if(h>23||m>59)return raw;const ap=h>=12?'PM':'AM',hh=h%12||12;return hh+':'+String(m).padStart(2,'0')+' '+ap;};
 
 async function normalVendor(sql,id){
- const [r]=await sql`select b.id booking_id,b.application_id,b.event_id,b.space,b.status,a.user_id,a.name,a.email,a.phone,a.billing_address,a.business,a.description,e.date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${id}`;
+ const [r]=await sql`select b.id booking_id,b.application_id,b.event_id,b.space,b.status,a.user_id,a.name,a.email,a.phone,a.billing_address,a.business,a.description,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${id}`;
  return r;
 }
 async function importedVendor(sql,id){
- try{const [r]=await sql`select i.*,e.date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;return r||null;}catch{return null;}
+ try{const [r]=await sql`select i.*,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;return r||null;}catch{return null;}
 }
 export default async req=>{
  try{
@@ -58,17 +58,17 @@ export default async req=>{
   if(p.action==='confirm'){
    const all=p.all_dates===true;
    let rows=[v];
-   if(all&&!imported)rows=await sql`select b.id booking_id,b.space,b.status,a.name,a.email,a.business,a.description,e.date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where a.user_id=${v.user_id} and b.status in ('approved','held','paid') and e.date>=current_date order by e.date`;
+   if(all&&!imported)rows=await sql`select b.id booking_id,b.space,b.status,a.name,a.email,a.business,a.description,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where a.user_id=${v.user_id} and b.status in ('approved','held','paid') and e.date>=current_date order by e.date`;
    rows=rows.filter(x=>['approved','held','paid'].includes(String(x.status||'approved')));if(!rows.length)throw Error('No confirmed upcoming dates found.');
    const recipient=clean(v.email||rows[0].email,320);if(!recipient)throw Error('This vendor does not have an email address.');
    const marketNames=[...new Set(rows.map(x=>x.title||'Trinity Crafters Market'))];const subject=(marketNames.length===1?marketNames[0]:'Market')+' – Booking Confirmation';
-   const details=rows.map(x=>`${fmtDate(x.date)}
+   const details=rows.map(x=>`${fmtDate(x.event_date||x.date)}
 Market Hours: ${fmtTime(x.start_time)||'10:00 AM'} – ${fmtTime(x.end_time)||'2:00 PM'}
 Vendor Type: ${String(x.space||'').toLowerCase().includes('out')?'Outside Vendor':'Inside Vendor'}
 Products Approved: ${x.description||v.description||'As approved'}
 Location: ${x.location||''}${x.address?' — '+x.address:''}`).join('\n\n');
    const body=`Hi ${v.name||rows[0].name},\n\nYour vendor space${rows.length>1?'s':''} for ${marketNames.join(' / ')} ${rows.length>1?'have':'has'} been confirmed!\n\n${details}\n\nWe look forward to having you at the market!\n\n${marketNames.join(' / ')}`;
-   await sql.begin(async tx=>{await queue(tx,recipient,subject,body);await audit(tx,u,'vendor booking confirmation sent',{id:String(p.id),all_dates:all,dates:rows.map(x=>String(x.date).slice(0,10)),recipient});});
+   await sql.begin(async tx=>{await queue(tx,recipient,subject,body);await audit(tx,u,'vendor booking confirmation sent',{id:String(p.id),all_dates:all,dates:rows.map(x=>String(x.event_date||x.date).slice(0,10)),recipient});});
    await flushMail();
    // The shared mail flush can process older queued messages first. Retry a few times so this newly queued confirmation is actually attempted before reporting failure.
    let [delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;
