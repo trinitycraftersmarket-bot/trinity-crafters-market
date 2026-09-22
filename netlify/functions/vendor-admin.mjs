@@ -40,11 +40,11 @@ export default async req=>{
     if(!saved)throw Error('Could not update this legacy vendor record.');
     // Propagate the edit across every imported occurrence of the same vendor.
     // Match the pre-edit email/phone/business so changing any of those values still finds old dates.
-    try{await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},description=${data.description} where id<>${p.id} and (lower(coalesce(email,''))=lower(${v.email||''}) or (regexp_replace(coalesce(phone,''),'\\D','','g')<>'' and regexp_replace(phone,'\\D','','g')=regexp_replace(${v.phone||''},'\\D','','g')) or lower(coalesce(business,''))=lower(${v.business||''}))`;}catch{
-      try{await sql`update market.imported_attendees set name=${data.name},business=${data.business} where id<>${p.id} and lower(coalesce(business,''))=lower(${v.business||''})`;}catch{}
+    try{await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},description=${data.description} where id<>${p.id} and ((coalesce(${v.email||''},'')<>'' and lower(coalesce(email,''))=lower(${v.email||''})) or (regexp_replace(coalesce(${v.phone||''},''),'\\D','','g')<>'' and regexp_replace(coalesce(phone,''),'\\D','','g')=regexp_replace(${v.phone||''},'\\D','','g')))`;}catch{
+      try{await sql`update market.imported_attendees set name=${data.name},business=${data.business} where id=${p.id}`;}catch{}
     }
     // Also update regular application records for this vendor so future bookings inherit the edit.
-    try{await sql`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where lower(email)=lower(${v.email||data.email}) or (regexp_replace(phone,'\\D','','g')<>'' and regexp_replace(phone,'\\D','','g')=regexp_replace(${v.phone||data.phone},'\\D','','g')) or lower(business)=lower(${v.business||data.business})`;}catch{}
+    try{await sql`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where (coalesce(${v.email||''},'')<>'' and lower(email)=lower(${v.email||''})) or (regexp_replace(coalesce(${v.phone||''},''),'\\D','','g')<>'' and regexp_replace(phone,'\\D','','g')=regexp_replace(${v.phone||''},'\\D','','g'))`;}catch{}
     await audit(sql,u,'legacy vendor updated site-wide',{id:p.id,business:data.business});
    }else{
     await sql.begin(async tx=>{
