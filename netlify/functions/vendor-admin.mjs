@@ -6,7 +6,7 @@ const fmtDate=d=>{const s=String(d||'').slice(0,10);const m=s.match(/^(\d{4})-(\
 const fmtTime=t=>{const raw=String(t||'').trim();if(!raw)return '';const match=raw.match(/(?:T|^)(\d{1,2}):(\d{2})/);if(!match)return raw;const h=Number(match[1]),m=Number(match[2]);if(h>23||m>59)return raw;const ap=h>=12?'PM':'AM',hh=h%12||12;return hh+':'+String(m).padStart(2,'0')+' '+ap;};
 
 async function normalVendor(sql,id){
- const [r]=await sql`select b.id booking_id,b.application_id,b.event_id,b.space,b.status,a.user_id,a.name,a.email,a.phone,a.billing_address,a.business,a.description,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${id}`;
+ const [r]=await sql`select b.id booking_id,b.application_id,b.event_id,b.space,b.status,a.user_id,a.vendor_id,a.name,a.email,a.phone,a.billing_address,a.business,a.description,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${id}`;
  return r;
 }
 async function importedVendor(sql,id){
@@ -25,35 +25,14 @@ export default async req=>{
   if(p.action==='update'){
    const data={name:clean(p.name,200),business:clean(p.business,200),email:clean(p.email,320).toLowerCase(),phone:clean(p.phone,50),billing_address:clean(p.billing_address,500),description:clean(p.description,3000)};
    if(!data.name||!data.business||!data.email)throw Error('Name, business name and email are required.');
-   if(imported){
-    // Legacy attendees may have a narrower schema. Update the common profile fields,
-    // then progressively fall back so an older imported record remains editable.
-    let saved=false;
-    for(const mode of ['full','contact','basic']){
-     try{
-      if(mode==='full')await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},description=${data.description} where id=${p.id}`;
-      else if(mode==='contact')await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone} where id=${p.id}`;
-      else await sql`update market.imported_attendees set name=${data.name},business=${data.business} where id=${p.id}`;
-      saved=true;break;
-     }catch{}
-    }
-    if(!saved)throw Error('Could not update this legacy vendor record.');
-    // Propagate the edit across every imported occurrence of the same vendor.
-    // Match the pre-edit email/phone/business so changing any of those values still finds old dates.
-    try{await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},description=${data.description} where id<>${p.id} and ((coalesce(${v.email||''},'')<>'' and lower(coalesce(email,''))=lower(${v.email||''})) or (regexp_replace(coalesce(${v.phone||''},''),'\\D','','g')<>'' and regexp_replace(coalesce(phone,''),'\\D','','g')=regexp_replace(${v.phone||''},'\\D','','g')))`;}catch{
-      try{await sql`update market.imported_attendees set name=${data.name},business=${data.business} where id=${p.id}`;}catch{}
-    }
-    // Also update regular application records for this vendor so future bookings inherit the edit.
-    try{await sql`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where (coalesce(${v.email||''},'')<>'' and lower(email)=lower(${v.email||''})) or (regexp_replace(coalesce(${v.phone||''},''),'\\D','','g')<>'' and regexp_replace(phone,'\\D','','g')=regexp_replace(${v.phone||''},'\\D','','g'))`;}catch{}
-    await audit(sql,u,'legacy vendor updated site-wide',{id:p.id,business:data.business});
-   }else{
-    await sql.begin(async tx=>{
-      // Applications are the current master vendor source. Propagate by user_id so every booking/view uses the same profile.
-      await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where user_id=${v.user_id}`;
-      await audit(tx,u,'master vendor updated',{id:p.id,user_id:v.user_id,business:data.business});
-    });
-   }
-   return json({ok:true});
+   if(!v.vendor_id)throw Error('This vendor is not linked to a master vendor account yet.');
+   await sql.begin(async tx=>{
+    await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},updated_at=now() where id=${v.vendor_id}`;
+    await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where vendor_id=${v.vendor_id}`;
+    await tx`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone} where vendor_id=${v.vendor_id}`;
+    await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:v.vendor_id,business:data.business});
+   });
+   return json({ok:true,vendor_id:v.vendor_id});
   }
   if(p.action==='request-missing-info'){
    const recipient=clean(v.email,320);if(!recipient)throw Error('This vendor does not have an email address, so a request cannot be emailed.');
