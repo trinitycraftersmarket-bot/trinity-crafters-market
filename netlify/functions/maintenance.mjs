@@ -1,4 +1,4 @@
-import {ready,db,flushMail,queue,audit} from '../../server/core.mjs';
+import {ready,db,flushMail,queue,audit,supa} from '../../server/core.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
 
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
@@ -159,12 +159,27 @@ trinitycraftersmarket@gmail.com`;
  }
 }
 
+async function dailySystemBackup(){
+ const sql=db(),day=new Date().toISOString().slice(0,10);
+ const [done]=await sql`select id from market.audit where action='automatic system backup created' and created_at::date=${day}::date limit 1`;
+ if(done)return;
+ const tables=['vendors','applications','bookings','imported_attendees','vendor_invoices','vendor_payments','events','locations','categories','bans','expenses','settings'];
+ const payload={created_at:new Date().toISOString(),tables:{}};
+ for(const t of tables)payload.tables[t]=await sql.unsafe('select * from market.'+t+' order by 1');
+ const client=supa(),bucket='system-backups';
+ try{await client.storage.createBucket(bucket,{public:false,fileSizeLimit:10485760});}catch{}
+ const path=day+'/automatic-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',bytes=new TextEncoder().encode(JSON.stringify(payload));
+ const {error}=await client.storage.from(bucket).upload(path,bytes,{contentType:'application/json',upsert:false});
+ if(error){await audit(sql,'system','automatic system backup failed',{error:error.message});return;}
+ await audit(sql,'system','automatic system backup created',{path,size:bytes.length});
+}
 export default async()=>{
  if(!ready())return;
  await handleHeldPayments();
  await sendDayBeforeVendorReminders();
  await sendPostMarketSurveys();
  await applyMonthlyLateFees();
+ await dailySystemBackup();
  await flushMail();
  const [last]=await db()`select value from market.settings where key='last_sync'`;
  if(process.env.GOOGLE_REFRESH_TOKEN&&(!last||Date.now()-new Date(last.value).getTime()>3600000)){
