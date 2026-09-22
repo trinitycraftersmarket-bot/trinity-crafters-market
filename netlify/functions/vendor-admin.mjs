@@ -26,8 +26,22 @@ export default async req=>{
    const data={name:clean(p.name,200),business:clean(p.business,200),email:clean(p.email,320).toLowerCase(),phone:clean(p.phone,50),billing_address:clean(p.billing_address,500),description:clean(p.description,3000)};
    if(!data.name||!data.business||!data.email)throw Error('Name, business name and email are required.');
    if(imported){
-    // Imported attendees are legacy records; update every supported profile field that exists.
-    try{await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},description=${data.description} where id=${p.id}`;}catch(e){throw Error('This imported vendor uses a legacy record. Please convert them to a vendor record before editing.');}
+    // Legacy attendees may have a narrower schema. Update the common profile fields,
+    // then progressively fall back so an older imported record remains editable.
+    let saved=false;
+    for(const mode of ['full','contact','basic']){
+     try{
+      if(mode==='full')await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},description=${data.description} where id=${p.id}`;
+      else if(mode==='contact')await sql`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone} where id=${p.id}`;
+      else await sql`update market.imported_attendees set name=${data.name},business=${data.business} where id=${p.id}`;
+      saved=true;break;
+     }catch{}
+    }
+    if(!saved)throw Error('Could not update this legacy vendor record.');
+    // Also update any regular vendor/application records matching this legacy vendor,
+    // so future bookings and site-wide views inherit the corrected information.
+    try{await sql`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where lower(email)=lower(${v.email||data.email}) or (regexp_replace(phone,'\\D','','g')<>'' and regexp_replace(phone,'\\D','','g')=regexp_replace(${v.phone||data.phone},'\\D','','g'))`;}catch{}
+    await audit(sql,u,'legacy vendor updated',{id:p.id,business:data.business});
    }else{
     await sql.begin(async tx=>{
       // Applications are the current master vendor source. Propagate by user_id so every booking/view uses the same profile.
