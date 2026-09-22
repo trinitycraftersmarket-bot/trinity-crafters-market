@@ -98,6 +98,10 @@ async function getChannels() {
   return channels;
 }
 
+function channelService(value) {
+  return String(value || '').toLowerCase();
+}
+
 async function createPost({ channelId, service, text, media, dateTime }) {
   const input = {
     text,
@@ -170,6 +174,12 @@ export default async (request) => {
       if (!['image/jpeg','image/png','image/webp','image/gif'].includes(file.type)) return reply({ error: 'Use a JPG, PNG, WEBP, or GIF image.' }, 400);
       if (file.size > 10 * 1024 * 1024) return reply({ error: 'Image must be 10 MB or smaller.' }, 400);
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-z0-9]/gi,'').toLowerCase();
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      try {
+        const { data: oldFiles } = await supa().storage.from('social-media').list('', { limit: 100, sortBy: { column: 'created_at', order: 'asc' } });
+        const expired = (oldFiles || []).filter((item) => item.created_at && new Date(item.created_at) < cutoff).map((item) => item.name);
+        if (expired.length) await supa().storage.from('social-media').remove(expired);
+      } catch {}
       const path = Date.now() + '-' + crypto.randomUUID() + '.' + ext;
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { error: uploadError } = await supa().storage.from('social-media').upload(path, bytes, { contentType: file.type, upsert: false });
@@ -199,8 +209,20 @@ export default async (request) => {
     if (dateTime && Number.isNaN(dateTime.getTime())) {
       return reply({ error: 'Invalid scheduled date/time.' }, 400);
     }
-    if (dateTime && dateTime.getTime() <= Date.now()) {
-      return reply({ error: 'Scheduled time must be in the future.' }, 400);
+    if (dateTime && dateTime.getTime() < Date.now() + 5 * 60 * 1000) {
+      return reply({ error: 'Scheduled time must be at least 5 minutes from now.' }, 400);
+    }
+
+    const liveChannels = await getChannels();
+    const allowed = new Map(
+      liveChannels
+        .filter((channel) => ['facebook','instagram'].includes(channelService(channel.service)) && !channel.locked && !channel.disconnected)
+        .map((channel) => [String(channel.id), channelService(channel.service)])
+    );
+    for (const requested of requestedChannels) {
+      const actualService = allowed.get(String(requested.id));
+      if (!actualService) return reply({ error: 'One of the selected Buffer channels is no longer available. Refresh and try again.' }, 400);
+      requested.service = actualService;
     }
 
     const isoDate = dateTime ? dateTime.toISOString() : null;
@@ -209,7 +231,7 @@ export default async (request) => {
 
     for (const requested of requestedChannels) {
       const channelId = requested.id;
-      const service = String(requested.service || '').toLowerCase();
+      const service = channelService(requested.service);
       if (!['facebook','instagram'].includes(service)) {
         failed.push({ channelId, error: 'Unsupported social channel.' });
         continue;
