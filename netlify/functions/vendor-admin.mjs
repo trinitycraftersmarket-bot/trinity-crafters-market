@@ -6,11 +6,11 @@ const fmtDate=d=>{const s=String(d||'').slice(0,10);const m=s.match(/^(\d{4})-(\
 const fmtTime=t=>{const raw=String(t||'').trim();if(!raw)return '';const match=raw.match(/(?:T|^)(\d{1,2}):(\d{2})/);if(!match)return raw;const h=Number(match[1]),m=Number(match[2]);if(h>23||m>59)return raw;const ap=h>=12?'PM':'AM',hh=h%12||12;return hh+':'+String(m).padStart(2,'0')+' '+ap;};
 
 async function normalVendor(sql,id){
- const [r]=await sql`select b.id booking_id,b.application_id,b.event_id,b.space,b.status,a.user_id,a.vendor_id,a.name,a.email,a.phone,a.billing_address,a.business,a.description,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${id}`;
+ const [r]=await sql`select b.id booking_id,b.application_id,b.event_id,b.space,b.status,a.user_id,a.vendor_id,coalesce(nullif(v.name,''),a.name) name,coalesce(nullif(v.email,''),a.email) email,coalesce(nullif(v.phone,''),a.phone) phone,coalesce(v.billing_address,a.billing_address) billing_address,coalesce(nullif(v.business,''),a.business) business,coalesce(nullif(v.description,''),a.description) description,coalesce(v.category_id,a.category_id) category_id,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id left join market.vendors v on v.id=a.vendor_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${id}`;
  return r;
 }
 async function importedVendor(sql,id){
- try{const [r]=await sql`select i.*,coalesce(nullif(v.name,''),i.name) name,coalesce(nullif(v.business,''),i.business) business,coalesce(nullif(v.email,''),i.email) email,coalesce(nullif(v.phone,''),i.phone) phone,coalesce(v.billing_address,'') billing_address,coalesce(nullif(v.description,''),i.selling,'') description,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i left join market.vendors v on v.id=i.vendor_id join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;return r||null;}catch{return null;}
+ try{const [r]=await sql`select i.*,coalesce(nullif(v.name,''),i.name) name,coalesce(nullif(v.business,''),i.business) business,coalesce(nullif(v.email,''),i.email) email,coalesce(nullif(v.phone,''),i.phone) phone,coalesce(v.billing_address,'') billing_address,coalesce(nullif(v.description,''),i.selling,'') description,coalesce(v.category_id,i.category_id) category_id,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i left join market.vendors v on v.id=i.vendor_id join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;return r||null;}catch{return null;}
 }
 export default async req=>{
  try{
@@ -21,17 +21,17 @@ export default async req=>{
   if(p.action==='get'){
    let last=null,missing_request=null;try{const [x]=await sql`select created_at from market.audit where action='vendor booking confirmation sent' and detail->>'id'=${String(p.id)} order by created_at desc limit 1`;last=x?.created_at||null;}catch{}
    try{const [x]=v.vendor_id?await sql`select created_at,detail from market.audit where action='vendor missing info requested' and detail->>'vendor_id'=${String(v.vendor_id)} order by created_at desc limit 1`:await sql`select created_at,detail from market.audit where action='vendor missing info requested' and detail->>'id'=${String(p.id)} order by created_at desc limit 1`;if(x)missing_request={sent_at:x.created_at,missing:x.detail?.missing||[]};}catch{}
-   return json({vendor:v,last_sent:last,missing_request});
+   const categories=await sql`select id,name from market.categories where active order by name`;return json({vendor:v,last_sent:last,missing_request,categories});
   }
   if(p.action==='update'){
-   const data={name:clean(p.name,200),business:clean(p.business,200),email:clean(p.email,320).toLowerCase(),phone:clean(p.phone,50),billing_address:clean(p.billing_address,500),description:clean(p.description,3000)};
+   const data={name:clean(p.name,200),business:clean(p.business,200),email:clean(p.email,320).toLowerCase(),phone:clean(p.phone,50),billing_address:clean(p.billing_address,500),description:clean(p.description,3000),category_id:clean(p.category_id,80)||null};
    if(!data.name||!data.business||!data.email)throw Error('Name, business name and email are required.');
    if(!v.vendor_id)throw Error('This vendor is not linked to a master vendor account yet.');
-   const [before]=await sql`select id,account_number,name,business,email,phone,billing_address,description from market.vendors where id=${v.vendor_id}`;
+   if(data.category_id){const [cat]=await sql`select id from market.categories where id=${data.category_id} and active`;if(!cat)throw Error('Choose a valid category.');}const [before]=await sql`select id,account_number,name,business,email,phone,billing_address,description,category_id from market.vendors where id=${v.vendor_id}`;
    await sql.begin(async tx=>{
-    await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},updated_at=now() where id=${v.vendor_id}`;
-    await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where vendor_id=${v.vendor_id}`;
-    await tx`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description} where vendor_id=${v.vendor_id}`;
+    await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},category_id=${data.category_id},updated_at=now() where id=${v.vendor_id}`;
+    await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},category_id=coalesce(${data.category_id},category_id) where vendor_id=${v.vendor_id}`;
+    await tx`update market.imported_attendees i set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description},category_id=coalesce(${data.category_id},i.category_id),category=coalesce((select name from market.categories where id=${data.category_id}),i.category) where vendor_id=${v.vendor_id}`;
     await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:v.vendor_id,business:data.business,before,after:data});
    });
    return json({ok:true,vendor_id:v.vendor_id});
