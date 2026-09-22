@@ -73,15 +73,23 @@
        if(!sel.value)throw Error('Choose a market date.');
        if(!url)throw Error('Save the Facebook Event link for this date first.');
        const postText=draft.value;
-       try{await navigator.clipboard.writeText(postText);}catch{}
+       if(!postText.trim())throw Error('Write or generate the post first.');
+       try{
+         await navigator.clipboard.writeText(postText);
+       }catch{
+         throw Error('Your browser blocked copying. Tap Copy post first, then open the Facebook Event.');
+       }
        window.open(url,'_blank','noopener');
-       notice('Facebook opened. Tap “Say something…” and choose Paste. Facebook does not allow websites to prefill Event post text automatically.');
+       notice('Post copied and Facebook opened. Tap “Say something…” and choose Paste.');
      }catch(e){notice(e.message);}
    };
 
    document.querySelector('#social-copy').onclick=async()=>{
-     await navigator.clipboard.writeText(draft.value);
-     notice('Post copied.');
+     try{
+       if(!draft.value.trim())throw Error('Write or generate the post first.');
+       await navigator.clipboard.writeText(draft.value);
+       notice('Post copied.');
+     }catch(e){notice(e.message||'Your browser blocked copying.');}
    };
 
    document.querySelector('#social-publish').onclick=async()=>{
@@ -94,7 +102,7 @@
        const dt=document.querySelector('#social-when').value;
        if(!ids.length)throw Error('Choose Facebook, Instagram, or both.');
        if(selected.some(x=>x.dataset.service==='instagram')&&!media)throw Error('Instagram requires an image. Choose a photo above.');
-       if(dt&&new Date(dt).getTime()<=Date.now())throw Error('Scheduled time must be in the future.');
+       if(dt&&new Date(dt).getTime()<Date.now()+5*60*1000)throw Error('Scheduled time must be at least 5 minutes from now.');
        if(!confirm(dt?'Schedule this post in Buffer?':'Publish this post now through Buffer?'))return;
        button.disabled=true;
        const result=await api('POST',{
