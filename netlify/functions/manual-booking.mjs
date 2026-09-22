@@ -60,32 +60,43 @@ export default async req=>{
    if(!ref)throw Error('Enter the GoDaddy transaction ID / payment reference after the card is approved.');
    const pat=Netlify.env.get('GODADDY_PAT'),storeId=Netlify.env.get('GODADDY_STORE_ID');
    if(!pat||!storeId)throw Error('GoDaddy Payments connection is not configured.');
-   const headers={Authorization:'Bearer '+pat};
+   const headers={Authorization:'Bearer '+pat,Accept:'application/json'};
+   const norm=v=>String(v??'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+   const wanted=norm(ref);
+   const values=(obj,out=[])=>{if(obj==null)return out;if(Array.isArray(obj)){for(const v of obj)values(v,out);return out;}if(typeof obj==='object'){for(const [k,v] of Object.entries(obj)){if(/id|ref|reference|retrieval|transaction|trace|receipt|approval/i.test(k)&&['string','number'].includes(typeof v))out.push(String(v));values(v,out);}return out;}return out;};
+   const matches=t=>values(t).some(v=>norm(v)===wanted);
+   const request=async path=>{const rr=await fetch('https://api.godaddy.com'+path,{headers,signal:AbortSignal.timeout(12000)});if(rr.status===404)return null;if(!rr.ok)throw Error('Could not verify the GoDaddy payment (GoDaddy '+rr.status+').');return rr.json();};
    let transaction=null;
-   if(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ref)){
-    const rr=await fetch('https://api.godaddy.com/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions/'+encodeURIComponent(ref),{headers});
-    if(rr.ok)transaction=await rr.json();
-   }
+   if(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ref))transaction=await request('/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions/'+encodeURIComponent(ref));
    if(!transaction){
-    const rr=await fetch('https://api.godaddy.com/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions?pageSize=100&sortOrder=DESC',{headers});
-    if(!rr.ok)throw Error('Could not verify the GoDaddy payment.');
-    const list=await rr.json(),items=Array.isArray(list.items)?list.items:[];
-    transaction=items.find(x=>[x.id,x.transactionId,x.transactionRefNum,x.legacyMetadata?.processorTransactionId,x.processorResponse?.legacyProcessorData?.transactionId,x.processorResponse?.legacyProcessorData?.retrievalRefNum].filter(Boolean).map(String).includes(ref));
-    if(transaction?.id&&!transaction.fundingSource){
-     const rr2=await fetch('https://api.godaddy.com/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions/'+encodeURIComponent(transaction.id),{headers});
-     if(rr2.ok)transaction=await rr2.json();
+    for(let page=1;page<=5&&!transaction;page++){
+     const list=await request('/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions?page='+page+'&pageSize=100&sortOrder=DESC');
+     const items=Array.isArray(list?.items)?list.items:[];
+     transaction=items.find(matches)||null;
+     if(items.length<100)break;
+    }
+    if(transaction?.id){
+     const detail=await request('/v2/commerce/stores/'+encodeURIComponent(storeId)+'/transactions/'+encodeURIComponent(transaction.id));
+     if(detail)transaction=detail;
     }
    }
-   if(!transaction&&ref.toLowerCase()==='1c0a79c8'&&Math.round(Number(p.amount)*100)===100){
-    transaction={id:'1c0a79c8',transactionId:'1c0a79c8',status:'Completed',createdAt:'2026-09-19T17:28:00-04:00',processorResponse:{approvalCode:'311388'},fundingSource:{cardDetail:{type:'Mastercard',legacyData:{numberLast4:'0215',type:'Debit'}}}};
-   }
-   if(!transaction)throw Error('GoDaddy transaction not found. Check the transaction ID / payment reference.');
-   const last4=transaction.fundingSource?.cardDetail?.legacyData?.numberLast4||null;
+   if(!transaction)throw Error('Not Found — GoDaddy could not find that TRX / transaction reference. Check the number and try again.');
+   const entered=Math.round(Number(p.amount)*100);
+   const rawAmount=transaction.amount?.amount??transaction.amount?.value??transaction.processorResponse?.approvedAmount??transaction.legacyMetadata?.amounts?.amount;
+   let verifiedAmount=Number(rawAmount);
+   if(typeof rawAmount==='string'&&rawAmount.includes('.'))verifiedAmount=Math.round(Number(rawAmount)*100);
+   else if(Number.isFinite(verifiedAmount)&&verifiedAmount>0&&verifiedAmount<1000&&Number.isFinite(entered)&&entered>=1000&&transaction.amount?.value!=null)verifiedAmount=Math.round(verifiedAmount*100);
+   if(Number.isFinite(verifiedAmount)&&verifiedAmount!==entered)throw Error('Amount Mismatch — GoDaddy shows '+money(verifiedAmount)+' but this booking is '+money(entered)+'. Nothing was marked paid.');
+   const status=String(transaction.status||transaction.legacyMetadata?.status||transaction.processorResponse?.legacyProcessorData?.status||'').trim();
+   const statusKey=status.toUpperCase().replace(/[^A-Z]/g,'');
+   const success=['COMPLETED','COMPLETE','CAPTURED','SETTLED','APPROVED','SUCCESS','SUCCESSFUL','PAID','SALE'];
+   if(statusKey&&!success.some(x=>statusKey.includes(x)))throw Error('Payment Not Approved — GoDaddy status is '+status+'. Nothing was marked paid.');
+   const last4=transaction.fundingSource?.cardDetail?.legacyData?.numberLast4||transaction.fundingSource?.cardDetail?.numberLast4||null;
    const brand=transaction.fundingSource?.cardDetail?.type||transaction.fundingSource?.cardDetail?.legacyData?.type||null;
    const approval=transaction.processorResponse?.approvalCode||transaction.legacyMetadata?.approvalCode||null;
    const txid=transaction.id||transaction.transactionId||ref;
-   const txref=transaction.transactionRefNum||ref;
-   godaddyPayment={transaction_id:txid,transaction_reference:txref,last4,brand,approval_code:approval,status:transaction.status||null,created_at:transaction.createdAt||null};
+   const txref=transaction.transactionRefNum||transaction.references?.find(x=>x?.value)?.value||ref;
+   godaddyPayment={verified:true,verification_result:'Verified',transaction_id:txid,transaction_reference:txref,entered_reference:ref,amount:verifiedAmount,status:status||'Verified',last4,brand,approval_code:approval,created_at:transaction.createdAt||transaction.updatedAt||null};
   }
   const name=String(p.name||'').trim(),selling=String(p.selling||'').trim(),phone=String(p.phone||'').trim(),email=String(p.email||'').trim().toLowerCase(),business=String(p.business||'').trim();
   if(!name||!selling||!phone||!email)throw Error('Name, what they sell, phone number, and email address are required.');
