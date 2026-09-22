@@ -29,9 +29,8 @@ export default async req=>{
    if(!v.vendor_id)throw Error('This vendor is not linked to a master vendor account yet.');
    await sql.begin(async tx=>{
     await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},updated_at=now() where id=${v.vendor_id}`;
-    await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},approved_products=${data.description} where vendor_id=${v.vendor_id}`;
-    await tx`update market.bookings b set approved_products=${data.description},social_products=${data.description} from market.applications a where b.application_id=a.id and a.vendor_id=${v.vendor_id}`;
-    await tx`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description},approved_products=${data.description},social_products=${data.description} where vendor_id=${v.vendor_id}`;
+    await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description} where vendor_id=${v.vendor_id}`;
+    await tx`update market.imported_attendees set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description} where vendor_id=${v.vendor_id}`;
     await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:v.vendor_id,business:data.business});
    });
    return json({ok:true,vendor_id:v.vendor_id});
