@@ -69,8 +69,10 @@ Products Approved: ${x.description||v.description||'As approved'}
 Location: ${x.location||''}${x.address?' — '+x.address:''}`).join('\n\n');
    const body=`Hi ${v.name||rows[0].name},\n\nYour vendor space${rows.length>1?'s':''} for ${marketNames.join(' / ')} ${rows.length>1?'have':'has'} been confirmed!\n\n${details}\n\nWe look forward to having you at the market!\n\n${marketNames.join(' / ')}`;
    await sql.begin(async tx=>{await queue(tx,recipient,subject,body);await audit(tx,u,'vendor booking confirmation sent',{id:String(p.id),all_dates:all,dates:rows.map(x=>String(x.date).slice(0,10)),recipient});});
-   try{await flushMail();}catch{}
-   return json({ok:true,count:rows.length,recipient,sent_at:new Date().toISOString()});
+   await flushMail();
+   const [delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;
+   if(!delivery?.sent_at)throw Error(delivery?.error||'Confirmation email was queued but could not be delivered. Please try again.');
+   return json({ok:true,count:rows.length,recipient,sent_at:delivery.sent_at});
   }
   return json({error:'Unknown action'},400);
  }catch(e){console.error('Vendor admin failed',e);return json({error:e.message||'Could not update vendor.'},400);}
