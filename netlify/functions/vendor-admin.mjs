@@ -2,8 +2,8 @@ import {db,identity,audit,queue,flushMail} from '../../server/core.mjs';
 
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
-const fmtDate=d=>new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(new Date(String(d).slice(0,10)+'T12:00:00-04:00'));
-const fmtTime=t=>{const [h,m]=String(t||'').slice(0,5).split(':').map(Number);if(!Number.isFinite(h))return '';return new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',timeZone:'UTC'}).format(new Date(Date.UTC(2020,0,1,h,m||0)));};
+const fmtDate=d=>{const s=String(d||'').slice(0,10);const m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m)return new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(new Date(Number(m[1]),Number(m[2])-1,Number(m[3]),12));const x=new Date(d);return Number.isNaN(x.getTime())?s:new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(x);};
+const fmtTime=t=>{const raw=String(t||'').trim();if(!raw)return '';const match=raw.match(/(?:T|^)(\d{1,2}):(\d{2})/);if(!match)return raw;const h=Number(match[1]),m=Number(match[2]);if(h>23||m>59)return raw;const ap=h>=12?'PM':'AM',hh=h%12||12;return hh+':'+String(m).padStart(2,'0')+' '+ap;};
 
 async function normalVendor(sql,id){
  const [r]=await sql`select b.id booking_id,b.application_id,b.event_id,b.space,b.status,a.user_id,a.name,a.email,a.phone,a.billing_address,a.business,a.description,e.date,e.title,e.start_time,e.end_time,l.name location,l.address from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${id}`;
