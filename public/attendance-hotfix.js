@@ -12,3 +12,20 @@ document.addEventListener('click',async event=>{const printButton=event.target.c
 const move=event.target.closest('[data-move-attendee]');if(move){event.preventDefault();event.stopImmediatePropagation();const vendor=move.closest('.inspection-row')?.querySelector('h3')?.textContent?.trim()||'this vendor',target=move.dataset.space,label=target==='indoor'?'Inside':'Outside';if(!confirm(`Move ${vendor} to ${label}?\n\nInventory for this market date will update automatically.`))return;const old=move.textContent;move.disabled=true;move.textContent='Moving…';try{await moveSpaceHotfix({id:move.dataset.moveAttendee,imported:move.dataset.imported==='1',space:target});const n=document.querySelector('#notice');if(n)n.textContent=`${vendor} moved to ${label}. Inventory updated.`;location.reload();}catch(e){const n=document.querySelector('#notice');if(n)n.textContent=e.message;move.disabled=false;move.textContent=old;}return;}
 const cancel=event.target.closest('[data-cancel-attendee]');if(cancel){event.preventDefault();event.stopImmediatePropagation();const vendor=cancel.closest('.inspection-row')?.querySelector('h3')?.textContent?.trim()||'this vendor';if(!confirm(`Cancel ${vendor} for this market date?\n\nTheir booth and category inventory will be released so the space can be sold again.`))return;const old=cancel.textContent;cancel.disabled=true;cancel.textContent='Cancelling…';try{const id=cancel.dataset.cancelAttendee,imported=cancel.dataset.imported==='1';if(imported)await attendanceHotfixApi('imported-attendance',{id,state:'remove'});else await attendanceHotfixApi('booking',{id,status:'cancelled'});location.reload();}catch(e){const n=document.querySelector('#notice');if(n)n.textContent=e.message;cancel.disabled=false;cancel.textContent=old;}return;}
 const button=event.target.closest('[data-attendance-id]');if(!button)return;const originalText=button.textContent,expectedNotice=button.dataset.state==='checked_in'?'Vendor checked in.':button.dataset.state==='no_show'?'Vendor marked no show.':'Attendance cleared.';let tries=0;const timer=setInterval(()=>{tries++;const n=document.querySelector('#notice')?.textContent?.trim();if(n===expectedNotice){clearInterval(timer);location.reload();}else if(tries>=30){clearInterval(timer);button.textContent=originalText;}},100);},true);
+
+// Per-attendee-list vendor search. Filters only the currently displayed market list.
+function addVendorAttendanceSearch(){
+ const rows=[...document.querySelectorAll('.inspection-row')];if(!rows.length)return;
+ const groups=new Map();
+ rows.forEach(row=>{const parent=row.parentElement;if(parent){if(!groups.has(parent))groups.set(parent,[]);groups.get(parent).push(row);}});
+ groups.forEach((group,parent)=>{
+   if(parent.querySelector(':scope > .vendor-attendance-search'))return;
+   const wrap=document.createElement('div');wrap.className='vendor-attendance-search';wrap.style.cssText='margin:12px 0 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+   wrap.innerHTML='<input type="search" placeholder="Search vendors…" aria-label="Search vendors in this attendee list" style="min-width:220px;flex:1;padding:10px 12px;border:1px solid #b9c7c3;border-radius:8px;font:inherit"><span class="muted" data-vendor-search-count></span>';
+   parent.insertBefore(wrap,group[0]);
+   const input=wrap.querySelector('input'),count=wrap.querySelector('[data-vendor-search-count]');
+   const run=()=>{const q=input.value.trim().toLowerCase();let shown=0;group.forEach(row=>{const hit=!q||cleanText(row).toLowerCase().includes(q);row.style.display=hit?'':'none';if(hit)shown++;});count.textContent=q?shown+' of '+group.length+' vendors':group.length+' vendors';};
+   input.addEventListener('input',run);run();
+ });
+}
+const vendorSearchObserver=new MutationObserver(addVendorAttendanceSearch);vendorSearchObserver.observe(document.documentElement,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',addVendorAttendanceSearch);addVendorAttendanceSearch();
