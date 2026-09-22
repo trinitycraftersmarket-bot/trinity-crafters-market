@@ -13,7 +13,7 @@ async function call(path, opts={}){
 }
 export async function handler(event){
   try{
-    const who=await identity(event); if(!who||!['admin','organizer'].includes(String(who.role||'').toLowerCase())) return json(403,{error:'Organizer access required.'});
+    const req={headers:new Headers(event.headers||{})};\n    const who=await identity(req); if(!who?.admin&&!who?.manager) return json(403,{error:'Organizer access required.'});
     if(event.httpMethod==='GET'){
       const data=await call('/channels');
       const rows=Array.isArray(data)?data:(data?.data||data?.channels||[]);
