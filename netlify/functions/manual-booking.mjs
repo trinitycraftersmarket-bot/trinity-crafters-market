@@ -93,7 +93,7 @@ export default async req=>{
   if(!p.event_id)throw Error('Choose a market date.');
   if(!['Inside','Outside'].includes(p.space))throw Error('Choose Inside or Outside.');
   if(!['cash','credit card','monthly billing'].includes(p.payment_method))throw Error('Choose cash, credit card, or Monthly Billing.');
-  const [event]=await sql`select e.*,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;
+  const [event]=await sql`select e.*,to_char(e.date,'YYYY-MM-DD') event_date,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;
   if(!event)throw Error('Market date not found.');
   const duplicate=await sql`select id from market.imported_attendees where event_id=${event.id} and lower(trim(email))=${email} and not coalesce(cancelled,false) limit 1`;
   if(duplicate.length)throw Error('This email is already booked for that market date.');
@@ -107,7 +107,7 @@ export default async req=>{
   await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz`;
   const [row]=await sql`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state,payment_status,invoice_amount,selling,payment_method,payment_reference,approval_code,card_brand,card_last4,payment_processor_status,paid_at)
    values(${event.id},${name},${business},${email},${phone},${cat.name},${cat.id},false,${p.space},'Manual booking','not_marked',${p.payment_method==='monthly billing'?'unpaid':'paid'},${amount},${selling},${p.payment_method==='credit card'?'GoDaddy Payments':p.payment_method},${godaddyPayment?.transaction_reference||godaddyPayment?.transaction_id||null},${godaddyPayment?.approval_code||null},${godaddyPayment?.brand||null},${godaddyPayment?.last4||null},${godaddyPayment?.status||null},${p.payment_method==='monthly billing'?null:(godaddyPayment?.created_at||new Date().toISOString())}) returning id`;
-  const ymd=dateOnly(event.date);
+  const ymd=String(event.event_date||'').trim()||dateOnly(event.date);
   if(!ymd)throw Error('Market date is invalid.');
   const [yy,mm,dd]=ymd.split('-').map(Number);const d=new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(new Date(Date.UTC(yy,mm-1,dd,17)));
   const body=`TRINITY CRAFTERS MARKET\nBOOKING CONFIRMATION\n\nHi ${name},\n\nYour vendor space is confirmed.\n\nMarket: ${event.market_name||event.title||'Trinity Crafters Market'}\nDate: ${d}\nLocation: ${event.location}\nAddress: ${event.address||''}\nSpace: ${p.space}\nWhat you sell: ${selling}\nPayment: ${p.payment_method==='monthly billing'?'Monthly Billing — '+money(amount)+' due; an invoice will be sent.':money(amount)+' by '+p.payment_method}\n\nPlease keep this email for your records. Additional setup instructions will be sent before the market.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
