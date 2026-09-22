@@ -65,7 +65,7 @@ export default async req=>{
    const details=rows.map(x=>`${fmtDate(x.event_date||x.date)}
 Market Hours: ${fmtTime(x.start_time)||'10:00 AM'} – ${fmtTime(x.end_time)||'2:00 PM'}
 Vendor Type: ${String(x.space||'').toLowerCase().includes('out')?'Outside Vendor':'Inside Vendor'}
-Products Approved: ${x.description||v.description||'As approved'}
+Products Approved: ${x.description||x.selling||v.description||v.selling||'As approved'}
 Location: ${x.location||''}${x.address?' — '+x.address:''}`).join('\n\n');
    const body=`Hi ${v.name||rows[0].name},\n\nYour vendor space${rows.length>1?'s':''} for ${marketNames.join(' / ')} ${rows.length>1?'have':'has'} been confirmed!\n\n${details}\n\nWe look forward to having you at the market!\n\n${marketNames.join(' / ')}`;
    await sql.begin(async tx=>{await queue(tx,recipient,subject,body);await audit(tx,u,'vendor booking confirmation sent',{id:String(p.id),all_dates:all,dates:rows.map(x=>String(x.event_date||x.date).slice(0,10)),recipient});});
