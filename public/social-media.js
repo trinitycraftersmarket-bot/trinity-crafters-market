@@ -37,7 +37,7 @@
      document.querySelector('#buffer-channels').innerHTML='<div class="two">'+channels.map(c=>'<label class="check"><input class="buffer-channel" type="checkbox" value="'+esc(c.id)+'" data-service="'+esc(c.service)+'" checked> '+esc(c.name)+' <small>('+esc(c.service)+')</small></label>').join('')+'</div>';
      const events=v.events||[];
      const eventSelect=document.querySelector('#facebook-event-date');
-     eventSelect.innerHTML='<option value="">Choose a market date</option>'+events.map(e=>'<option value="'+esc(e.id)+'" data-url="'+esc(e.facebook_event_url||'')+'">'+esc(new Date(e.date+'T12:00:00').toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}))+(e.title?' — '+esc(e.title):'')+'</option>').join('');
+     eventSelect.innerHTML='<option value="">Choose a market date</option>'+events.map(e=>'<option value="'+esc(e.id)+'" data-url="'+esc(e.facebook_event_url||'')+'">'+esc((()=>{const raw=String(e.date||'').slice(0,10),parts=raw.split('-');if(parts.length!==3)return raw||'Date unavailable';return new Date(Number(parts[0]),Number(parts[1])-1,Number(parts[2]),12).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'});})())+(e.title?' — '+esc(e.title):'')+'</option>').join('');
      eventSelect.onchange=()=>{const o=eventSelect.selectedOptions[0];document.querySelector('#facebook-event-url').value=o?.dataset.url||'';};
    }).catch(e=>{
      document.querySelector('#buffer-status').textContent=e.message;
@@ -91,7 +91,7 @@
        const media=document.querySelector('#social-media-url').value.trim();
        const dt=document.querySelector('#social-when').value;
        if(!ids.length)throw Error('Choose Facebook, Instagram, or both.');
-       if(selected.some(x=>x.dataset.service==='instagram')&&!media)throw Error('Instagram requires an image URL.');
+       if(selected.some(x=>x.dataset.service==='instagram')&&!media)throw Error('Instagram requires an image. Choose a photo above.');
        if(dt&&new Date(dt).getTime()<=Date.now())throw Error('Scheduled time must be in the future.');
        if(!confirm(dt?'Schedule this post in Buffer?':'Publish this post now through Buffer?'))return;
        button.disabled=true;
