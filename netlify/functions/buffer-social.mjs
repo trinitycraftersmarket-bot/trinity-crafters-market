@@ -98,13 +98,15 @@ async function getChannels() {
   return channels;
 }
 
-async function createPost({ channelId, text, media, dateTime, type = 'post' }) {
+async function createPost({ channelId, service, text, media, dateTime }) {
   const input = {
     text,
     channelId,
     schedulingType: 'automatic',
     mode: dateTime ? 'customScheduled' : 'shareNow',
-    type
+    metadata: service === 'instagram'
+      ? { instagram: { type: 'post', shouldShareToFeed: true } }
+      : { facebook: { type: 'post' } }
   };
 
   if (dateTime) input.dueAt = dateTime;
@@ -188,7 +190,8 @@ export default async (request) => {
     }
     const text = String(body.text || '').trim();
     const media = String(body.media || '').trim();
-    const channelIds = Array.isArray(body.channelIds) ? body.channelIds.filter(Boolean) : [];
+    const requestedChannels = Array.isArray(body.channels) ? body.channels.filter((item) => item && item.id) : [];
+    const channelIds = requestedChannels.map((item) => item.id);
     const dateTime = body.dateTime ? new Date(body.dateTime) : null;
 
     if (!text) return reply({ error: 'Post text is required.' }, 400);
@@ -204,9 +207,15 @@ export default async (request) => {
     const created = [];
     const failed = [];
 
-    for (const channelId of channelIds) {
+    for (const requested of requestedChannels) {
+      const channelId = requested.id;
+      const service = String(requested.service || '').toLowerCase();
+      if (!['facebook','instagram'].includes(service)) {
+        failed.push({ channelId, error: 'Unsupported social channel.' });
+        continue;
+      }
       try {
-        const post = await createPost({ channelId, text, media, dateTime: isoDate, type: 'post' });
+        const post = await createPost({ channelId, service, text, media, dateTime: isoDate });
         created.push(post);
       } catch (error) {
         failed.push({
