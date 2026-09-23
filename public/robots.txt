@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /m/
+Disallow: /lcm-vendor-check-in
+
+Sitemap: https://trinitylutzmarkets.com/sitemap.xml
