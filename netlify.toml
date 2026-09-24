@@ -15,6 +15,46 @@ X-Content-Type-Options = "nosniff"
 Referrer-Policy = "strict-origin-when-cross-origin"
 X-Frame-Options = "DENY"
 [[redirects]]
+from = "/market-dates"
+to = "/market-dates/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/market-dates/"
+to = "/market-dates/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/vendor-opportunities-1"
+to = "/vendor-opportunities-1/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/vendor-opportunities-1/"
+to = "/vendor-opportunities-1/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/about-lutz-market"
+to = "/about-lutz-market/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/about-lutz-market/"
+to = "/about-lutz-market/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/food-trucks"
+to = "/food-trucks/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/food-trucks/"
+to = "/food-trucks/index.html"
+status = 200
+force = true
+[[redirects]]
 from = "/*"
 to = "/index.html"
 status = 200
