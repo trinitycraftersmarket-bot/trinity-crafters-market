@@ -3,7 +3,7 @@
  const token=()=>sessionStorage.getItem('market-token');
  const api=async(action,body)=>{const r=await fetch('/.netlify/functions/live-chat?action='+action,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token(),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined}),v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Request failed');return v};
  const ALERT_KEY='tcm-live-chat-alerts-enabled',ALERTED_KEY='tcm-live-chat-alerted-at';
- let active=null,refreshTimer=null,alertTimer=null,audioCtx=null,storageLib=null;
+ let active=null,refreshTimer=null,alertTimer=null,audioCtx=null,storageLib=null,historyTimer=null,historyState={q:'',filter:'all',page:1,pageSize:20,total:0,pages:1};
  function stamp(d){return d?new Date(d).toLocaleString():''}
  function fileValid(file){return !!file&&file.size>0&&file.size<=10*1024*1024&&['image/jpeg','image/png','image/webp','image/gif','application/pdf'].includes(file.type)}
  async function uploadAttachment(sessionId,file){
@@ -93,16 +93,48 @@
  async function open(panel,b,tabs){
   tabs.querySelectorAll('button').forEach(x=>x.classList.remove('selected'));b.classList.add('selected');active={panel,b,tabs};
   panel.innerHTML='<section class="card"><h2>Live Chat</h2><p>Loading conversations…</p></section>';
-  try{const d=await api('admin-dashboard');renderDashboard(d);}catch(e){panel.innerHTML='<section class="card"><h2>Live Chat</h2><p>'+esc(e.message)+'</p></section>'}
+  try{const d=await api('admin-dashboard');renderDashboard(d);await loadHistory();}catch(e){panel.innerHTML='<section class="card"><h2>Live Chat</h2><p>'+esc(e.message)+'</p></section>'}
+ }
+ function chatCard(s){
+  const label=s.vendor_business||s.visitor_name||'Vendor',existing=!!s.vendor_id,unread=Number(s.unread||0);
+  return '<button type="button" class="live-chat-history-row" data-chat-session="'+esc(s.id)+'"><span class="chat-history-main"><strong>'+esc(label)+'</strong><small>'+esc(s.visitor_name||'')+(s.visitor_email?' · '+esc(s.visitor_email):'')+(s.visitor_phone?' · '+esc(s.visitor_phone):'')+'</small><em>'+esc(s.last_message||'No message yet')+'</em></span><span class="chat-history-meta"><span><span class="tag">'+esc(s.status)+'</span> <span class="tag '+(existing?'':'held')+'">'+(existing?'Existing vendor':'New inquiry')+'</span>'+(unread?'<span class="chat-unread">'+unread+'</span>':'')+'</span><small>'+esc(stamp(s.last_message_at))+'</small></span></button>';
  }
  function renderDashboard(d){
-  if(!active)return;const {panel}=active,open=!!d.open,sessions=d.sessions||[],newPeople=sessions.filter(s=>!s.vendor_id),existing=sessions.filter(s=>s.vendor_id);
-  const cards=list=>list.map(s=>'<button type="button" class="card live-chat-row" data-chat-session="'+esc(s.id)+'"><span><strong>'+esc(s.vendor_business||s.visitor_name)+'</strong><small>'+esc(s.visitor_name)+' · '+esc(s.visitor_email)+' · '+esc(s.visitor_phone)+'</small><small>What they sell: '+esc(s.selling)+'</small></span><span><span class="tag">'+esc(s.status)+'</span>'+(Number(s.unread||0)?'<span class="chat-unread">'+Number(s.unread)+'</span>':'')+'<small>'+esc(stamp(s.last_message_at))+'</small></span><em>'+esc(s.last_message||'No message')+'</em></button>').join('')||'<p class="muted">No conversations here yet.</p>';
-  panel.innerHTML='<section class="card live-chat-admin-head"><div><h2>Live Chat</h2><p>'+ (open?'Vendors can start a live conversation now.':'Chat is closed. New questions are being sent to you by email and saved here.') +'</p></div><div class="actions"><button id="chat-alert-toggle" class="secondary">'+esc(alertStatusText())+'</button><button id="chat-open-toggle" class="'+(open?'secondary':'')+'">'+(open?'Close Live Chat':'Open Live Chat')+'</button></div></section><section class="card"><h3>Active & Existing Vendors</h3><div class="live-chat-admin-list">'+cards(existing)+'</div></section><section class="card"><h3>New Vendor / Visitor History</h3><p class="muted">People who do not yet match a master vendor record stay here so their full inquiry history is not lost.</p><div class="live-chat-admin-list">'+cards(newPeople)+'</div></section>';
+  if(!active)return;const {panel}=active,open=!!d.open;
+  panel.innerHTML='<section class="card live-chat-admin-head"><div><h2>Live Chat</h2><p>'+(open?'Vendors can start a live conversation now.':'Chat is closed. New questions are being sent to you by email and saved here.')+'</p></div><div class="actions"><button id="chat-alert-toggle" class="secondary">'+esc(alertStatusText())+'</button><button id="chat-open-toggle" class="'+(open?'secondary':'')+'">'+(open?'Close Live Chat':'Open Live Chat')+'</button></div></section>'+
+  '<section class="card live-chat-history-card"><div class="chat-history-heading"><div><h3>Conversation History</h3><p class="muted">Search by vendor name, business name, phone number, or email. Older conversations stay available without filling the entire page.</p></div><button type="button" class="secondary" id="chat-history-refresh">Refresh</button></div>'+
+  '<div class="chat-history-toolbar"><label class="chat-history-search"><span>Search conversations</span><div><input id="chat-history-search" type="search" autocomplete="off" placeholder="Name, phone, email, or business" value="'+esc(historyState.q)+'"><button type="button" class="quiet" id="chat-history-clear" '+(historyState.q?'':'hidden')+'>Clear</button></div></label>'+
+  '<div class="chat-history-filters" role="group" aria-label="Filter chat history">'+
+    [['all','All'],['active','Active'],['unread','Unread'],['closed','Closed'],['existing','Existing vendors'],['new','New inquiries']].map(([v,l])=>'<button type="button" class="'+(historyState.filter===v?'selected':'')+'" data-chat-filter="'+v+'">'+l+'</button>').join('')+
+  '</div></div>'+
+  '<div id="chat-history-summary" class="chat-history-summary">Loading conversations…</div><div id="chat-history-results" class="live-chat-admin-list"></div><div id="chat-history-pager" class="chat-history-pager"></div></section>';
   panel.querySelector('#chat-open-toggle').onclick=async e=>{e.currentTarget.disabled=true;try{await api('admin-toggle',{open:!open});await openPanel()}catch(err){alert(err.message);e.currentTarget.disabled=false;}};
   panel.querySelector('#chat-alert-toggle').onclick=async e=>{e.currentTarget.disabled=true;try{if(alertsEnabled()){setAlertsEnabled(false);}else await enableAlerts();await openPanel()}catch(err){alert(err.message);e.currentTarget.disabled=false;}};
-  panel.querySelectorAll('[data-chat-session]').forEach(x=>x.onclick=()=>conversation(x.dataset.chatSession));
-  startRefresh();
+  panel.querySelector('#chat-history-refresh').onclick=()=>loadHistory();
+  const search=panel.querySelector('#chat-history-search'),clear=panel.querySelector('#chat-history-clear');
+  search.oninput=()=>{historyState.q=search.value.trim();historyState.page=1;clear.hidden=!historyState.q;clearTimeout(historyTimer);historyTimer=setTimeout(()=>loadHistory(),300);};
+  search.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(historyTimer);historyState.q=search.value.trim();historyState.page=1;loadHistory();}};
+  clear.onclick=()=>{search.value='';historyState.q='';historyState.page=1;clear.hidden=true;search.focus();loadHistory();};
+  panel.querySelectorAll('[data-chat-filter]').forEach(btn=>btn.onclick=()=>{historyState.filter=btn.dataset.chatFilter;historyState.page=1;panel.querySelectorAll('[data-chat-filter]').forEach(x=>x.classList.toggle('selected',x===btn));loadHistory();});
+ }
+ async function loadHistory(){
+  if(!active?.panel?.querySelector('#chat-history-results'))return;
+  const results=active.panel.querySelector('#chat-history-results'),summary=active.panel.querySelector('#chat-history-summary'),pager=active.panel.querySelector('#chat-history-pager');
+  results.setAttribute('aria-busy','true');summary.textContent='Loading conversations…';
+  try{
+   const d=await api('admin-search',{q:historyState.q,filter:historyState.filter,page:historyState.page,page_size:historyState.pageSize});
+   historyState.total=Number(d.total||0);historyState.pages=Number(d.pages||1);historyState.page=Number(d.page||1);
+   const sessions=d.sessions||[];
+   results.innerHTML=sessions.map(chatCard).join('')||'<p class="empty">No conversations match this search.</p>';
+   const from=historyState.total?((historyState.page-1)*historyState.pageSize)+1:0,to=Math.min(historyState.total,historyState.page*historyState.pageSize);
+   summary.textContent=historyState.q?'Showing '+from+'–'+to+' of '+historyState.total+' matching conversations':'Showing '+from+'–'+to+' of '+historyState.total+' conversations · newest first';
+   pager.innerHTML=(historyState.pages>1?'<button type="button" class="secondary" id="chat-prev" '+(historyState.page<=1?'disabled':'')+'>← Previous</button><span>Page '+historyState.page+' of '+historyState.pages+'</span><button type="button" class="secondary" id="chat-next" '+(historyState.page>=historyState.pages?'disabled':'')+'>Next →</button>':'');
+   const prev=pager.querySelector('#chat-prev'),next=pager.querySelector('#chat-next');
+   if(prev)prev.onclick=()=>{historyState.page=Math.max(1,historyState.page-1);loadHistory();};
+   if(next)next.onclick=()=>{historyState.page=Math.min(historyState.pages,historyState.page+1);loadHistory();};
+   results.querySelectorAll('[data-chat-session]').forEach(x=>x.onclick=()=>conversation(x.dataset.chatSession));
+  }catch(e){results.innerHTML='<p class="empty">'+esc(e.message)+'</p>';summary.textContent='Could not load conversation history.';}
+  finally{results.removeAttribute('aria-busy');}
  }
  async function openPanel(){if(active)await open(active.panel,active.b,active.tabs)}
  async function conversation(id){
