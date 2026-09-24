@@ -99,6 +99,10 @@ create table if not exists market.chat_messages (
   session_id uuid not null references market.chat_sessions(id) on delete cascade,
   sender text not null check (sender in ('visitor','organizer','system')),
   body text not null,
+  attachment_path text,
+  attachment_name text,
+  attachment_type text,
+  attachment_size bigint,
   created_at timestamptz not null default now()
 );
 create index if not exists chat_sessions_vendor_idx on market.chat_sessions(vendor_id,last_message_at desc);
@@ -110,4 +114,7 @@ alter table market.chat_sessions enable row level security;
 alter table market.chat_messages enable row level security;
 revoke all on market.chat_sessions from anon,authenticated;
 revoke all on market.chat_messages from anon,authenticated;
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values('chat-attachments','chat-attachments',false,10485760,array['image/jpeg','image/png','image/webp','image/gif','application/pdf'])
+on conflict(id) do update set public=false,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
 insert into market.settings(key,value) values('chat_open','false') on conflict(key) do nothing;
