@@ -128,6 +128,44 @@ export default async req=>{
    return json({open,sessions});
   }
 
+  if(action==='admin-search'&&req.method==='POST'){
+   const p=await req.json(),q=clean(p.q,200).toLowerCase(),phoneQ=phoneNorm(q),filter=['all','active','unread','closed','existing','new'].includes(p.filter)?p.filter:'all',
+     page=Math.max(1,Math.min(5000,Number.parseInt(p.page,10)||1)),pageSize=Math.max(10,Math.min(50,Number.parseInt(p.page_size,10)||20)),offset=(page-1)*pageSize;
+   const sessions=await sql`select s.id,s.vendor_id,s.visitor_name,s.visitor_email,s.visitor_phone,s.selling,s.status,s.started_at,s.last_message_at,s.closed_at,s.admin_seen_at,
+     v.business vendor_business,v.name vendor_name,v.email vendor_email,v.phone vendor_phone,v.account_number,
+     (select coalesce(nullif(body,''),case when attachment_name is not null then '[Attachment: '||attachment_name||']' else '' end) from market.chat_messages m where m.session_id=s.id order by m.created_at desc limit 1) last_message,
+     (select count(*)::int from market.chat_messages m where m.session_id=s.id and m.sender='visitor' and m.created_at>coalesce(s.admin_seen_at,'1970-01-01'::timestamptz)) unread,
+     count(*) over()::int total_count
+     from market.chat_sessions s left join market.vendors v on v.id=s.vendor_id
+     where (
+       ${q}='' or
+       position(${q} in lower(coalesce(s.visitor_name,'')))>0 or
+       position(${q} in lower(coalesce(s.visitor_email,'')))>0 or
+       position(${q} in lower(coalesce(v.business,'')))>0 or
+       position(${q} in lower(coalesce(v.name,'')))>0 or
+       position(${q} in lower(coalesce(v.email,'')))>0 or
+       (${phoneQ}<>'' and (
+         position(${phoneQ} in regexp_replace(coalesce(s.visitor_phone,''),'[^0-9]','','g'))>0 or
+         position(${phoneQ} in regexp_replace(coalesce(v.phone,''),'[^0-9]','','g'))>0
+       ))
+     )
+     and (
+       ${filter}='all' or
+       (${filter}='active' and s.status<>'closed') or
+       (${filter}='closed' and s.status='closed') or
+       (${filter}='existing' and s.vendor_id is not null) or
+       (${filter}='new' and s.vendor_id is null) or
+       (${filter}='unread' and exists(
+         select 1 from market.chat_messages um
+         where um.session_id=s.id and um.sender='visitor' and um.created_at>coalesce(s.admin_seen_at,'1970-01-01'::timestamptz)
+       ))
+     )
+     order by s.last_message_at desc
+     limit ${pageSize} offset ${offset}`;
+   const total=Number(sessions[0]?.total_count||0);
+   return json({sessions:sessions.map(({total_count,...s})=>s),total,page,page_size:pageSize,pages:Math.max(1,Math.ceil(total/pageSize)),q,filter});
+  }
+
   if(action==='admin-messages'&&req.method==='POST'){
    const p=await req.json(),id=clean(p.id,80);
    const [s]=await sql`select s.id,s.vendor_id,s.visitor_name,s.visitor_email,s.visitor_phone,s.selling,s.status,s.started_at,s.last_message_at,s.closed_at,v.business vendor_business,v.account_number from market.chat_sessions s left join market.vendors v on v.id=s.vendor_id where s.id=${id}`;
