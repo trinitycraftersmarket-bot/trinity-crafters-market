@@ -7,10 +7,10 @@ async function publicPage(){
   app.innerHTML='<section class="card"><h1>Food Truck Application</h1><p>Loading available dates…</p></section>';
   try{
     const d=await api();
-    const avail=(d.events||[]).filter(e=>e.available);
-    app.innerHTML=`<section class="card"><h1>Food Truck Application</h1><p>Each market date has <strong>one food truck space for $35</strong>. Applications are reviewed before approval and payment.</p>${avail.length?`<form id="food-truck-form">
-      <fieldset><legend>Market dates</legend><p>Select every date you would like to attend. You only need to submit this application once.</p>
-      <div class="list">${avail.map(e=>`<label class="check card"><input type="checkbox" name="event_id" value="${esc(e.id)}"> <span><strong>${date(e.date)}</strong><br><small>${esc(e.market_name||e.title||e.location)} · $35</small></span></label>`).join('')}</div></fieldset>
+    const events=d.events||[],avail=events.filter(e=>e.available);
+    app.innerHTML=`<section class="card"><h1>Food Truck Application</h1><p>Each market date has <strong>one food truck space for $35</strong>. As soon as an application is submitted for a date, that date is held and shown as sold out while it is reviewed. If the application is declined, the date automatically reopens.</p>${events.length?`<form id="food-truck-form">
+      <fieldset><legend>Market dates</legend><p>Select every available date you would like to attend. Sold-out dates cannot be selected.</p>
+      <div class="list">${events.map(e=>e.available?`<label class="check card"><input type="checkbox" name="event_id" value="${esc(e.id)}"> <span><strong>${date(e.date)}</strong><br><small>${esc(e.market_name||e.title||e.location)} · $35 · Available</small></span></label>`:`<div class="card" aria-disabled="true"><span><strong>${date(e.date)}</strong><br><small>${esc(e.market_name||e.title||e.location)} · <strong>SOLD OUT</strong></small></span></div>`).join('')}</div></fieldset>
       <div class="grid2"><label>Name<input name="name" required></label><label>Email<input name="email" type="email" required></label><label>Phone<input name="phone" type="tel" required></label><label>Billing address<input name="billing_address" required></label></div>
       <label>What type of food do you have?<textarea name="food_type" required></textarea></label>
       <div class="grid2"><label>Is your rig wrapped? <small>(A wrapped rig helps attract customers.)</small><select name="wrapped"><option value="yes">Yes</option><option value="no">No</option></select></label><label>Do you use propane?<select name="propane"><option value="no">No</option><option value="yes">Yes</option></select></label></div>
