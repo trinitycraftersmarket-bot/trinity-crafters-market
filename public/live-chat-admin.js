@@ -3,8 +3,25 @@
  const token=()=>sessionStorage.getItem('market-token');
  const api=async(action,body)=>{const r=await fetch('/.netlify/functions/live-chat?action='+action,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token(),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined}),v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Request failed');return v};
  const ALERT_KEY='tcm-live-chat-alerts-enabled',ALERTED_KEY='tcm-live-chat-alerted-at';
- let active=null,refreshTimer=null,alertTimer=null,audioCtx=null;
+ let active=null,refreshTimer=null,alertTimer=null,audioCtx=null,storageLib=null;
  function stamp(d){return d?new Date(d).toLocaleString():''}
+ function fileValid(file){return !!file&&file.size>0&&file.size<=10*1024*1024&&['image/jpeg','image/png','image/webp','image/gif','application/pdf'].includes(file.type)}
+ async function uploadAttachment(sessionId,file){
+  if(!fileValid(file))throw Error('Attach a JPG, PNG, WEBP, GIF, or PDF up to 10 MB.');
+  const ticket=await api('admin-create-upload',{id:sessionId,name:file.name,type:file.type,size:file.size});
+  storageLib=storageLib||await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+  const client=storageLib.createClient(ticket.url,ticket.key,{auth:{persistSession:false,autoRefreshToken:false}});
+  const {error}=await client.storage.from(ticket.bucket).uploadToSignedUrl(ticket.path,ticket.token,file,{contentType:file.type,upsert:false});
+  if(error)throw Error('The file could not be uploaded. Please try again.');
+  return {path:ticket.path,name:file.name,type:file.type,size:file.size};
+ }
+ function attachmentHtml(m){
+  if(!m.attachment_name)return '';
+  const name=esc(m.attachment_name),url=m.attachment_url?esc(m.attachment_url):'';
+  if(!url)return '<div class="chat-attachment"><span>📎 '+name+'</span></div>';
+  if(String(m.attachment_type||'').startsWith('image/'))return '<div class="chat-attachment"><a href="'+url+'" target="_blank" rel="noopener"><img class="chat-attachment-img" src="'+url+'" alt="Attachment: '+name+'" loading="lazy"></a><a class="chat-file-link" href="'+url+'" target="_blank" rel="noopener">📎 '+name+'</a></div>';
+  return '<div class="chat-attachment"><a class="chat-file-link" href="'+url+'" target="_blank" rel="noopener">📄 '+name+'</a></div>';
+ }
  function alertsEnabled(){return localStorage.getItem(ALERT_KEY)==='1'}
  function setAlertsEnabled(v){localStorage.setItem(ALERT_KEY,v?'1':'0')}
  function alertedMap(){try{return JSON.parse(localStorage.getItem(ALERTED_KEY)||'{}')||{}}catch{return {}}}
@@ -47,7 +64,7 @@
   if(!alertsEnabled())return;
   const visitor=[...(msgs||[])].reverse().find(m=>m.sender==='visitor');if(!visitor)return;
   const m=alertedMap(),when=visitor.created_at;if(!when||m[s.id]&&new Date(when)<=new Date(m[s.id]))return;
-  m[s.id]=when;saveAlerted(m);chime();notifyBrowser('New vendor message',String(s.vendor_business||s.visitor_name||'Vendor')+': '+String(visitor.body||'').slice(0,160),s.id);
+  m[s.id]=when;saveAlerted(m);chime();const preview=visitor.body||(visitor.attachment_name?'Attachment: '+visitor.attachment_name:'New message');notifyBrowser('New vendor message',String(s.vendor_business||s.visitor_name||'Vendor')+': '+String(preview).slice(0,160),s.id);
  }
  async function enableAlerts(){
   const d=await api('admin-dashboard');markBaseline(d.sessions||[]);setAlertsEnabled(true);ensureAudio();chime();
@@ -89,12 +106,12 @@
  }
  async function openPanel(){if(active)await open(active.panel,active.b,active.tabs)}
  async function conversation(id){
-  if(!active)return;try{const d=await api('admin-messages',{id}),s=d.session,msgs=d.messages||[];maybeAlertThread(s,msgs);active.panel.innerHTML='<section class="card"><button type="button" class="secondary" id="chat-back">← Back to Live Chat</button><h2>'+esc(s.vendor_business||s.visitor_name)+'</h2><p><strong>'+esc(s.visitor_name)+'</strong><br>'+esc(s.visitor_email)+' · '+esc(s.visitor_phone)+'<br><strong>What they sell:</strong> '+esc(s.selling)+'</p><p><span class="tag">'+esc(s.status)+'</span>'+(s.account_number?' <span class="tag">Vendor '+esc(s.account_number)+'</span>':' <span class="tag">New vendor / visitor</span>')+'</p></section><section class="card"><div class="live-chat-messages live-chat-admin-thread">'+msgs.map(m=>'<div class="chat-msg '+(m.sender==='organizer'?'mine':'theirs')+'"><small>'+esc(m.sender==='organizer'?'You':'Vendor')+'</small><p>'+esc(m.body)+'</p><time>'+esc(stamp(m.created_at))+'</time></div>').join('')+'</div>'+(s.status==='closed'?'<div class="actions"><button id="chat-reopen">Reopen Conversation</button></div>':'<form id="chat-admin-reply"><label>Reply<textarea name="message" rows="3" required></textarea></label><div class="actions"><button type="submit">Send Reply</button><button type="button" class="secondary" id="chat-close-session">Close Conversation</button></div></form>')+'</section>';
+  if(!active)return;try{const d=await api('admin-messages',{id}),s=d.session,msgs=d.messages||[];maybeAlertThread(s,msgs);active.panel.innerHTML='<section class="card"><button type="button" class="secondary" id="chat-back">← Back to Live Chat</button><h2>'+esc(s.vendor_business||s.visitor_name)+'</h2><p><strong>'+esc(s.visitor_name)+'</strong><br>'+esc(s.visitor_email)+' · '+esc(s.visitor_phone)+'<br><strong>What they sell:</strong> '+esc(s.selling)+'</p><p><span class="tag">'+esc(s.status)+'</span>'+(s.account_number?' <span class="tag">Vendor '+esc(s.account_number)+'</span>':' <span class="tag">New vendor / visitor</span>')+'</p></section><section class="card"><div class="live-chat-messages live-chat-admin-thread">'+msgs.map(m=>'<div class="chat-msg '+(m.sender==='organizer'?'mine':'theirs')+'"><small>'+esc(m.sender==='organizer'?'You':'Vendor')+'</small>'+(m.body?'<p>'+esc(m.body)+'</p>':'')+attachmentHtml(m)+'<time>'+esc(stamp(m.created_at))+'</time></div>').join('')+'</div>'+(s.status==='closed'?'<div class="actions"><button id="chat-reopen">Reopen Conversation</button></div>':'<form id="chat-admin-reply"><label>Reply<textarea name="message" rows="3" placeholder="Type a reply, attach a file, or both"></textarea></label><label class="chat-attach-control">Attach screenshot or PDF<input name="attachment" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"></label><small>JPG, PNG, WEBP, GIF, or PDF up to 10 MB.</small><div class="actions"><button type="submit">Send Reply</button><button type="button" class="secondary" id="chat-close-session">Close Conversation</button></div></form>')+'</section>';
    active.panel.querySelector('#chat-back').onclick=openPanel;
-   const form=active.panel.querySelector('#chat-admin-reply');if(form)form.onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{await api('admin-reply',{id,message:new FormData(form).get('message')});await conversation(id)}catch(err){alert(err.message);b.disabled=false;}};
+   const form=active.panel.querySelector('#chat-admin-reply');if(form)form.onsubmit=async e=>{e.preventDefault();const b=e.submitter,f=new FormData(form),file=f.get('attachment'),hasFile=!!file&&file.size>0,message=String(f.get('message')||'').trim();if(!message&&!hasFile)return alert('Type a reply or attach a file.');b.disabled=true;b.textContent=hasFile?'Uploading…':'Sending…';try{const attachment=hasFile?await uploadAttachment(id,file):null;await api('admin-reply',{id,message,attachment});await conversation(id)}catch(err){alert(err.message);b.disabled=false;b.textContent='Send Reply';}};
    const close=active.panel.querySelector('#chat-close-session');if(close)close.onclick=async()=>{if(!confirm('Close this conversation?'))return;await api('admin-close',{id});await conversation(id)};
    const reopen=active.panel.querySelector('#chat-reopen');if(reopen)reopen.onclick=async()=>{await api('admin-reopen',{id});await conversation(id)};
-   startRefresh(async()=>{const ta=active?.panel?.querySelector('#chat-admin-reply textarea');if(ta&&(ta===document.activeElement||ta.value.trim()))return;await conversation(id);});
+   startRefresh(async()=>{const formNow=active?.panel?.querySelector('#chat-admin-reply'),ta=formNow?.querySelector('textarea'),file=formNow?.querySelector('input[type="file"]');if(formNow&&((ta&&(ta===document.activeElement||ta.value.trim()))||file?.files?.length))return;await conversation(id);});
   }catch(e){alert(e.message)}
  }
  function startRefresh(fn=openPanel){clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(location.hash==='#admin'&&active?.b?.isConnected&&active.b.classList.contains('selected'))fn().catch(()=>{});else clearInterval(refreshTimer)},7000)}
