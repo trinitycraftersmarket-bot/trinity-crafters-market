@@ -39,7 +39,6 @@ export default async req=>{
    if(!name||!email||!phone||!selling||!message)throw Error('Name, email, phone, what you sell, and your question are required.');
    if(!emailOk(email))throw Error('Enter a valid email address.');
    if(normalized.length<7)throw Error('Enter a valid phone number.');
-   const recent=await sql`select count(*)::int n from market.chat_sessions where created_at is null`.catch(()=>[]);
    const [rate]=await sql`select count(*)::int n from market.chat_sessions where (lower(visitor_email)=${email} or normalized_phone=${normalized}) and started_at>now()-interval '1 hour'`;
    if(Number(rate?.n||0)>=5)throw Error('Too many new conversations were started recently. Please use your existing chat or try again later.');
    const [vendor]=await sql`select id,business from market.vendors where lower(email)=${email} or (regexp_replace(phone,'\\D','','g')<>'' and regexp_replace(phone,'\\D','','g')=${normalized}) order by updated_at desc limit 1`;
