@@ -1,7 +1,8 @@
 import {db,identity,audit,queue,flushMail} from '../../server/core.mjs';
 
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
-const clean=(v,max=500)=>String(v??'').trim().slice(0,max);\nconst phoneNorm=v=>String(v??'').replace(/\\D/g,'').slice(-15);
+const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
+const phoneNorm=v=>String(v??'').replace(/\\D/g,'').slice(-15);
 const fmtDate=d=>{const s=String(d||'').slice(0,10);const m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m){const y=Number(m[1]),mo=Number(m[2]),day=Number(m[3]);return new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(new Date(Date.UTC(y,mo-1,day,17)));}const x=new Date(d);return Number.isNaN(x.getTime())?s:new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(x);};
 const fmtTime=t=>{const raw=String(t||'').trim();if(!raw)return '';const match=raw.match(/(?:T|^)(\d{1,2}):(\d{2})/);if(!match)return raw;const h=Number(match[1]),m=Number(match[2]);if(h>23||m>59)return raw;const ap=h>=12?'PM':'AM',hh=h%12||12;return hh+':'+String(m).padStart(2,'0')+' '+ap;};
 
