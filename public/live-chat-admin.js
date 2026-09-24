@@ -30,9 +30,9 @@
    const form=active.panel.querySelector('#chat-admin-reply');if(form)form.onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{await api('admin-reply',{id,message:new FormData(form).get('message')});await conversation(id)}catch(err){alert(err.message);b.disabled=false;}};
    const close=active.panel.querySelector('#chat-close-session');if(close)close.onclick=async()=>{if(!confirm('Close this conversation?'))return;await api('admin-close',{id});await conversation(id)};
    const reopen=active.panel.querySelector('#chat-reopen');if(reopen)reopen.onclick=async()=>{await api('admin-reopen',{id});await conversation(id)};
-   startRefresh(()=>conversation(id));
+   startRefresh(async()=>{const ta=active?.panel?.querySelector('#chat-admin-reply textarea');if(ta&&(ta===document.activeElement||ta.value.trim()))return;await conversation(id);});
   }catch(e){alert(e.message)}
  }
- function startRefresh(fn=openPanel){clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(location.hash==='#admin'&&active?.b?.classList.contains('selected'))fn().catch(()=>{});else clearInterval(refreshTimer)},7000)}
+ function startRefresh(fn=openPanel){clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(location.hash==='#admin'&&active?.b?.isConnected&&active.b.classList.contains('selected'))fn().catch(()=>{});else clearInterval(refreshTimer)},7000)}
  new MutationObserver(install).observe(document.body,{childList:true,subtree:true});window.addEventListener('hashchange',()=>{clearInterval(refreshTimer);setTimeout(install,100)});install();
 })();
