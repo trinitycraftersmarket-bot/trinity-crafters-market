@@ -3,7 +3,8 @@ import {db,identity,audit,queue,flushMail} from '../../server/core.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
 const money=n=>'$'+(Number(n||0)/100).toFixed(2);
-const fmtDate=v=>{const s=String(v||'').slice(0,10),m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!m)return s;return new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(new Date(Date.UTC(+m[1],+m[2]-1,+m[3],17)));};
+const dateOnly=v=>v instanceof Date?v.toISOString().slice(0,10):(String(v??'').match(/\d{4}-\d{2}-\d{2}/)?.[0]||'');
+const fmtDate=v=>{const s=dateOnly(v),m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!m)return s||'Market date';return new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(new Date(Date.UTC(+m[1],+m[2]-1,+m[3],17)));};
 
 async function sourceRecord(sql,id,imported){
  if(imported){
@@ -36,7 +37,7 @@ async function eligibleEvents(sql,credit,u){
    const counts=await categoryAndSpaceCounts(sql,e.id,credit.category_id,space),capacity=Number(e[space+'_capacity']||0),price=Number(e[space+'_price']||0);
    if(Number(counts.space_used)<capacity&&price>0&&price<=Number(credit.remaining_amount||0))spaces.push({space,price});
   }
-  if(spaces.length)out.push({id:e.id,date:String(e.date).slice(0,10),title:e.title,location:e.location,address:e.address,market_name:e.market_name,spaces});
+  if(spaces.length)out.push({id:e.id,date:dateOnly(e.date),title:e.title,location:e.location,address:e.address,market_name:e.market_name,spaces});
  }
  return out;
 }
