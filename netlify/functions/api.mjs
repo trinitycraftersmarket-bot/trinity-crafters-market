@@ -239,7 +239,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   const canApplications=hasStaffPermission(u,'applications'),canAttendees=hasStaffPermission(u,'attendees'),canWaitlist=hasStaffPermission(u,'waitlist'),canMessages=hasStaffPermission(u,'vendor_messages');
   let applications=[];
   if(canApplications||canAttendees||canWaitlist||canMessages){
-   const all=await sql`select b.id,b.application_id,b.event_id,b.space,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,b.checked_in,b.no_show,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`;
+   const all=await sql`select b.id,b.application_id,b.event_id,b.space,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,b.checked_in,b.no_show,b.setup_arrival_time,b.setup_checkin_at,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`;
    applications=all.filter(b=>canApplications||canMessages||(canAttendees&&b.status==='approved')||(canWaitlist&&b.status==='waitlist'));
   }
   const imported=canAttendees?await sql`select * from market.imported_attendees order by created_at`:[];
@@ -413,6 +413,44 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(state==='checked_in'){const [r]=await sql`select inspection_status from market.imported_attendees where id=${p.id}`;if(r?.inspection_status!=='approved')throw Error('Inspect and approve this vendor before check-in.');}
   await sql`update market.imported_attendees set attendance_state=${state} where id=${p.id}`;
   await audit(sql,u,'imported attendance',{id:p.id,state});return json({ok:true});
+ }
+ if(action==='checkin-reminder'&&req.method==='POST'){
+  const p=await req.json(),imported=p.imported===true||p.imported==='1';
+  let v;
+  if(imported){
+   [v]=await sql`select i.id,i.event_id,i.name,i.business,i.email,i.setup_checkin_at,e.date,e.title,l.name location,l.market_name from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${p.id} and not coalesce(i.cancelled,false)`;
+  }else{
+   [v]=await sql`select b.id,b.event_id,a.name,a.business,a.email,b.setup_checkin_at,e.date,e.title,l.name location,l.market_name from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${p.id} and b.status in ('approved','held','paid')`;
+  }
+  if(!v)throw Error('Vendor booking not found.');
+  if(v.setup_checkin_at)throw Error('This vendor has already completed online check-in.');
+  const email=String(v.email||'').replace(/,+\s*$/,'').trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('This vendor does not have a valid email address on file.');
+  const day=new Date(String(v.date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});
+  const link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';
+  const subject='Reminder: complete your online check-in — Trinity Crafters Market';
+  const body=`Hi ${v.name||'Vendor'},
+
+This is a reminder to complete your online check-in for ${day}.
+
+Please sign in and choose your planned setup arrival time:
+${link}
+
+Market: ${v.market_name||v.title||'Trinity Crafters Market'}
+Date: ${day}
+Location: ${v.location||''}
+
+If you have already completed online check-in since this reminder was prepared, no further action is needed.
+
+Thank you,
+Trinity Crafters Market
+trinitycraftersmarket@gmail.com`;
+  await sql.begin(async tx=>{
+   await queue(tx,email,subject,body);
+   await audit(tx,u,'online check-in reminder',{id:v.id,event_id:v.event_id,source:imported?'imported':'booking',email});
+  });
+  await flushMail();
+  return json({ok:true,email});
  }
  if(action==='vendor-save'){
   if(!u.admin)return json({error:'Organizer access only'},403);
