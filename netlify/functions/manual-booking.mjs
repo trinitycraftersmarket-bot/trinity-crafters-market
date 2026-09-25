@@ -48,7 +48,7 @@ export default async req=>{
     order by lower(coalesce(nullif(business,''),name,'')),id limit 25`;
     return json({vendors});
    }
-   const events=await sql`select e.id,e.date,e.title,e.indoor_price,e.outdoor_price,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.date >= (now() at time zone 'America/New_York')::date order by e.date`;
+   const events=await sql`select e.id,e.date,e.title,e.indoor_price,e.outdoor_price,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date`;
    const categories=await sql`select id,name from market.categories where active order by name`;
    return json({events,categories});
   }
@@ -104,8 +104,8 @@ export default async req=>{
   if(!p.event_id)throw Error('Choose a market date.');
   if(!['Inside','Outside'].includes(p.space))throw Error('Choose Inside or Outside.');
   if(!['cash','credit card','monthly billing'].includes(p.payment_method))throw Error('Choose cash, credit card, or Monthly Billing.');
-  const [event]=await sql`select e.*,to_char(e.date,'YYYY-MM-DD') event_date,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;
-  if(!event)throw Error('Market date not found.');
+  const [event]=await sql`select e.*,to_char(e.date,'YYYY-MM-DD') event_date,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;
+  if(!event)throw Error('That market date has ended or is no longer available.');
   const duplicate=await sql`select id from market.imported_attendees where event_id=${event.id} and lower(trim(email))=${email} and not coalesce(cancelled,false) limit 1`;
   if(duplicate.length)throw Error('This email is already booked for that market date.');
   const onlineDuplicate=await sql`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and lower(trim(a.email))=${email} and (b.status in ('pending','waitlist','approved','paid') or (b.status='held' and b.hold_until>now())) limit 1`;
