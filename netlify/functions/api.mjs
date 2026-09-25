@@ -549,16 +549,24 @@ trinitycraftersmarket@gmail.com`;
  const transitions={pending:['approved','declined'],waitlist:['approved','declined','cancelled'],approved:['held','cancelled'],held:['paid','cancelled'],expired:['approved','cancelled'],paid:['cancelled'],declined:[],cancelled:[]};
  if(p.status==='declined')required(p.reason,'the denial reason',2000);
  if(!transitions[b.status].includes(p.status))throw Error('Refresh the dashboard; this action is no longer available.');
- if(['approved','held','paid'].includes(p.status)){
+ if(p.status==='approved'){
  if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before approving or confirming.');
  const [e]=await tx`select * from market.events where id=${b.event_id}`;
  const others=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${b.event_id} and b.id<>${b.id}`;
  checkCapacity(e,others,b.space,b.category_id,b.vendor_limit,p.exception===true||b.category_exception);
+ } else if(['held','paid'].includes(p.status)){
+ if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before confirming.');
  }
  if(p.status==='held'&&!p.reference?.trim())throw Error('Enter the invoice reference before starting the hold.');
  if(p.status==='paid'&&!p.reference?.trim())throw Error('Enter a payment reference.');
- await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,payment_method=case when ${p.status}='paid' then ${String(p.payment_method||'').slice(0,100)} else payment_method end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
- await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null});
+ if(p.status==='held'&&p.apply_all===true){
+  const siblings=await tx`select id from market.bookings where application_id=${b.application_id} and status='approved'`;
+  await tx`update market.bookings set status='held',hold_until=now()+interval '24 hours',invoice_reference=${p.reference||null} where application_id=${b.application_id} and status='approved'`;
+  await audit(tx,u,'booking held bulk',{id:b.id,application_id:b.application_id,count:siblings.length,reference:p.reference||null});
+ } else {
+  await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,payment_method=case when ${p.status}='paid' then ${String(p.payment_method||'').slice(0,100)} else payment_method end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
+  await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null});
+ }
  if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);if(p.status==='approved'){const day=marketDateLabel(event.date),link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';await queue(tx,b.email,'Online check-in is ready — Trinity Crafters Market',`Hi ${b.name},\n\nYour vendor application for ${day} has been approved. Online check-in is now available.\n\nPlease sign in and choose your planned setup arrival time:\n${link}\n\nCompleting online check-in ahead of the market helps us make setup faster and keeps your arrival information on your vendor record.\n\nMarket: ${day}\nLocation: ${event.location}\n${event.address||''}\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'online check-in invitation queued',{id:b.id,event_id:b.event_id,email:b.email});}}
  });if(['approved','declined'].includes(p.status))await flushMail();if(p.status==='approved'&&process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET){try{const invoice=await createAndSendPayPalInvoice(sql,u,p.id);return json({ok:true,invoice_id:invoice.id,invoiced:true});}catch(e){await audit(sql,u,'paypal invoice failed',{id:p.id,error:String(e.message||e).slice(0,500)});return json({ok:true,approved:true,invoice_error:String(e.message||e)});}}return json({ok:true});
  }
