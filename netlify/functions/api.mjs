@@ -314,13 +314,16 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(p.source==='pdf'){
    [v]=await sql`select i.id,coalesce(nullif(v.name,''),i.name) name,coalesce(nullif(v.business,''),i.business,i.name) business,coalesce(nullif(v.email,''),i.email) email,coalesce(v.billing_address,'') billing_address,i.vendor_id from market.imported_attendees i left join market.vendors v on v.id=i.vendor_id where i.id=${p.application_id}`;
    if(!v)throw Error('Vendor not found.');
-   items=await sql`select e.date,coalesce(i.invoice_amount,0)::int price,i.space,coalesce(i.payment_method,'Imported') payment_method from market.imported_attendees i join market.events e on e.id=i.event_id where ((${v.vendor_id}::uuid is not null and i.vendor_id=${v.vendor_id}) or lower(trim(i.email))=lower(trim(${v.email}))) and i.payment_status='paid' and extract(year from e.date)=${year} order by e.date`;
+   items=await sql`select e.date,coalesce(i.invoice_amount,0)::int price,i.space,coalesce(i.payment_method,'Imported') payment_method from market.imported_attendees i join market.events e on e.id=i.event_id where ((i.vendor_id is not null and i.vendor_id=${v.vendor_id}) or lower(trim(i.email))=lower(trim(${v.email}))) and i.payment_status='paid' and extract(year from e.date)=${year} order by e.date`;
   }else{
    [v]=await sql`select id,name,business,email,billing_address from market.applications where id=${p.application_id}`;if(!v)throw Error('Vendor not found.');
    items=await sql`select e.date,b.price,b.space,b.payment_method from market.bookings b join market.events e on e.id=b.event_id where b.application_id=${v.id} and b.status='paid' and extract(year from e.date)=${year} order by e.date`;
   }
   const total=items.reduce((n,x)=>n+Number(x.price||0),0);
-  const itemLines=items.map(x=>new Date(String(x.date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US')+' — 
+  const itemLines=items.map(x=>new Date(String(x.date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US')+' — $'+(Number(x.price||0)/100).toFixed(2)+' — '+(x.space||'')).join('\n');
+  const body=`TRINITY CRAFTERS MARKET\nYEAR-END VENDOR PAYMENT STATEMENT — ${year}\n\nVendor: ${v.business||v.name}\nContact: ${v.name}\n${v.billing_address?'Billing address: '+v.billing_address+'\n':''}\nMarket dates:\n${itemLines||'No paid market dates recorded for this year.'}\n\nTotal recorded paid bookings: $${(total/100).toFixed(2)}\n\nThis statement summarizes payments recorded by Trinity Crafters Market and is provided for recordkeeping. It is not tax advice or an IRS tax form.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
+  await sql.begin(async tx=>{await queue(tx,v.email,`Trinity Crafters Market ${year} Year-End Statement`,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+year+' Statement — '+(v.business||v.name),body);});await flushMail();return json({ok:true});
+ }
  if(action==='setup-email'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   const [event]=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;if(!event)throw Error('Market date not found.');
