@@ -79,9 +79,11 @@
  }
  function install(){
   if(location.hash!=='#admin'){clearInterval(alertTimer);return;}
-  const tabs=document.querySelector('.tabs'),panel=document.querySelector('#panel');if(!tabs||!panel)return;
+  const managerPanel=document.querySelector('#manager-content'),panel=document.querySelector('#panel')||managerPanel,tabs=document.querySelector('.tabs')||(managerPanel?document.querySelector('#manager-toolbar'):null);if(!tabs||!panel)return;
   let b=tabs.querySelector('[data-live-chat-admin]');
-  if(!b){b=document.createElement('button');b.textContent='Live Chat';b.dataset.liveChatAdmin='1';b.onclick=()=>open(panel,b,tabs);const vendors=tabs.querySelector('[data-tab="vendors"]');vendors?vendors.after(b):tabs.appendChild(b);}
+  if(!b&&managerPanel)return;
+  if(!b){b=document.createElement('button');b.textContent='Live Chat';b.dataset.liveChatAdmin='1';const vendors=tabs.querySelector('[data-tab="vendors"]');vendors?vendors.after(b):tabs.appendChild(b);}
+  b.onclick=()=>open(panel,b,tabs);
   startAlertWatch();
   if(alertsEnabled())document.addEventListener('click',ensureAudio,{once:true,capture:true});
  }

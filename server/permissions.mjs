@@ -1,1 +1,21 @@
-export function staffActionAllowed(u,action){return u.admin===true||(u.manager===true&&['manager','floor-attendees','booking','photo','rsvp-list','attendance','imported-attendance','inspection'].includes(action));}
+const ACTION_PERMISSION={
+ 'floor-attendees':'attendees',
+ booking:'applications',
+ photo:'applications',
+ 'rsvp-list':'shopper_rsvps',
+ attendance:'attendees',
+ 'imported-attendance':'attendees',
+ inspection:'attendees'
+};
+
+export function hasStaffPermission(u,permission){
+ return u?.admin===true||(u?.manager===true&&Array.isArray(u.permissions)&&u.permissions.includes(permission));
+}
+
+export function staffActionAllowed(u,action){
+ if(u?.admin===true)return true;
+ if(u?.manager!==true)return false;
+ if(action==='manager')return true;
+ const permission=ACTION_PERMISSION[action];
+ return !!permission&&hasStaffPermission(u,permission);
+}

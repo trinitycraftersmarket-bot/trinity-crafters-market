@@ -1,4 +1,5 @@
 import {db,identity,queue,flushMail,audit,supa} from '../../server/core.mjs';
+import {hasStaffPermission} from '../../server/permissions.mjs';
 
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
@@ -110,7 +111,7 @@ export default async req=>{
    return json({ok:true,open,status:open?'open':'offline'});
   }
 
-  const u=await identity(req);if(!u.admin)return json({error:'Administrator access only'},403);
+  const u=await identity(req);if(!u.admin&&!hasStaffPermission(u,'live_chat'))return json({error:'Live Chat access is not enabled for this manager.'},403);
 
   if(action==='admin-create-upload'&&req.method==='POST'){
    const p=await req.json(),id=clean(p.id,80),[s]=await sql`select id,status from market.chat_sessions where id=${id}`;

@@ -12,8 +12,13 @@ export async function identity(req){
  if(error||!data.user?.email_confirmed_at) throw Error('Please sign in with a verified email.');
  const u=data.user; const admin=u.email.toLowerCase()===process.env.ADMIN_EMAIL.toLowerCase();
  if(!admin){const bans=await db()`select id from market.bans where active and (user_id=${u.id} or email=${u.email.toLowerCase()} or phone in (select phone from market.applications where user_id=${u.id}))`;if(bans.length)throw Error('Your vendor access is restricted. Contact the market organizer.');}
- const manager=!admin&&(await db()`select email from market.staff where email=${u.email.toLowerCase()} and active`).length>0;
- return {id:u.id,email:u.email.toLowerCase(),admin,manager};
+ let manager=false,permissions=[];
+ if(!admin){
+  const [staff]=await db()`select permissions from market.staff where email=${u.email.toLowerCase()} and active`;
+  manager=!!staff;
+  permissions=manager&&Array.isArray(staff.permissions)?staff.permissions:[];
+ }
+ return {id:u.id,email:u.email.toLowerCase(),admin,manager,permissions};
 }
 export async function banned(tx,u,phone){return (await tx`select id from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${normalizePhone(phone)})`).length>0;}
 export async function expire(tx=db()){await tx`update market.bookings set status='expired' where status='held' and hold_until<=now()`;}

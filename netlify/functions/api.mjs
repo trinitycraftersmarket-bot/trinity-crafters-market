@@ -1,4 +1,4 @@
-import {staffActionAllowed} from '../../server/permissions.mjs';
+import {staffActionAllowed,hasStaffPermission} from '../../server/permissions.mjs';
 import {ready,db,supa,identity,banned,expire,audit,queue,publicData,flushMail} from '../../server/core.mjs';
 import {checkCapacity,normalizePhone,active as activeBooking} from '../../server/rules.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
@@ -44,6 +44,8 @@ async function createAndSendPayPalInvoice(sql,u,bookingId){
 }
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const required=(s,n,max=200)=>{if(typeof s!=='string'||!s.trim()||s.length>max)throw Error('Please check '+n);return s.trim();};
+const MANAGER_PERMISSION_KEYS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages','live_chat'];
+const DEFAULT_MANAGER_PERMISSIONS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages'];
 export default async req=>{
  try{
  const url=new URL(req.url),action=url.searchParams.get('action')||'public';
@@ -175,11 +177,11 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  if(req.method==='POST'){
  const p=await req.json();required(p.body,'message',4000);
  const [a]=await sql`select id,user_id from market.applications where id=${p.application_id}`;
- if(!a||(!u.admin&&!u.manager&&a.user_id!==u.id))return json({error:'Access denied'},403);
+ if(!a||(!u.admin&&!hasStaffPermission(u,'vendor_messages')&&a.user_id!==u.id))return json({error:'Access denied'},403);
  await sql`insert into market.vendor_messages(application_id,sender,body) values(${a.id},${u.email},${p.body.trim()})`;
  await audit(sql,u,'vendor message',{application_id:a.id});return json({ok:true});
  }
- return json(await sql`select m.id,m.application_id,m.sender,m.body,m.created_at from market.vendor_messages m join market.applications a on a.id=m.application_id where a.user_id=${u.id} or ${u.admin||u.manager} order by m.created_at`);
+ return json(await sql`select m.id,m.application_id,m.sender,m.body,m.created_at from market.vendor_messages m join market.applications a on a.id=m.application_id where a.user_id=${u.id} or ${u.admin||hasStaffPermission(u,'vendor_messages')} order by m.created_at`);
  }
  if(action==='floor-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
@@ -198,14 +200,25 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   return json(rows);
  }
  if(!staffActionAllowed(u,action))return json({error:'Access denied'},403);
- if(action==='staff-list')return json(await sql`select email,name,active from market.staff order by name`);
+ if(action==='staff-list')return json(await sql`select email,name,active,permissions from market.staff order by active desc,name,email`);
  if(action==='staff-save'&&req.method==='POST'){
  const p=await req.json();required(p.email,'email');required(p.name,'name');const email=p.email.trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Enter a valid email.');
- await sql`insert into market.staff(email,name,active) values(${email},${p.name.trim()},${p.active===true}) on conflict(email) do update set name=excluded.name,active=excluded.active`;
- await audit(sql,u,'manager access',{email,active:p.active===true});return json({ok:true});
+ const permissions=Array.isArray(p.permissions)?[...new Set(p.permissions.filter(x=>MANAGER_PERMISSION_KEYS.includes(x)))]:DEFAULT_MANAGER_PERMISSIONS;
+ await sql`insert into market.staff(email,name,active,permissions) values(${email},${p.name.trim()},${p.active===true},${JSON.stringify(permissions)}::jsonb) on conflict(email) do update set name=excluded.name,active=excluded.active,permissions=excluded.permissions`;
+ await audit(sql,u,'manager access',{email,active:p.active===true,permissions});return json({ok:true});
  }
  if(action==='rsvp-list')return json(await sql`select r.id,r.event_id,r.name,r.email,r.party_size,r.referral_source,r.referral_group,e.date,l.name location from market.shopper_rsvps r join market.events e on e.id=r.event_id join market.locations l on l.id=e.location_id order by e.date,r.name`);
- if(action==='manager')return json({events:await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id order by e.date desc`,applications:await sql`select b.id,b.application_id,b.event_id,b.space,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,b.checked_in,b.no_show,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`,imported:await sql`select * from market.imported_attendees order by created_at`});
+ if(action==='manager'){
+  const events=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id order by e.date desc`;
+  const canApplications=hasStaffPermission(u,'applications'),canAttendees=hasStaffPermission(u,'attendees'),canWaitlist=hasStaffPermission(u,'waitlist'),canMessages=hasStaffPermission(u,'vendor_messages');
+  let applications=[];
+  if(canApplications||canAttendees||canWaitlist||canMessages){
+   const all=await sql`select b.id,b.application_id,b.event_id,b.space,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,b.checked_in,b.no_show,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`;
+   applications=all.filter(b=>canApplications||canMessages||(canAttendees&&b.status==='approved')||(canWaitlist&&b.status==='waitlist'));
+  }
+  const imported=canAttendees?await sql`select * from market.imported_attendees order by created_at`:[];
+  return json({events,applications,imported});
+ }
 
  if(action==='vendor-list'){
   if(!u.admin)return json({error:'Organizer access only'},403);
