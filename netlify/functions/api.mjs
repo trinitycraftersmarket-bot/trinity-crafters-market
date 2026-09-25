@@ -35,7 +35,7 @@ async function createAndSendPayPalInvoice(sql,u,bookingId){
  const invoice=await paypalRequest('/v2/invoicing/invoices',{method:'POST',requestId:'market-'+b.id,body:{
   detail:{currency_code:'USD',note:'Trinity Crafters Market vendor booth. Payment is due within 24 hours of invoice delivery.',terms_and_conditions:'Vendor payments are nonrefundable. Market operates rain or shine.',memo:'Booking '+b.id},
   primary_recipients:[{billing_info:{name:{given_name:String(b.name||b.business).slice(0,140)},email_address:b.email,address:paypalAddress(b.billing_address)}}],
-  items:[{name:(b.space==='indoor'?'Indoor':'Outdoor')+' vendor space — '+String(b.date).slice(0,10),description:b.business+' · '+b.location,quantity:'1',unit_amount:{currency_code:'USD',value:(b.price/100).toFixed(2)},unit_of_measure:'QUANTITY'}],
+  items:[{name:(b.space==='indoor'?'Indoor':'Outdoor')+' vendor space — '+marketDateOnly(b.date),description:b.business+' · '+b.location,quantity:'1',unit_amount:{currency_code:'USD',value:(b.price/100).toFixed(2)},unit_of_measure:'QUANTITY'}],
   configuration:{allow_tip:false,partial_payment:{allow_partial_payment:false}}
  }});
  await paypalRequest('/v2/invoicing/invoices/'+encodeURIComponent(invoice.id)+'/send',{method:'POST',requestId:'market-send-'+b.id,body:{send_to_invoicer:true,send_to_recipient:true}});
@@ -44,6 +44,8 @@ async function createAndSendPayPalInvoice(sql,u,bookingId){
 }
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const required=(s,n,max=200)=>{if(typeof s!=='string'||!s.trim()||s.length>max)throw Error('Please check '+n);return s.trim();};
+const marketDateOnly=d=>d instanceof Date?d.toISOString().slice(0,10):(String(d??'').match(/\d{4}-\d{2}-\d{2}/)?.[0]||'');
+const marketDateLabel=d=>{const ymd=marketDateOnly(d),x=ymd?new Date(ymd+'T12:00:00Z'):new Date(NaN);return Number.isNaN(x.getTime())?'Market date':x.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});};
 const MANAGER_PERMISSION_KEYS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages','live_chat'];
 const DEFAULT_MANAGER_PERMISSIONS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages'];
 export default async req=>{
@@ -69,7 +71,7 @@ export default async req=>{
 
 Vendor: ${s.business||s.vendor_name}
 Contact: ${s.vendor_name}
-Market: ${String(s.date).slice(0,10)} — ${s.location}
+Market: ${marketDateLabel(s.date)} — ${s.location}
 
 Overall: ${overall}/5
 Communication: ${communication}/5
@@ -329,7 +331,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   const [v]=await sql`select id,name,business,email,billing_address from market.applications where id=${p.application_id}`;if(!v)throw Error('Vendor not found.');
   const year=Number(p.year),items=await sql`select e.date,b.price,b.space,b.payment_method from market.bookings b join market.events e on e.id=b.event_id where b.application_id=${v.id} and b.status='paid' and extract(year from e.date)=${year} order by e.date`;
   const total=items.reduce((n,x)=>n+Number(x.price||0),0);
-  const itemLines=items.map(x=>new Date(x.date+'T12:00:00').toLocaleDateString('en-US')+' — $'+(Number(x.price||0)/100).toFixed(2)+' — '+(x.space||'')).join('\n');
+  const itemLines=items.map(x=>marketDateLabel(x.date)+' — $'+(Number(x.price||0)/100).toFixed(2)+' — '+(x.space||'')).join('\n');
   const body=`TRINITY CRAFTERS MARKET\nYEAR-END VENDOR PAYMENT STATEMENT — ${year}\n\nVendor: ${v.business||v.name}\nContact: ${v.name}\n${v.billing_address?'Billing address: '+v.billing_address+'\n':''}\nMarket dates:\n${itemLines}\n\nTotal recorded paid bookings: $${(total/100).toFixed(2)}\n\nThis statement summarizes payments recorded by Trinity Crafters Market and is provided for recordkeeping. It is not tax advice or an IRS tax form.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
   await sql.begin(async tx=>{await queue(tx,v.email,`Trinity Crafters Market ${year} Year-End Statement`,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+year+' Statement — '+(v.business||v.name),body);});await flushMail();return json({ok:true});
  }
@@ -461,7 +463,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(v.setup_checkin_at)throw Error('This vendor has already completed online check-in.');
   const email=String(v.email||'').replace(/,+\s*$/,'').trim();
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('This vendor does not have a valid email address on file.');
-  const day=new Date(String(v.date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});
+  const day=marketDateLabel(v.date);
   const link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';
   const subject='Reminder: complete your online check-in — Trinity Crafters Market';
   const body=`Hi ${v.name||'Vendor'},
@@ -532,7 +534,7 @@ trinitycraftersmarket@gmail.com`;
    const others=await tx`select x.*,a.category_id from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=${b.event_id} and x.id<>${b.id}`;
    checkCapacity(e,others,b.space,b.category_id,b.vendor_limit,b.category_exception);
    await tx`update market.bookings set status='paid',hold_until=null,payment_reference=${p.reference.trim()},payment_method=${p.payment_method.trim().slice(0,100)},paid_at=now() where id=${b.id}`;
-   const day=new Date(String(b.date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});
+   const day=marketDateLabel(b.date);
    const body=`Hi ${b.name},\n\nYour vendor booking has been reinstated and your payment has been received. Your market date is approved and confirmed.\n\n${day}\n10 AM–3 PM Eastern\n${b.location}\n${b.address}\n${b.space==='indoor'?'Indoor':'Outdoor'} space — ${(b.price/100).toFixed(2)}\n\nPayment status: PAID\n\nYour space and category are confirmed for this market date. We look forward to seeing you!\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
    await queue(tx,b.email,`Booking confirmed — Trinity Crafters Market, ${day}`,body);
    await audit(tx,u,'booking reinstated',{id:b.id,status:'paid',reference:p.reference,payment_method:p.payment_method});
@@ -557,7 +559,7 @@ trinitycraftersmarket@gmail.com`;
  if(p.status==='paid'&&!p.reference?.trim())throw Error('Enter a payment reference.');
  await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,payment_method=case when ${p.status}='paid' then ${String(p.payment_method||'').slice(0,100)} else payment_method end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
  await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null});
- if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);if(p.status==='approved'){const day=new Date(String(event.date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}),link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';await queue(tx,b.email,'Online check-in is ready — Trinity Crafters Market',`Hi ${b.name},\n\nYour vendor application for ${day} has been approved. Online check-in is now available.\n\nPlease sign in and choose your planned setup arrival time:\n${link}\n\nCompleting online check-in ahead of the market helps us make setup faster and keeps your arrival information on your vendor record.\n\nMarket: ${day}\nLocation: ${event.location}\n${event.address||''}\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'online check-in invitation queued',{id:b.id,event_id:b.event_id,email:b.email});}}
+ if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);if(p.status==='approved'){const day=marketDateLabel(event.date),link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';await queue(tx,b.email,'Online check-in is ready — Trinity Crafters Market',`Hi ${b.name},\n\nYour vendor application for ${day} has been approved. Online check-in is now available.\n\nPlease sign in and choose your planned setup arrival time:\n${link}\n\nCompleting online check-in ahead of the market helps us make setup faster and keeps your arrival information on your vendor record.\n\nMarket: ${day}\nLocation: ${event.location}\n${event.address||''}\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'online check-in invitation queued',{id:b.id,event_id:b.event_id,email:b.email});}}
  });if(['approved','declined'].includes(p.status))await flushMail();if(p.status==='approved'&&process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET){try{const invoice=await createAndSendPayPalInvoice(sql,u,p.id);return json({ok:true,invoice_id:invoice.id,invoiced:true});}catch(e){await audit(sql,u,'paypal invoice failed',{id:p.id,error:String(e.message||e).slice(0,500)});return json({ok:true,approved:true,invoice_error:String(e.message||e)});}}return json({ok:true});
  }
  if(action==='paypal-invoice'){
