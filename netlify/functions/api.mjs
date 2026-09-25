@@ -647,7 +647,7 @@ trinitycraftersmarket@gmail.com`;
     }
     await tx`update market.imported_attendees set cancelled=false,reinstated_at=now(),reinstated_by=${u.email} where id=${i.id}`;
     const day=marketDateLabel(i.date),paid=String(i.payment_status||'').toLowerCase()==='paid';
-    if(i.email)await queue(tx,String(i.email).replace(/,+\\s*$/,'').trim(),'Vendor booking reinstated — '+day,`Hi ${i.name||'Vendor'},\\n\\nYour vendor booking for ${day} at ${i.market_name||i.title||'Trinity Crafters Market'} has been reinstated.\\n\\nLocation: ${i.location||''}\\nSpace: ${space==='indoor'?'Indoor':'Outdoor'}\\nPayment status: ${paid?'PAID':'Payment not recorded'}\\n\\nYour booth and category inventory have been restored.\\n\\nThank you,\\nTrinity Crafters Market\\ntrinitycraftersmarket@gmail.com`);
+    if(i.email)await queue(tx,String(i.email).replace(/,+\s*$/,'').trim(),'Vendor booking reinstated — '+day,`Hi ${i.name||'Vendor'},\n\nYour vendor booking for ${day} at ${i.market_name||i.title||'Trinity Crafters Market'} has been reinstated.\n\nLocation: ${i.location||''}\nSpace: ${space==='indoor'?'Indoor':'Outdoor'}\nPayment status: ${paid?'PAID':'Payment not recorded'}\n\nYour booth and category inventory have been restored.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);
     await audit(tx,u,'cancelled imported vendor reinstated',{id:i.id,event_id:i.event_id,restored_payment_status:i.payment_status||'unpaid'});
     result={ok:true,status:paid?'paid':'approved'};
    }else{
@@ -695,7 +695,7 @@ trinitycraftersmarket@gmail.com`;
     const restoredStatus=wasPaid?'paid':'approved';
     await tx`update market.bookings set status=${restoredStatus},hold_until=null,reinstated_at=now(),reinstated_by=${u.email} where id=${b.id}`;
     const day=marketDateLabel(b.date);
-    if(b.email)await queue(tx,b.email,'Vendor booking reinstated — '+day,`Hi ${b.name||'Vendor'},\\n\\nYour vendor booking for ${day} at ${b.market_name||b.title||'Trinity Crafters Market'} has been reinstated.\\n\\nLocation: ${b.location||''}\\nSpace: ${space==='indoor'?'Indoor':'Outdoor'}\\nPayment status: ${wasPaid?'PAID':'Payment not recorded'}\\n\\nYour booth and category inventory have been restored.\\n\\nThank you,\\nTrinity Crafters Market\\ntrinitycraftersmarket@gmail.com`);
+    if(b.email)await queue(tx,b.email,'Vendor booking reinstated — '+day,`Hi ${b.name||'Vendor'},\n\nYour vendor booking for ${day} at ${b.market_name||b.title||'Trinity Crafters Market'} has been reinstated.\n\nLocation: ${b.location||''}\nSpace: ${space==='indoor'?'Indoor':'Outdoor'}\nPayment status: ${wasPaid?'PAID':'Payment not recorded'}\n\nYour booth and category inventory have been restored.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);
     await audit(tx,u,'cancelled booking reinstated',{id:b.id,event_id:b.event_id,status:restoredStatus});
     result={ok:true,status:restoredStatus};
    }
