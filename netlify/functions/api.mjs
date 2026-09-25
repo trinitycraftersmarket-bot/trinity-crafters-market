@@ -328,6 +328,18 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
    ) au on true
    where b.status='paid' and coalesce(b.price,0)>0
      and not exists(select 1 from market.vendor_payments vp where vp.booking_id=b.id)
+   union all
+   select coalesce(au.created_at,vi.updated_at,vi.paid_at),vi.paid_at,vi.payment_method,
+    greatest(0,coalesce(vi.amount,0)-coalesce(vi.discount,0)+coalesce(vi.late_fee,0)),vi.payment_reference,
+    coalesce(au.actor,'Unknown'),coalesce(nullif(vi.business,''),vi.vendor_name,'Vendor'),vi.vendor_email,
+    null::date,vi.id,'monthly billing'
+   from market.vendor_invoices vi
+   left join lateral (
+    select actor,created_at from market.audit
+    where detail->>'invoice_id'=vi.id::text and action='monthly invoice updated'
+    order by created_at desc limit 1
+   ) au on true
+   where vi.status='paid'
   ) p order by recorded_at desc nulls last,paid_at desc nulls last limit 500`;
   return json({...(await publicData()),monthlyInvoices,paymentLog,importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,categoryLimits:await sql`select * from market.event_category_limits`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,e.start_time,e.end_time,l.name location,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});
  }
@@ -486,7 +498,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  if(action==='imported-payment'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.id||!['paid','unpaid'].includes(p.status))throw Error('Choose a payment status.');
-  await sql`update market.imported_attendees set payment_status=${p.status} where id=${p.id}`;
+  await sql`update market.imported_attendees set payment_status=${p.status},payment_recorded_at=case when ${p.status}='paid' then now() else null end,payment_recorded_by=case when ${p.status}='paid' then ${u.email} else null end where id=${p.id}`;
   await audit(sql,u,'imported payment status',{id:p.id,status:p.status});
   return json({ok:true});
  }
@@ -507,7 +519,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
     const [x]=await tx`select i.id,i.name,i.business,i.email,e.date,e.title,l.name location,l.market_name from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${p.id} for update`;if(!x)throw Error('Imported attendee not found.');
     await tx`update market.imported_attendees set cancelled=true,cancellation_reason=${reason},cancelled_at=now(),cancelled_by=${u.email} where id=${p.id}`;
     await tx`delete from market.imported_category_reservations where imported_attendee_id=${p.id}`;
-    const email=String(x.email||'').replace(/,+\\s*$/,'').trim(),day=marketDateLabel(x.date);
+    const email=String(x.email||'').replace(/,+\s*$/,'').trim(),day=marketDateLabel(x.date);
     if(email)await queue(tx,email,'Vendor booking cancelled — '+day,`Hi ${x.name||'Vendor'},\n\nThis confirms that your vendor booking for ${day} at ${x.market_name||x.title||'Trinity Crafters Market'} has been cancelled.\n\nCancellation reason: ${reason}\n\nThis cancellation email confirms that the booth has been released. It does not by itself issue a refund or credit.\n\nIf you have questions, reply to this email or contact trinitycraftersmarket@gmail.com.\n\nThank you,\nTrinity Crafters Market`);
     await audit(tx,u,'cancel imported attendee',{id:p.id,reason,email});
    });
