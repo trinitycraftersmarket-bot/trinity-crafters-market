@@ -14,17 +14,12 @@ async function paypalInvoiceStatus(token,id){
 }
 const paidStatuses=new Set(['PAID','MARKED_AS_PAID','PAID_EXTERNAL']);
 const dateOnly=v=>{
- const s=String(v??'').trim();
- const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
- if(!m)return null;
- const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]);
- const x=new Date(y,mo-1,d,12,0,0);
- if(x.getFullYear()!==y||x.getMonth()!==mo-1||x.getDate()!==d)return null;
- return x;
+ const ymd=v instanceof Date?v.toISOString().slice(0,10):(String(v??'').match(/\d{4}-\d{2}-\d{2}/)?.[0]||'');
+ return ymd?new Date(ymd+'T12:00:00Z'):null;
 };
 const displayDate=v=>{
  const d=dateOnly(v);
- return d?d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}):'your scheduled market date';
+ return d?d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}):'your scheduled market date';
 };
 
 async function handleHeldPayments(){
