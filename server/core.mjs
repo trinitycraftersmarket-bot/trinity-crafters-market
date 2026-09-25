@@ -23,11 +23,11 @@ export async function identity(req){
 export async function banned(tx,u,phone){return (await tx`select id from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${normalizePhone(phone)})`).length>0;}
 export async function expire(tx=db()){await tx`update market.bookings set status='expired' where status='held' and hold_until<=now()`;}
 export async function audit(tx,u,action,detail){await tx`insert into market.audit(actor,action,detail) values(${u.email||u},${action},${tx.json(detail)})`;}
-export async function queue(tx,to,subject,body){await tx`insert into market.outbox(recipient,subject,body) values(${to},${subject},${body})`;}
+export async function queue(tx,to,subject,body,htmlBody=null){await tx`insert into market.outbox(recipient,subject,body,html_body) values(${to},${subject},${body},${htmlBody})`;}
 export async function flushMail(){
  if(!process.env.RESEND_API_KEY||!process.env.MAIL_FROM)return;
  await db().begin(async tx=>{const rows=await tx`select * from market.outbox where sent_at is null order by created_at limit 10 for update skip locked`;
- for(const r of rows){try{const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body}),signal:AbortSignal.timeout(8000)});if(!res.ok){const info=await res.json().catch(()=>({}));const detail=String(info.message||info.error||info.name||'').slice(0,300);throw Error('Email delivery failed: '+res.status+(detail?' — '+detail:''));}await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;}catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;}}
+ for(const r of rows){try{const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body,...(r.html_body?{html:r.html_body}:{})}),signal:AbortSignal.timeout(8000)});if(!res.ok){const info=await res.json().catch(()=>({}));const detail=String(info.message||info.error||info.name||'').slice(0,300);throw Error('Email delivery failed: '+res.status+(detail?' — '+detail:''));}await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;}catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;}}
  });
 }
 export async function publicData(){
@@ -51,5 +51,6 @@ export async function publicData(){
    select i.event_id,nullif(trim(coalesce(i.business,i.name)),'') business,nullif(trim(coalesce(i.approved_products,i.selling)),'') description,null::text category
    from market.imported_attendees i where not coalesce(i.cancelled,false)
  ) x where business is not null order by event_id,business`;
+ publicVendors.splice(0,publicVendors.length,...[...new Map(publicVendors.map(v=>[String(v.event_id)+'|'+String(v.business||'').toLowerCase().replace(/[^a-z0-9]/g,''),v])).values()]);
  return {events,categories,locations,counts,offerings,publicVendors};
 }
