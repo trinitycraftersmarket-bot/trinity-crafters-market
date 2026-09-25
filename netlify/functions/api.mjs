@@ -44,6 +44,7 @@ async function createAndSendPayPalInvoice(sql,u,bookingId){
 }
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const required=(s,n,max=200)=>{if(typeof s!=='string'||!s.trim()||s.length>max)throw Error('Please check '+n);return s.trim();};
+const htmlEsc=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const marketDateOnly=d=>d instanceof Date?d.toISOString().slice(0,10):(String(d??'').match(/\d{4}-\d{2}-\d{2}/)?.[0]||'');
 const marketDateLabel=d=>{const ymd=marketDateOnly(d),x=ymd?new Date(ymd+'T12:00:00Z'):new Date(NaN);return Number.isNaN(x.getTime())?'Market date':x.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});};
 const MANAGER_PERMISSION_KEYS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages','live_chat'];
@@ -162,6 +163,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  const waitlist=event.sold_out||areaClosed||categoryFull||spaceFull;
  if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,cat.vendor_limit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
  const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','waitlist','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
+ const importedDuplicate=await tx`select id from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and (lower(trim(both ' ,' from email))=lower(${u.email}) or (${normalizePhone(phone)}<>'' and regexp_replace(phone,'[^0-9]','','g')=${normalizePhone(phone)})) limit 1`;if(importedDuplicate.length)throw Error('You already have a vendor record for this date. Contact the organizer if it needs to be changed.');
  await tx`insert into market.bookings(application_id,event_id,space,price,status) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},${waitlist?'waitlist':'pending'})`;}
  await queue(tx,'trinitycraftersmarket@gmail.com','New market application: '+p.business,`${p.name}\n${u.email}\n${phone}\n${p.description}\nReview dates and private photos: ${process.env.SITE_URL}/#admin`);await audit(tx,u,'apply',{id:app.id});return app;
  });return json(result);
@@ -279,7 +281,56 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(!u.admin)return json({error:'Organizer access only'},403);
   return json(await sql`select s.*,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id order by e.date desc,s.submitted_at desc nulls last,s.business,s.vendor_name`);
  }
- if(action==='admin'){await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz, add column if not exists featured_posted_at timestamptz, add column if not exists social_products text`;await sql`alter table market.bookings add column if not exists featured_posted_at timestamptz, add column if not exists social_products text`;const monthlyInvoices=await sql`select * from market.vendor_invoices where status<>'paid' order by created_at desc`;return json({...(await publicData()),monthlyInvoices,importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,categoryLimits:await sql`select * from market.event_category_limits`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,e.start_time,e.end_time,l.name location,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});}
+ if(action==='admin'){
+  await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz, add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists payment_recorded_at timestamptz, add column if not exists payment_recorded_by text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
+  await sql`alter table market.bookings add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
+  const monthlyInvoices=await sql`select * from market.vendor_invoices order by created_at desc`;
+  const paymentLog=await sql`select * from (
+   select vp.created_at recorded_at,vp.paid_at,vp.payment_method,vp.amount,
+    coalesce(nullif(vp.note,''),b.payment_reference,i.payment_reference) reference,
+    coalesce(vp.recorded_by,au.actor,'Unknown') recorded_by,
+    coalesce(nullif(a.business,''),nullif(i.business,''),nullif(v.business,''),a.name,i.name,v.name,'Vendor') vendor,
+    coalesce(a.email,i.email,v.email,'') email,e.date market_date,
+    coalesce(vp.booking_id,vp.imported_attendee_id,vp.id) source_id,'payment ledger' source
+   from market.vendor_payments vp
+   left join market.applications a on a.id=vp.application_id
+   left join market.bookings b on b.id=vp.booking_id
+   left join market.imported_attendees i on i.id=vp.imported_attendee_id
+   left join market.vendors v on v.id=vp.vendor_id
+   left join market.events e on e.id=coalesce(b.event_id,i.event_id)
+   left join lateral (
+    select actor,created_at from market.audit
+    where detail->>'payment_id'=vp.id::text
+    order by created_at desc limit 1
+   ) au on true
+   union all
+   select coalesce(i.payment_recorded_at,au.created_at,i.paid_at,i.created_at),i.paid_at,i.payment_method,
+    i.invoice_amount,i.payment_reference,coalesce(i.payment_recorded_by,au.actor,'Unknown'),
+    coalesce(nullif(i.business,''),i.name,'Vendor'),i.email,e.date,i.id,'manual/imported booking'
+   from market.imported_attendees i join market.events e on e.id=i.event_id
+   left join lateral (
+    select actor,created_at from market.audit
+    where detail->>'id'=i.id::text
+      and action in ('manual vendor booking','imported vendor payment recorded','imported invoice status')
+    order by created_at desc limit 1
+   ) au on true
+   where i.payment_status='paid' and coalesce(i.invoice_amount,0)>0
+     and not exists(select 1 from market.vendor_payments vp where vp.imported_attendee_id=i.id)
+   union all
+   select coalesce(au.created_at,b.paid_at),b.paid_at,b.payment_method,b.price,b.payment_reference,
+    coalesce(au.actor,'Unknown'),coalesce(nullif(a.business,''),a.name,'Vendor'),a.email,e.date,b.id,'online booking'
+   from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id
+   left join lateral (
+    select actor,created_at from market.audit
+    where (detail->>'id'=b.id::text or detail->>'booking_id'=b.id::text)
+      and (action ilike '%payment%' or action in ('booking paid','booking reinstated','paypal payment synced'))
+    order by created_at desc limit 1
+   ) au on true
+   where b.status='paid' and coalesce(b.price,0)>0
+     and not exists(select 1 from market.vendor_payments vp where vp.booking_id=b.id)
+  ) p order by recorded_at desc nulls last,paid_at desc nulls last limit 500`;
+  return json({...(await publicData()),monthlyInvoices,paymentLog,importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,categoryLimits:await sql`select * from market.event_category_limits`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,e.start_time,e.end_time,l.name location,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});
+ }
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
@@ -294,8 +345,8 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
    const importedId=p.imported_attendee_id||p.application_id;
    const [v]=await sql`select id,name,business,email,vendor_id from market.imported_attendees where id=${importedId}`;if(!v)throw Error('Vendor not found.');
    const [pay]=await sql.begin(async tx=>{
-    const [saved]=await tx`insert into market.vendor_payments(application_id,imported_attendee_id,booking_id,amount,payment_method,paid_at,note,vendor_id) values(null,${v.id},null,${amount},${method},${paidAt},${note},${v.vendor_id||null}) returning *`;
-    await tx`update market.imported_attendees set invoice_amount=${amount},payment_status='paid',payment_method=${method},paid_at=${paidAt} where id=${v.id}`;
+    const [saved]=await tx`insert into market.vendor_payments(application_id,imported_attendee_id,booking_id,amount,payment_method,paid_at,note,vendor_id,recorded_by) values(null,${v.id},null,${amount},${method},${paidAt},${note},${v.vendor_id||null},${u.email}) returning *`;
+    await tx`update market.imported_attendees set invoice_amount=${amount},payment_status='paid',payment_method=${method},paid_at=${paidAt},payment_recorded_at=now(),payment_recorded_by=${u.email} where id=${v.id}`;
     await audit(tx,u,'imported vendor payment recorded',{id:v.id,payment_id:saved.id,amount,payment_method:method,note});
     return [saved];
    });
@@ -310,7 +361,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
     if(booking.status==='paid')throw Error('This booking is already marked paid.');
     if(!['approved','held'].includes(booking.status))throw Error('Only approved bookings can have a payment recorded here.');
    }
-   const [saved]=await tx`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note,vendor_id) values(${v.id},${p.booking_id||null},${amount},${method},${paidAt},${note},${v.vendor_id||null}) returning *`;
+   const [saved]=await tx`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note,vendor_id,recorded_by) values(${v.id},${p.booking_id||null},${amount},${method},${paidAt},${note},${v.vendor_id||null},${u.email}) returning *`;
    if(booking){
     const reference=String(p.reference||'').trim()||('MANUAL-'+String(saved.id).slice(0,8).toUpperCase());
     await tx`update market.bookings set status='paid',hold_until=null,payment_reference=${reference},payment_method=${method},paid_at=${paidAt} where id=${booking.id}`;
@@ -359,7 +410,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  if(action==='imported-invoice-status'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.id||!['paid','unpaid'].includes(p.status))throw Error('Choose a payment status.');
-  await sql`update market.imported_attendees set payment_status=${p.status} where id=${p.id}`;
+  await sql`update market.imported_attendees set payment_status=${p.status},payment_recorded_at=case when ${p.status}='paid' then now() else null end,payment_recorded_by=case when ${p.status}='paid' then ${u.email} else null end where id=${p.id}`;
   await audit(sql,u,'imported invoice status',{id:p.id,status:p.status});return json({ok:true});
  }
  if(action==='imported-invoice-update'){
@@ -382,7 +433,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(!u.admin)return json({error:'Organizer access only'},403);
   const [i]=await sql`select i.*,e.date,l.name location from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${p.id}`;
   if(!i)throw Error('Invoice not found.');if(!i.email)throw Error('Vendor has no email address.');
-  await queue(sql,i.email,'Trinity Crafters Market invoice — '+nice(i.date),'Hi '+(i.name||'Vendor')+',\n\nHere is your Trinity Crafters Market invoice for '+nice(i.date)+' at '+i.location+'.\n\nAmount due: '+money(i.invoice_amount||0)+(i.invoice_due_date?'\nDue date: '+nice(i.invoice_due_date):'')+'\n\nThank you,\nTrinity Crafters Market');
+  const invoiceSubject='Trinity Crafters Market invoice — '+nice(i.date),invoiceText='Hi '+(i.name||'Vendor')+',\n\nHere is your Trinity Crafters Market invoice for '+nice(i.date)+' at '+i.location+'.\n\nAmount due: '+money(i.invoice_amount||0)+(i.invoice_due_date?'\nDue date: '+nice(i.invoice_due_date):'')+'\n\nThank you,\nTrinity Crafters Market',invoiceHtml='<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#173f38"><div style="background:#123f38;color:white;padding:28px 30px"><div style="font-size:13px;letter-spacing:2px;text-transform:uppercase">Trinity Crafters Market</div><h1 style="margin:8px 0 0;font-size:32px">Vendor Invoice</h1></div><div style="padding:28px 30px;border:1px solid #d7dfd7;border-top:0"><table style="width:100%;border-collapse:collapse;margin-bottom:24px"><tr><td style="vertical-align:top"><strong>Bill to</strong><br>'+htmlEsc(i.business||i.name)+'<br>'+htmlEsc(i.name||'')+'<br>'+htmlEsc(i.email||'')+'</td><td style="text-align:right;vertical-align:top"><strong>Status</strong><br>'+(i.payment_status==='paid'?'PAID':'AMOUNT DUE')+'<br><br><strong>Market date</strong><br>'+htmlEsc(nice(i.date))+'</td></tr></table><div style="border-top:1px solid #d7dfd7;border-bottom:1px solid #d7dfd7;padding:16px 0;margin-bottom:22px"><strong>Vendor space — '+htmlEsc(i.location||'Trinity Crafters Market')+'</strong><div style="float:right;font-size:20px;font-weight:bold">'+htmlEsc(money(i.invoice_amount||0))+'</div><div style="clear:both"></div></div>'+(i.invoice_due_date?'<p><strong>Due date:</strong> '+htmlEsc(nice(i.invoice_due_date))+'</p>':'')+'<p style="font-size:24px;text-align:right"><strong>Total '+(i.payment_status==='paid'?'paid':'due')+': '+htmlEsc(money(i.invoice_amount||0))+'</strong></p><p style="margin-top:34px;color:#586a64">Trinity Crafters Market<br>trinitycraftersmarket@gmail.com</p></div></div>';await queue(sql,i.email,invoiceSubject,invoiceText,invoiceHtml);
   await audit(sql,u,'imported invoice emailed',{id:p.id,recipient:i.email});await flushMail();return json({ok:true});
  }
  if(action==='import-attendees'){
@@ -409,7 +460,12 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
       (${business}<>'' and lower(trim(business))=lower(${business})) or
       (${business}='' and ${email}='' and ${normalizedPhone}='' and lower(trim(name))=lower(${name}))
     ) limit 1`;
-    if(duplicate.length){skipped++;continue;}
+    const onlineDuplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and (b.status in ('pending','waitlist','approved','paid') or (b.status='held' and b.hold_until>now())) and (
+      (${email}<>'' and lower(trim(a.email))=${email}) or
+      (${normalizedPhone}<>'' and regexp_replace(a.phone,'[^0-9]','','g')=${normalizedPhone}) or
+      (${business}<>'' and lower(trim(a.business))=lower(${business}))
+    ) limit 1`;
+    if(duplicate.length||onlineDuplicate.length){skipped++;continue;}
     const cat=matchCategory(row.category);
     const existing=await tx`select count(*)::int n from (
       select b.id from market.bookings b join market.applications a on a.id=b.application_id
@@ -445,7 +501,18 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  }
  if(action==='imported-attendance'){
   if(!p.id||!['checked_in','no_show','clear','remove'].includes(p.state))throw Error('Choose an attendance status.');
-  if(p.state==='remove'){await sql.begin(async tx=>{const [x]=await tx`update market.imported_attendees set cancelled=true where id=${p.id} returning id`;if(!x)throw Error('Imported attendee not found.');await tx`delete from market.imported_category_reservations where imported_attendee_id=${p.id}`;await audit(tx,u,'cancel imported attendee',{id:p.id});});return json({ok:true});}
+  if(p.state==='remove'){
+   const reason=required(String(p.reason||''),'the cancellation reason',2000);
+   await sql.begin(async tx=>{
+    const [x]=await tx`select i.id,i.name,i.business,i.email,e.date,e.title,l.name location,l.market_name from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${p.id} for update`;if(!x)throw Error('Imported attendee not found.');
+    await tx`update market.imported_attendees set cancelled=true,cancellation_reason=${reason},cancelled_at=now(),cancelled_by=${u.email} where id=${p.id}`;
+    await tx`delete from market.imported_category_reservations where imported_attendee_id=${p.id}`;
+    const email=String(x.email||'').replace(/,+\\s*$/,'').trim(),day=marketDateLabel(x.date);
+    if(email)await queue(tx,email,'Vendor booking cancelled — '+day,`Hi ${x.name||'Vendor'},\n\nThis confirms that your vendor booking for ${day} at ${x.market_name||x.title||'Trinity Crafters Market'} has been cancelled.\n\nCancellation reason: ${reason}\n\nThis cancellation email confirms that the booth has been released. It does not by itself issue a refund or credit.\n\nIf you have questions, reply to this email or contact trinitycraftersmarket@gmail.com.\n\nThank you,\nTrinity Crafters Market`);
+    await audit(tx,u,'cancel imported attendee',{id:p.id,reason,email});
+   });
+   await flushMail();return json({ok:true});
+  }
   const state=p.state==='clear'?'not_marked':p.state;
   if(state==='checked_in'){const [r]=await sql`select inspection_status from market.imported_attendees where id=${p.id}`;if(r?.inspection_status!=='approved')throw Error('Inspect and approve this vendor before check-in.');}
   await sql`update market.imported_attendees set attendance_state=${state} where id=${p.id}`;
@@ -544,10 +611,10 @@ trinitycraftersmarket@gmail.com`;
  if(action==='booking'){
  if(u.manager&&(!['approved','declined'].includes(p.status)||p.exception===true))return json({error:'Managers may approve or decline applications only.'},403);
  await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);
- const [b]=await tx`select b.*,a.category_id,a.user_id,a.email,a.phone,a.name,c.vendor_limit from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id where b.id=${p.id}`;if(!b)throw Error('Booking not found.');
+ const [b]=await tx`select b.*,a.category_id,a.user_id,a.email,a.phone,a.name,a.business,c.vendor_limit from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id where b.id=${p.id}`;if(!b)throw Error('Booking not found.');
  if(u.manager&&!['pending','waitlist'].includes(b.status))throw Error('This application has already been reviewed.');
  const transitions={pending:['approved','declined'],waitlist:['approved','declined','cancelled'],approved:['held','cancelled'],held:['paid','cancelled'],expired:['approved','cancelled'],paid:['cancelled'],declined:[],cancelled:[]};
- if(p.status==='declined')required(p.reason,'the denial reason',2000);
+ if(p.status==='declined')required(p.reason,'the denial reason',2000);if(p.status==='cancelled')required(p.reason,'the cancellation reason',2000);
  if(!transitions[b.status].includes(p.status))throw Error('Refresh the dashboard; this action is no longer available.');
  if(p.status==='approved'){
  if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before approving or confirming.');
@@ -564,11 +631,12 @@ trinitycraftersmarket@gmail.com`;
   await tx`update market.bookings set status='held',hold_until=now()+interval '24 hours',invoice_reference=${p.reference||null} where application_id=${b.application_id} and status='approved'`;
   await audit(tx,u,'booking held bulk',{id:b.id,application_id:b.application_id,count:siblings.length,reference:p.reference||null});
  } else {
-  await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,payment_method=case when ${p.status}='paid' then ${String(p.payment_method||'').slice(0,100)} else payment_method end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
-  await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null});
+  await tx`update market.bookings set status=${p.status},decision_reason=case when ${p.status}='declined' then ${p.reason?.trim()||null} else decision_reason end,cancellation_reason=case when ${p.status}='cancelled' then ${p.reason?.trim()||null} else cancellation_reason end,cancelled_at=case when ${p.status}='cancelled' then now() else cancelled_at end,cancelled_by=case when ${p.status}='cancelled' then ${u.email} else cancelled_by end,category_exception=${p.exception===true||b.category_exception},hold_until=case when ${p.status}='held' then now()+interval '24 hours' else hold_until end,invoice_reference=case when ${p.status}='held' then ${p.reference||null} else invoice_reference end,payment_reference=case when ${p.status}='paid' then ${p.reference||null} else payment_reference end,payment_method=case when ${p.status}='paid' then ${String(p.payment_method||'').slice(0,100)} else payment_method end,paid_at=case when ${p.status}='paid' then now() else paid_at end where id=${b.id}`;
+  await audit(tx,u,'booking '+p.status,{id:b.id,exception:p.exception===true,reference:p.reference||null,reason:p.status==='cancelled'?p.reason?.trim()||null:null});
  }
- if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);if(p.status==='approved'){const day=marketDateLabel(event.date),link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';await queue(tx,b.email,'Online check-in is ready — Trinity Crafters Market',`Hi ${b.name},\n\nYour vendor application for ${day} has been approved. Online check-in is now available.\n\nPlease sign in and choose your planned setup arrival time:\n${link}\n\nCompleting online check-in ahead of the market helps us make setup faster and keeps your arrival information on your vendor record.\n\nMarket: ${day}\nLocation: ${event.location}\n${event.address||''}\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'online check-in invitation queued',{id:b.id,event_id:b.event_id,email:b.email});}}
- });if(['approved','declined'].includes(p.status))await flushMail();if(p.status==='approved'&&process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET){try{const invoice=await createAndSendPayPalInvoice(sql,u,p.id);return json({ok:true,invoice_id:invoice.id,invoiced:true});}catch(e){await audit(sql,u,'paypal invoice failed',{id:p.id,error:String(e.message||e).slice(0,500)});return json({ok:true,approved:true,invoice_error:String(e.message||e)});}}return json({ok:true});
+ if(['approved','declined'].includes(p.status)){const [event]=await tx`select e.date,l.name location,l.address,l.market_name,e.title from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const mail=decisionEmail({...b,status:p.status},event,p.reason?.trim()||'');await queue(tx,b.email,mail.subject,mail.body);if(p.status==='approved'){const day=marketDateLabel(event.date),link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';await queue(tx,b.email,'Online check-in is ready — Trinity Crafters Market',`Hi ${b.name},\n\nYour vendor application for ${day} has been approved. Online check-in is now available.\n\nPlease sign in and choose your planned setup arrival time:\n${link}\n\nCompleting online check-in ahead of the market helps us make setup faster and keeps your arrival information on your vendor record.\n\nMarket: ${day}\nLocation: ${event.location}\n${event.address||''}\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'online check-in invitation queued',{id:b.id,event_id:b.event_id,email:b.email});}}
+ if(p.status==='cancelled'){const [event]=await tx`select e.date,e.title,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${b.event_id}`;const day=marketDateLabel(event.date),reason=p.reason.trim();await queue(tx,b.email,'Vendor booking cancelled — '+day,`Hi ${b.name||'Vendor'},\n\nThis confirms that your vendor booking for ${day} at ${event.market_name||event.title||'Trinity Crafters Market'} has been cancelled.\n\nCancellation reason: ${reason}\n\nThis cancellation email confirms that the booth has been released. It does not by itself issue a refund or credit.\n\nIf you have questions, reply to this email or contact trinitycraftersmarket@gmail.com.\n\nThank you,\nTrinity Crafters Market`);}
+ });if(['approved','declined','cancelled'].includes(p.status))await flushMail();if(p.status==='approved'&&process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET){try{const invoice=await createAndSendPayPalInvoice(sql,u,p.id);return json({ok:true,invoice_id:invoice.id,invoiced:true});}catch(e){await audit(sql,u,'paypal invoice failed',{id:p.id,error:String(e.message||e).slice(0,500)});return json({ok:true,approved:true,invoice_error:String(e.message||e)});}}return json({ok:true});
  }
  if(action==='paypal-invoice'){
   if(!u.admin)return json({error:'Organizer access only'},403);
