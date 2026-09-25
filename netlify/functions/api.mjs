@@ -183,6 +183,17 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  }
  return json(await sql`select m.id,m.application_id,m.sender,m.body,m.created_at from market.vendor_messages m join market.applications a on a.id=m.application_id where a.user_id=${u.id} or ${u.admin||hasStaffPermission(u,'vendor_messages')} order by m.created_at`);
  }
+ if(action==='staff-login'&&req.method==='POST'){
+  if(!u.manager)return json({ok:true});
+  const agent=String(req.headers.get('user-agent')||'').slice(0,500);
+  await sql`insert into market.staff_login_log(email,user_agent)
+    select ${u.email},${agent||null}
+    where not exists (
+      select 1 from market.staff_login_log
+      where email=${u.email} and logged_in_at>now()-interval '30 seconds'
+    )`;
+  return json({ok:true});
+ }
  if(action==='floor-attendees'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
@@ -200,7 +211,22 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   return json(rows);
  }
  if(!staffActionAllowed(u,action))return json({error:'Access denied'},403);
- if(action==='staff-list')return json(await sql`select email,name,active,permissions from market.staff order by active desc,name,email`);
+ if(action==='staff-list')return json(await sql`
+   select s.email,s.name,s.active,s.permissions,
+     (select max(l.logged_in_at) from market.staff_login_log l where l.email=s.email) last_login,
+     (select count(*)::int from market.staff_login_log l where l.email=s.email) login_count,
+     coalesce((
+       select json_agg(x.logged_in_at order by x.logged_in_at desc)
+       from (
+         select l.logged_in_at
+         from market.staff_login_log l
+         where l.email=s.email
+         order by l.logged_in_at desc
+         limit 10
+       ) x
+     ),'[]'::json) login_log
+   from market.staff s
+   order by s.active desc,s.name,s.email`);
  if(action==='staff-save'&&req.method==='POST'){
  const p=await req.json();required(p.email,'email');required(p.name,'name');const email=p.email.trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Enter a valid email.');
  const permissions=Array.isArray(p.permissions)?[...new Set(p.permissions.filter(x=>MANAGER_PERMISSION_KEYS.includes(x)))]:DEFAULT_MANAGER_PERMISSIONS;
