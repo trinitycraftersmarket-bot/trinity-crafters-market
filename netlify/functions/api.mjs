@@ -148,7 +148,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  const masters=await tx`select id from market.vendors where lower(trim(email))=lower(${u.email}) or regexp_replace(phone,'[^0-9]','','g')=${phone} limit 2`;let vendorId=masters.length===1?masters[0].id:null;if(masters.length===0){const [nv]=await tx`insert into market.vendors(name,business,email,phone,billing_address,description,category_id) values(${p.name.trim()},${p.business.trim()},${u.email},${phone},${String(p.billing_address||'').trim()},${p.description.trim()},${cat.id}) returning id`;vendorId=nv.id;}else if(vendorId){await tx`update market.vendors set name=${p.name.trim()},business=${p.business.trim()},email=${u.email},phone=${phone},billing_address=${String(p.billing_address||'').trim()},description=${p.description.trim()},category_id=${cat.id},updated_at=now() where id=${vendorId}`;}
  const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,ban_flagged,ban_match_reason,photos,agreements,vendor_id) values(${u.id},${p.name.trim()},${u.email},${phone},${String(p.billing_address||'').trim()},${p.business.trim()},${p.description.trim()},${cat.id},${String(p.exception||'').slice(0,2000)},${String(p.referral_source).slice(0,200)},${String(p.referral_group||'').slice(0,200)},${banMatches.length>0},${banReason},${tx.json(p.photos)},${tx.json(p.agreements)},${vendorId}) returning id`;
  for(const d of p.dates){if(!['indoor','outdoor'].includes(d.space))throw Error('Choose indoor or outdoor for every date.');
- const [event]=await tx`select * from market.events where id=${d.id} and open and date>=(now() at time zone 'America/New_York')::date`;if(!event)throw Error('A selected date is no longer accepting applications.');
+ const [event]=await tx`select * from market.events where id=${d.id} and open and (date + coalesce(end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('A selected date is no longer accepting applications.');
  const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;
   const [imported]=await tx`select count(*)::int as category_used,
     count(*) filter (where lower(trim(space)) in (${d.space==='indoor'?'inside':'outside'},${d.space}))::int as space_used
@@ -168,7 +168,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  const p=await req.json();required(p.name,'name');required(p.referral_source,'how you heard about us');
  if(p.referral_source==='Facebook')required(p.referral_group,'Facebook group');
  if(!Number.isInteger(p.party_size)||p.party_size<1||p.party_size>20)throw Error('Choose 1–20 guests.');
- const [e]=await sql`select id from market.events where id=${p.event_id} and date >= (now() at time zone 'America/New_York')::date`;
+ const [e]=await sql`select id from market.events where id=${p.event_id} and (date + coalesce(end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;
  if(!e)throw Error('Choose an upcoming market.');
  await sql`insert into market.shopper_rsvps(event_id,user_id,name,email,party_size,referral_source,referral_group) values(${e.id},${u.id},${p.name.trim()},${u.email},${p.party_size},${p.referral_source.trim()},${String(p.referral_group||'').slice(0,200)}) on conflict(event_id,user_id) do update set name=excluded.name,party_size=excluded.party_size,referral_source=excluded.referral_source,referral_group=excluded.referral_group`;
  return json({ok:true});
@@ -235,7 +235,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  }
  if(action==='rsvp-list')return json(await sql`select r.id,r.event_id,r.name,r.email,r.party_size,r.referral_source,r.referral_group,e.date,l.name location from market.shopper_rsvps r join market.events e on e.id=r.event_id join market.locations l on l.id=e.location_id order by e.date,r.name`);
  if(action==='manager'){
-  const events=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id order by e.date desc`;
+  const events=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date desc`;
   const canApplications=hasStaffPermission(u,'applications'),canAttendees=hasStaffPermission(u,'attendees'),canWaitlist=hasStaffPermission(u,'waitlist'),canMessages=hasStaffPermission(u,'vendor_messages');
   let applications=[];
   if(canApplications||canAttendees||canWaitlist||canMessages){
