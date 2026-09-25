@@ -259,9 +259,10 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   union all
   select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,false regular_vendor,null::integer monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,
   count(*) over(partition by lower(coalesce(nullif(i.email,''),i.name)))::int shows,
-  0::int booking_spend,0::int recorded_payments,
-  json_agg(json_build_object('id',i.id,'date',e.date,'status',i.payment_status,'space',i.space,'price',coalesce(i.invoice_amount,0),'payment_method','Imported')) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
-  '[]'::json payments
+  0::int booking_spend,
+  coalesce((select sum(vp.amount)::int from market.vendor_payments vp where (i.vendor_id is not null and vp.vendor_id=i.vendor_id) or vp.imported_attendee_id in (select i2.id from market.imported_attendees i2 where lower(coalesce(nullif(i2.email,''),i2.name))=lower(coalesce(nullif(i.email,''),i.name)))),0)::int recorded_payments,
+  json_agg(json_build_object('id',i.id,'date',e.date,'status',i.payment_status,'space',i.space,'price',coalesce(i.invoice_amount,0),'payment_method',coalesce(i.payment_method,'Imported'))) over(partition by lower(coalesce(nullif(i.email,''),i.name))) dates,
+  coalesce((select json_agg(json_build_object('id',vp.id,'amount',vp.amount,'payment_method',vp.payment_method,'paid_at',vp.paid_at,'note',vp.note,'receipt_sent_at',vp.receipt_sent_at) order by vp.paid_at desc) from market.vendor_payments vp where (i.vendor_id is not null and vp.vendor_id=i.vendor_id) or vp.imported_attendee_id in (select i2.id from market.imported_attendees i2 where lower(coalesce(nullif(i2.email,''),i2.name))=lower(coalesce(nullif(i.email,''),i.name)))),'[]'::json) payments
   from market.imported_attendees i join market.events e on e.id=i.event_id
   where i.id in (select distinct on (lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name))) id from market.imported_attendees order by lower(coalesce(nullif(email,''),nullif(phone,''),nullif(business,''),name)),created_at desc)
   and not exists (
@@ -284,10 +285,28 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(!u.admin)return json({error:'Organizer access only'},403);const ids=Array.isArray(p.ids)?p.ids:[];if(!ids.length)throw Error('Select at least one vendor.');const appRows=await sql`select id,name,business,email from market.applications where id=any(${ids}::uuid[])`;const impRows=await sql`select id,name,coalesce(nullif(business,''),name) business,email from market.imported_attendees where id=any(${ids}::uuid[])`;const vendors=[...appRows,...impRows].filter(v=>v.email);const subject=String(p.subject||'We would love to have you back at Trinity Crafters Market'),msg=String(p.body||'').trim();if(!msg)throw Error('Email message is required.');await sql.begin(async tx=>{for(const v of vendors)await queue(tx,v.email,subject,msg.replaceAll('{{name}}',v.name||'Vendor').replaceAll('{{business}}',v.business||v.name||'your business'));await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — Vendor return invitation',msg+'\n\nSent to: '+vendors.length+' vendor(s).');});await flushMail();return json({ok:true,count:vendors.length});
  }
  if(action==='vendor-payment'){
-  if(!u.admin)return json({error:'Organizer access only'},403);const [v]=await sql`select id,name,business,email from market.applications where id=${p.application_id}`;if(!v)throw Error('Vendor not found.');const amount=Math.round(Number(p.amount)*100);if(!Number.isFinite(amount)||amount<=0)throw Error('Enter a valid payment amount.');const [app]=await sql`select vendor_id from market.applications where id=${v.id}`;const [pay]=await sql`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note,vendor_id) values(${v.id},${p.booking_id||null},${amount},${p.payment_method||'cash'},${p.paid_at||new Date().toISOString()},${p.note||null},${app?.vendor_id||null}) returning *`;return json({ok:true,payment:pay});
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const amount=Math.round(Number(p.amount)*100);if(!Number.isFinite(amount)||amount<=0)throw Error('Enter a valid payment amount.');
+  const paidAt=p.paid_at||new Date().toISOString(),method=p.payment_method||'cash',note=p.note||null;
+  if(p.source==='pdf'){
+   const importedId=p.imported_attendee_id||p.application_id;
+   const [v]=await sql`select id,name,business,email,vendor_id from market.imported_attendees where id=${importedId}`;if(!v)throw Error('Vendor not found.');
+   const [pay]=await sql.begin(async tx=>{
+    const [saved]=await tx`insert into market.vendor_payments(application_id,imported_attendee_id,booking_id,amount,payment_method,paid_at,note,vendor_id) values(null,${v.id},null,${amount},${method},${paidAt},${note},${v.vendor_id||null}) returning *`;
+    await tx`update market.imported_attendees set invoice_amount=${amount},payment_status='paid',payment_method=${method},paid_at=${paidAt} where id=${v.id}`;
+    await audit(tx,u,'imported vendor payment recorded',{id:v.id,payment_id:saved.id,amount,payment_method:method,note});
+    return [saved];
+   });
+   return json({ok:true,payment:pay});
+  }
+  const [v]=await sql`select id,name,business,email,vendor_id from market.applications where id=${p.application_id}`;if(!v)throw Error('Vendor not found.');
+  const [pay]=await sql`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note,vendor_id) values(${v.id},${p.booking_id||null},${amount},${method},${paidAt},${note},${v.vendor_id||null}) returning *`;return json({ok:true,payment:pay});
  }
  if(action==='vendor-receipt'){
-  if(!u.admin)return json({error:'Organizer access only'},403);const [x]=await sql`select vp.*,a.name,a.business,a.email from market.vendor_payments vp join market.applications a on a.id=vp.application_id where vp.id=${p.payment_id}`;if(!x)throw Error('Payment not found.');const body=`TRINITY CRAFTERS MARKET\nPAYMENT RECEIPT\n\nVendor: ${x.business||x.name}\nReceived from: ${x.name}\nAmount paid: ${(x.amount/100).toFixed(2)}\nPayment method: ${x.payment_method}\nDate paid: ${new Date(x.paid_at).toLocaleDateString('en-US',{timeZone:'America/New_York'})}\n${x.note?'Note: '+x.note+'\n':''}\nThank you.\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;await sql.begin(async tx=>{await queue(tx,x.email,'Trinity Crafters Market Payment Receipt',body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — Payment Receipt — '+(x.business||x.name),body);await tx`update market.vendor_payments set receipt_sent_at=now() where id=${x.id}`;});await flushMail();return json({ok:true});
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const [x]=await sql`select vp.*,coalesce(a.name,i.name,v.name) name,coalesce(a.business,i.business,v.business) business,coalesce(a.email,i.email,v.email) email from market.vendor_payments vp left join market.applications a on a.id=vp.application_id left join market.imported_attendees i on i.id=vp.imported_attendee_id left join market.vendors v on v.id=vp.vendor_id where vp.id=${p.payment_id}`;
+  if(!x)throw Error('Payment not found.');if(!x.email)throw Error('Vendor does not have an email address.');
+  const body=`TRINITY CRAFTERS MARKET\nPAYMENT RECEIPT\n\nVendor: ${x.business||x.name}\nReceived from: ${x.name}\nAmount paid: ${(x.amount/100).toFixed(2)}\nPayment method: ${x.payment_method}\nDate paid: ${new Date(x.paid_at).toLocaleDateString('en-US',{timeZone:'America/New_York'})}\n${x.note?'Note: '+x.note+'\n':''}\nThank you.\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;await sql.begin(async tx=>{await queue(tx,x.email,'Trinity Crafters Market Payment Receipt',body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — Payment Receipt — '+(x.business||x.name),body);await tx`update market.vendor_payments set receipt_sent_at=now() where id=${x.id}`;});await flushMail();return json({ok:true});
  }
  if(action==='vendor-statement-email'){
   if(!u.admin)return json({error:'Organizer access only'},403);
