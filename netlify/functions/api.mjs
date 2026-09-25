@@ -601,6 +601,107 @@ trinitycraftersmarket@gmail.com`;
   await audit(sql,u,'review notes',{id:p.id});
   return json({ok:true});
  }
+
+ if(action==='reinstate-cancelled'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const imported=p.imported===true||p.imported==='1';
+  let result;
+  await sql.begin(async tx=>{
+   await tx\`select pg_advisory_xact_lock(708821)\`;await expire(tx);
+   if(imported){
+    const [i]=await tx\`select i.*,e.date,e.start_time,e.end_time,e.indoor_capacity,e.outdoor_capacity,e.title,l.name location,l.address,l.market_name,c.vendor_limit category_limit,
+      coalesce(o.vendor_limit,c.vendor_limit) effective_category_limit
+      from market.imported_attendees i
+      join market.events e on e.id=i.event_id
+      join market.locations l on l.id=e.location_id
+      left join market.categories c on c.id=i.category_id
+      left join market.event_category_limits o on o.event_id=i.event_id and o.category_id=i.category_id
+      where i.id=\${p.id} for update\`;
+    if(!i)throw Error('Cancelled vendor not found.');
+    if(!i.cancelled)throw Error('This vendor is already active for that market date.');
+    if(new Date(String(i.date).slice(0,10)+'T23:59:59').getTime()<Date.now())throw Error('Past market dates cannot be reinstated.');
+    if(await banned(tx,{id:null,email:String(i.email||'').toLowerCase()},i.phone))throw Error('This vendor is banned. Unban them before reinstating.');
+    const space=/^(inside|indoor)$/i.test(String(i.space||''))?'indoor':'outdoor';
+    const email=String(i.email||'').trim().toLowerCase().replace(/,+$/,''),phone=normalizePhone(i.phone),business=String(i.business||i.name||'').trim().toLowerCase();
+    const duplicateImported=await tx\`select id from market.imported_attendees where event_id=\${i.event_id} and id<>\${i.id} and not coalesce(cancelled,false) and (
+      (\${email}<>'' and lower(trim(both ' ,' from email))=\${email}) or
+      (\${phone}<>'' and regexp_replace(phone,'[^0-9]','','g')=\${phone}) or
+      (\${business}<>'' and lower(trim(coalesce(nullif(business,''),name)))=\${business})
+    ) limit 1\`;
+    const duplicateBooking=await tx\`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=\${i.event_id} and
+      (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())) and (
+       (\${email}<>'' and lower(trim(a.email))=\${email}) or
+       (\${phone}<>'' and regexp_replace(a.phone,'[^0-9]','','g')=\${phone}) or
+       (\${business}<>'' and lower(trim(coalesce(nullif(a.business,''),a.name)))=\${business})
+      ) limit 1\`;
+    if(duplicateImported.length||duplicateBooking.length)throw Error('This vendor already has an active record for that market date.');
+    const [spaceCounts]=await tx\`select
+      (select count(*)::int from market.bookings b where b.event_id=\${i.event_id} and lower(trim(b.space)) in (\${space},\${space==='indoor'?'inside':'outside'}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+
+      (select count(*)::int from market.imported_attendees x where x.event_id=\${i.event_id} and x.id<>\${i.id} and not coalesce(x.cancelled,false) and lower(trim(x.space)) in (\${space},\${space==='indoor'?'inside':'outside'})) used\`;
+    if(Number(spaceCounts?.used||0)>=Number(i[space+'_capacity']||0))throw Error('That booth area is sold out, so this vendor cannot be reinstated yet.');
+    if(i.category_id&&Number(i.effective_category_limit||0)>0){
+     const [catCounts]=await tx\`select
+       (select count(*)::int from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=\${i.event_id} and a.category_id=\${i.category_id} and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+
+       (select count(*)::int from market.imported_attendees x where x.event_id=\${i.event_id} and x.id<>\${i.id} and x.category_id=\${i.category_id} and not coalesce(x.cancelled,false)) used\`;
+     if(Number(catCounts?.used||0)>=Number(i.effective_category_limit))throw Error('That vendor category is full for this market date.');
+    }
+    await tx\`update market.imported_attendees set cancelled=false,reinstated_at=now(),reinstated_by=\${u.email} where id=\${i.id}\`;
+    const day=marketDateLabel(i.date),paid=String(i.payment_status||'').toLowerCase()==='paid';
+    if(i.email)await queue(tx,String(i.email).replace(/,+\\s*$/,'').trim(),'Vendor booking reinstated — '+day,\`Hi \${i.name||'Vendor'},\\n\\nYour vendor booking for \${day} at \${i.market_name||i.title||'Trinity Crafters Market'} has been reinstated.\\n\\nLocation: \${i.location||''}\\nSpace: \${space==='indoor'?'Indoor':'Outdoor'}\\nPayment status: \${paid?'PAID':'Payment not recorded'}\\n\\nYour booth and category inventory have been restored.\\n\\nThank you,\\nTrinity Crafters Market\\ntrinitycraftersmarket@gmail.com\`);
+    await audit(tx,u,'cancelled imported vendor reinstated',{id:i.id,event_id:i.event_id,restored_payment_status:i.payment_status||'unpaid'});
+    result={ok:true,status:paid?'paid':'approved'};
+   }else{
+    const [b]=await tx\`select b.*,a.category_id,a.user_id,a.email,a.phone,a.name,a.business,a.vendor_id,c.vendor_limit,
+      coalesce(o.vendor_limit,c.vendor_limit) effective_category_limit,e.date,e.start_time,e.end_time,e.indoor_capacity,e.outdoor_capacity,e.title,l.name location,l.address,l.market_name
+      from market.bookings b
+      join market.applications a on a.id=b.application_id
+      join market.categories c on c.id=a.category_id
+      join market.events e on e.id=b.event_id
+      join market.locations l on l.id=e.location_id
+      left join market.event_category_limits o on o.event_id=b.event_id and o.category_id=a.category_id
+      where b.id=\${p.id} for update\`;
+    if(!b)throw Error('Cancelled vendor not found.');
+    if(b.status!=='cancelled')throw Error('This booking is already active.');
+    if(new Date(String(b.date).slice(0,10)+'T23:59:59').getTime()<Date.now())throw Error('Past market dates cannot be reinstated.');
+    if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before reinstating.');
+    const space=/^(inside|indoor)$/i.test(String(b.space||''))?'indoor':'outdoor';
+    const email=String(b.email||'').trim().toLowerCase(),phone=normalizePhone(b.phone),business=String(b.business||b.name||'').trim().toLowerCase();
+    const duplicateBooking=await tx\`select x.id from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=\${b.event_id} and x.id<>\${b.id} and
+      (x.status in ('pending','approved','paid') or (x.status='held' and x.hold_until>now())) and (
+       (b.vendor_id is not null and a.vendor_id=\${b.vendor_id}) or
+       (\${email}<>'' and lower(trim(a.email))=\${email}) or
+       (\${phone}<>'' and regexp_replace(a.phone,'[^0-9]','','g')=\${phone}) or
+       (\${business}<>'' and lower(trim(coalesce(nullif(a.business,''),a.name)))=\${business})
+      ) limit 1\`;
+    const duplicateImported=await tx\`select id from market.imported_attendees i where i.event_id=\${b.event_id} and not coalesce(i.cancelled,false) and (
+       (b.vendor_id is not null and i.vendor_id=\${b.vendor_id}) or
+       (\${email}<>'' and lower(trim(both ' ,' from i.email))=\${email}) or
+       (\${phone}<>'' and regexp_replace(i.phone,'[^0-9]','','g')=\${phone}) or
+       (\${business}<>'' and lower(trim(coalesce(nullif(i.business,''),i.name)))=\${business})
+      ) limit 1\`;
+    if(duplicateBooking.length||duplicateImported.length)throw Error('This vendor already has an active record for that market date.');
+    const [spaceCounts]=await tx\`select
+      (select count(*)::int from market.bookings x where x.event_id=\${b.event_id} and x.id<>\${b.id} and lower(trim(x.space)) in (\${space},\${space==='indoor'?'inside':'outside'}) and (x.status in ('pending','approved','paid') or (x.status='held' and x.hold_until>now())))+
+      (select count(*)::int from market.imported_attendees i where i.event_id=\${b.event_id} and not coalesce(i.cancelled,false) and lower(trim(i.space)) in (\${space},\${space==='indoor'?'inside':'outside'})) used\`;
+    if(Number(spaceCounts?.used||0)>=Number(b[space+'_capacity']||0))throw Error('That booth area is sold out, so this vendor cannot be reinstated yet.');
+    if(b.category_id&&Number(b.effective_category_limit||0)>0&&!b.category_exception){
+     const [catCounts]=await tx\`select
+       (select count(*)::int from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=\${b.event_id} and x.id<>\${b.id} and a.category_id=\${b.category_id} and (x.status in ('pending','approved','paid') or (x.status='held' and x.hold_until>now())))+
+       (select count(*)::int from market.imported_attendees i where i.event_id=\${b.event_id} and i.category_id=\${b.category_id} and not coalesce(i.cancelled,false)) used\`;
+     if(Number(catCounts?.used||0)>=Number(b.effective_category_limit))throw Error('That vendor category is full for this market date.');
+    }
+    const [payment]=await tx\`select id from market.vendor_payments where booking_id=\${b.id} limit 1\`;
+    const wasPaid=!!b.paid_at||!!payment;
+    const restoredStatus=wasPaid?'paid':'approved';
+    await tx\`update market.bookings set status=\${restoredStatus},hold_until=null,reinstated_at=now(),reinstated_by=\${u.email} where id=\${b.id}\`;
+    const day=marketDateLabel(b.date);
+    if(b.email)await queue(tx,b.email,'Vendor booking reinstated — '+day,\`Hi \${b.name||'Vendor'},\\n\\nYour vendor booking for \${day} at \${b.market_name||b.title||'Trinity Crafters Market'} has been reinstated.\\n\\nLocation: \${b.location||''}\\nSpace: \${space==='indoor'?'Indoor':'Outdoor'}\\nPayment status: \${wasPaid?'PAID':'Payment not recorded'}\\n\\nYour booth and category inventory have been restored.\\n\\nThank you,\\nTrinity Crafters Market\\ntrinitycraftersmarket@gmail.com\`);
+    await audit(tx,u,'cancelled booking reinstated',{id:b.id,event_id:b.event_id,status:restoredStatus});
+    result={ok:true,status:restoredStatus};
+   }
+  });
+  await flushMail();return json(result);
+ }
  if(action==='reinstate-booking'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   required(p.reference,'payment reference');required(p.payment_method,'payment method');
