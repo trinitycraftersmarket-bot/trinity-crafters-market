@@ -204,7 +204,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  if(action==='staff-save'&&req.method==='POST'){
  const p=await req.json();required(p.email,'email');required(p.name,'name');const email=p.email.trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Enter a valid email.');
  const permissions=Array.isArray(p.permissions)?[...new Set(p.permissions.filter(x=>MANAGER_PERMISSION_KEYS.includes(x)))]:DEFAULT_MANAGER_PERMISSIONS;
- await sql`insert into market.staff(email,name,active,permissions) values(${email},${p.name.trim()},${p.active===true},${JSON.stringify(permissions)}::jsonb) on conflict(email) do update set name=excluded.name,active=excluded.active,permissions=excluded.permissions`;
+ await sql`insert into market.staff(email,name,active,permissions) values(${email},${p.name.trim()},${p.active===true},${sql.json(permissions)}) on conflict(email) do update set name=excluded.name,active=excluded.active,permissions=excluded.permissions`;
  await audit(sql,u,'manager access',{email,active:p.active===true,permissions});return json({ok:true});
  }
  if(action==='rsvp-list')return json(await sql`select r.id,r.event_id,r.name,r.email,r.party_size,r.referral_source,r.referral_group,e.date,l.name location from market.shopper_rsvps r join market.events e on e.id=r.event_id join market.locations l on l.id=e.location_id order by e.date,r.name`);
