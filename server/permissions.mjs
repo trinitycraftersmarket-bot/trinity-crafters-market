@@ -5,6 +5,7 @@ const ACTION_PERMISSION={
  'rsvp-list':'shopper_rsvps',
  attendance:'attendees',
  'imported-attendance':'attendees',
+ 'checkin-reminder':'attendees',
  inspection:'attendees'
 };
 
