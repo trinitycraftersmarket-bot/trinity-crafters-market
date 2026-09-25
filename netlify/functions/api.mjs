@@ -300,7 +300,23 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
    return json({ok:true,payment:pay});
   }
   const [v]=await sql`select id,name,business,email,vendor_id from market.applications where id=${p.application_id}`;if(!v)throw Error('Vendor not found.');
-  const [pay]=await sql`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note,vendor_id) values(${v.id},${p.booking_id||null},${amount},${method},${paidAt},${note},${v.vendor_id||null}) returning *`;return json({ok:true,payment:pay});
+  const [pay]=await sql.begin(async tx=>{
+   let booking=null;
+   if(p.booking_id){
+    [booking]=await tx`select id,status,price from market.bookings where id=${p.booking_id} and application_id=${v.id} for update`;
+    if(!booking)throw Error('Booking not found.');
+    if(booking.status==='paid')throw Error('This booking is already marked paid.');
+    if(!['approved','held'].includes(booking.status))throw Error('Only approved bookings can have a payment recorded here.');
+   }
+   const [saved]=await tx`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note,vendor_id) values(${v.id},${p.booking_id||null},${amount},${method},${paidAt},${note},${v.vendor_id||null}) returning *`;
+   if(booking){
+    const reference=String(p.reference||'').trim()||('MANUAL-'+String(saved.id).slice(0,8).toUpperCase());
+    await tx`update market.bookings set status='paid',hold_until=null,payment_reference=${reference},payment_method=${method},paid_at=${paidAt} where id=${booking.id}`;
+    await audit(tx,u,'vendor payment recorded',{application_id:v.id,booking_id:booking.id,payment_id:saved.id,amount,payment_method:method,reference,note});
+   }
+   return [saved];
+  });
+  return json({ok:true,payment:pay});
  }
  if(action==='vendor-receipt'){
   if(!u.admin)return json({error:'Organizer access only'},403);
