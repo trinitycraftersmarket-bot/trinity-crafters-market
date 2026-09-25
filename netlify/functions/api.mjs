@@ -668,13 +668,13 @@ trinitycraftersmarket@gmail.com`;
     const email=String(b.email||'').trim().toLowerCase(),phone=normalizePhone(b.phone),business=String(b.business||b.name||'').trim().toLowerCase();
     const duplicateBooking=await tx`select x.id from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=${b.event_id} and x.id<>${b.id} and
       (x.status in ('pending','approved','paid') or (x.status='held' and x.hold_until>now())) and (
-       (b.vendor_id is not null and a.vendor_id=${b.vendor_id}) or
+       (${b.vendor_id} is not null and a.vendor_id=${b.vendor_id}) or
        (${email}<>'' and lower(trim(a.email))=${email}) or
        (${phone}<>'' and regexp_replace(a.phone,'[^0-9]','','g')=${phone}) or
        (${business}<>'' and lower(trim(coalesce(nullif(a.business,''),a.name)))=${business})
       ) limit 1`;
     const duplicateImported=await tx`select id from market.imported_attendees i where i.event_id=${b.event_id} and not coalesce(i.cancelled,false) and (
-       (b.vendor_id is not null and i.vendor_id=${b.vendor_id}) or
+       (${b.vendor_id} is not null and i.vendor_id=${b.vendor_id}) or
        (${email}<>'' and lower(trim(both ' ,' from i.email))=${email}) or
        (${phone}<>'' and regexp_replace(i.phone,'[^0-9]','','g')=${phone}) or
        (${business}<>'' and lower(trim(coalesce(nullif(i.business,''),i.name)))=${business})
