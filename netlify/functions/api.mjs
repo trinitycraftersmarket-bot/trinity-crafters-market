@@ -150,10 +150,10 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  for(const d of p.dates){if(!['indoor','outdoor'].includes(d.space))throw Error('Choose indoor or outdoor for every date.');
  const [event]=await tx`select * from market.events where id=${d.id} and open and date>=(now() at time zone 'America/New_York')::date`;if(!event)throw Error('A selected date is no longer accepting applications.');
  const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;
- const [imported]=await tx`select count(*)::int as category_used,
-   count(*) filter (where lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space}))::int as space_used
-   from market.imported_category_reservations where event_id=${event.id} and category_id=${cat.id}`;
- const [importedSpace]=await tx`select count(*)::int as used from market.imported_attendees where event_id=${event.id} and lower(space) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;
+  const [imported]=await tx`select count(*)::int as category_used,
+    count(*) filter (where lower(trim(space)) in (${d.space==='indoor'?'inside':'outside'},${d.space}))::int as space_used
+    from market.imported_attendees where event_id=${event.id} and category_id=${cat.id} and not coalesce(cancelled,false)`;
+  const [importedSpace]=await tx`select count(*)::int as used from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and lower(trim(space)) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;
  const [override]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`; const effectiveCategoryLimit=override?.vendor_limit??cat.vendor_limit; const categoryFull=!p.exception?.trim()&&(existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length+Number(imported.category_used||0))>=effectiveCategoryLimit;
  const spaceFull=(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0))>=event[d.space+'_capacity'];
  const areaClosed=d.space==='indoor'?event.indoor_open===false:event.outdoor_open===false;
@@ -408,7 +408,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  }
  if(action==='imported-attendance'){
   if(!p.id||!['checked_in','no_show','clear','remove'].includes(p.state))throw Error('Choose an attendance status.');
-  if(p.state==='remove'){await sql`delete from market.imported_attendees where id=${p.id}`;await audit(sql,u,'remove imported attendee',{id:p.id});return json({ok:true});}
+  if(p.state==='remove'){await sql.begin(async tx=>{const [x]=await tx`update market.imported_attendees set cancelled=true where id=${p.id} returning id`;if(!x)throw Error('Imported attendee not found.');await tx`delete from market.imported_category_reservations where imported_attendee_id=${p.id}`;await audit(tx,u,'cancel imported attendee',{id:p.id});});return json({ok:true});}
   const state=p.state==='clear'?'not_marked':p.state;
   if(state==='checked_in'){const [r]=await sql`select inspection_status from market.imported_attendees where id=${p.id}`;if(r?.inspection_status!=='approved')throw Error('Inspect and approve this vendor before check-in.');}
   await sql`update market.imported_attendees set attendance_state=${state} where id=${p.id}`;
