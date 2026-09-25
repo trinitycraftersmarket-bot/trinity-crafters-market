@@ -16,13 +16,13 @@ export default async req=>{
       (((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') cutoff,
       (now()<(((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours')) checkin_open
       from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id
-      where e.date >= (now() at time zone 'America/New_York')::date and b.status in ('approved','held','paid')
+      where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and b.status in ('approved','held','paid')
       union all
       select 'imported'::text source,i.id record_id,e.id event_id,e.date,e.start_time,e.title,l.name location,l.market_name,i.name,i.business,i.email,i.space,'paid'::text status,to_char(i.setup_arrival_time,'HH24:MI') setup_arrival_time,i.setup_checkin_at,
       (((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') cutoff,
       (now()<(((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours')) checkin_open
       from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id
-      where e.date >= (now() at time zone 'America/New_York')::date and not i.cancelled and i.payment_status='paid'
+      where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and not i.cancelled and i.payment_status='paid'
     ) q order by date,business,name`;
     return json({rows});
    }
@@ -32,13 +32,13 @@ export default async req=>{
     (((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') cutoff,
     (now()<(((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours')) checkin_open
     from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id
-    where a.user_id=${u.id} and e.date >= (now() at time zone 'America/New_York')::date and b.status='paid'
+    where a.user_id=${u.id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and b.status='paid'
     union all
     select 'imported'::text source,i.id record_id,e.id event_id,e.date,e.start_time,e.title,l.name location,l.market_name,i.business,i.space,'paid'::text status,to_char(i.setup_arrival_time,'HH24:MI') setup_arrival_time,i.setup_checkin_at,
     (((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') cutoff,
     (now()<(((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours')) checkin_open
     from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id
-    where lower(regexp_replace(trim(i.email),'[;,]+$','','g'))=${email} and e.date >= (now() at time zone 'America/New_York')::date and not i.cancelled and i.payment_status='paid'
+    where lower(regexp_replace(trim(i.email),'[;,]+$','','g'))=${email} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and not i.cancelled and i.payment_status='paid'
    ) q order by date`;
    return json({rows});
   }
