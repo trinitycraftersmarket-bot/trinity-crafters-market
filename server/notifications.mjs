@@ -1,5 +1,6 @@
 const contact='trinitycraftersmarket@gmail.com';
-const formatDate=d=>{const x=d instanceof Date?d:new Date(/^\d{4}-\d{2}-\d{2}/.test(String(d))?String(d).slice(0,10)+'T12:00:00':d);return Number.isNaN(x.getTime())?'Market date':x.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});};
+const dateOnly=d=>d instanceof Date?d.toISOString().slice(0,10):(String(d??'').match(/\d{4}-\d{2}-\d{2}/)?.[0]||'');
+const formatDate=d=>{const ymd=dateOnly(d),x=ymd?new Date(ymd+'T12:00:00Z'):new Date(NaN);return Number.isNaN(x.getTime())?'Market date':x.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});};
 export function decisionEmail(booking,event,reason=''){
  const day=formatDate(event.date);
  const details=`${day}\n10 AM–3 PM Eastern\n${event.location}\n${event.address}\n${booking.space==='indoor'?'Indoor':'Outdoor'} space — $${(booking.price/100).toFixed(2)}`;
