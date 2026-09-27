@@ -616,7 +616,7 @@ trinitycraftersmarket@gmail.com`;
       join market.locations l on l.id=e.location_id
       left join market.categories c on c.id=i.category_id
       left join market.event_category_limits o on o.event_id=i.event_id and o.category_id=i.category_id
-      where i.id=${p.id} for update`;
+      where i.id=${p.id} for update of i`;
     if(!i)throw Error('Cancelled vendor not found.');
     if(!i.cancelled)throw Error('This vendor is already active for that market date.');
     if(new Date(String(i.date).slice(0,10)+'T23:59:59').getTime()<Date.now())throw Error('Past market dates cannot be reinstated.');
@@ -659,7 +659,7 @@ trinitycraftersmarket@gmail.com`;
       join market.events e on e.id=b.event_id
       join market.locations l on l.id=e.location_id
       left join market.event_category_limits o on o.event_id=b.event_id and o.category_id=a.category_id
-      where b.id=${p.id} for update`;
+      where b.id=${p.id} for update of b`;
     if(!b)throw Error('Cancelled vendor not found.');
     if(b.status!=='cancelled')throw Error('This booking is already active.');
     if(new Date(String(b.date).slice(0,10)+'T23:59:59').getTime()<Date.now())throw Error('Past market dates cannot be reinstated.');
