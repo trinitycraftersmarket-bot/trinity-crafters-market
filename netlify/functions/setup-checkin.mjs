@@ -43,7 +43,40 @@ export default async req=>{
    return json({rows});
   }
   if(req.method==='POST'){
-   const p=await req.json(),arrival=String(p.arrival_time||'').slice(0,5),source=p.source==='imported'?'imported':'booking',recordId=p.record_id||p.booking_id;
+   const p=await req.json(),source=p.source==='imported'?'imported':'booking',recordId=p.record_id||p.booking_id;
+
+   if(p.action==='remind'){
+    if(!u.admin&&!u.manager)return json({error:'Organizer access required.'},403);
+    if(!recordId)throw Error('Vendor record is required.');
+    let row;
+    if(source==='imported'){
+     [row]=await sql`select i.id,i.name,i.business,i.email,i.space,to_char(i.setup_arrival_time,'HH24:MI') setup_arrival_time,e.date,e.start_time,e.title,l.name location,l.market_name
+       from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id
+       where i.id=${recordId} and not i.cancelled and i.payment_status='paid'`;
+    }else{
+     [row]=await sql`select b.id,a.name,a.business,a.email,b.space,to_char(b.setup_arrival_time,'HH24:MI') setup_arrival_time,e.date,e.start_time,e.title,l.name location,l.market_name
+       from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id
+       where b.id=${recordId} and b.status in ('approved','held','paid')`;
+    }
+    if(!row)return json({error:'Vendor booking not found.'},404);
+    if(row.setup_arrival_time)throw Error('This vendor has already completed online check-in.');
+    const [window]=await sql`select now()<(((${row.date}::date+coalesce(${row.start_time}::time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') as open`;
+    if(!window?.open)throw Error('Online setup check-in is already closed for this market.');
+    const recipient=normalizedEmail(row.email);
+    if(!recipient)throw Error('This vendor does not have an email address.');
+    const [dateInfo]=await sql`select to_char(${row.date}::date,'FMDay, FMMonth FMDD, YYYY') label`;
+    const market=row.market_name||row.title||'Crafters Market',dateLabel=dateInfo?.label||String(row.date).slice(0,10);
+    const subject=`Online Check-In Reminder — ${market} — ${dateLabel}`;
+    const body=`Hi ${row.name||row.business||'Vendor'},\n\nThis is a reminder to complete your online setup check-in for ${market} on ${dateLabel}.\n\nPlease choose your setup arrival time: 8:15, 8:30, 8:45, or 9:00 AM. Online check-in closes automatically 24 hours before the market.\n\nComplete your check-in here:\nhttps://trinitylutzmarkets.com/#account\n\nThank you!\nTrinity Crafters Market / Lutz Crafter's Market`;
+    await sql.begin(async tx=>{await queue(tx,recipient,subject,body);await audit(tx,u,'vendor setup check-in reminder sent',{source,record_id:String(recordId),recipient,date:String(row.date).slice(0,10)});});
+    await flushMail();
+    let [delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;
+    for(let attempt=0;attempt<3&&!delivery?.sent_at&&!delivery?.error;attempt++){await flushMail();[delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;}
+    if(!delivery?.sent_at)throw Error(delivery?.error||'The reminder could not be delivered. Please try again.');
+    return json({ok:true,recipient,sent_at:delivery.sent_at});
+   }
+
+   const arrival=String(p.arrival_time||'').slice(0,5);
    if(!recordId||!ARRIVALS.has(arrival))throw Error('Choose an available setup arrival time.');
    if(source==='imported'){
     const email=normalizedEmail(u.email);
