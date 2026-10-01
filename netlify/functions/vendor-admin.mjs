@@ -18,7 +18,12 @@ async function normalVendor(sql,id){
  return r;
 }
 async function importedVendor(sql,id){
- try{const [r]=await sql`select i.*,coalesce(nullif(v.name,''),i.name) name,coalesce(nullif(v.business,''),i.business) business,coalesce(nullif(v.email,''),i.email) email,coalesce(nullif(v.phone,''),i.phone) phone,coalesce(v.billing_address,'') billing_address,coalesce(nullif(v.description,''),i.selling,'') description,coalesce(v.category_id,i.category_id) category_id,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i left join market.vendors v on v.id=i.vendor_id join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;return r||null;}catch{return null;}
+ try{
+  // The booking row is authoritative for an imported/manual booking's identity.
+  // Master-vendor data is only supplemental so a bad link can never make one vendor appear as another.
+  const [r]=await sql`select i.*,coalesce(nullif(i.name,''),v.name) name,coalesce(nullif(i.business,''),v.business) business,coalesce(nullif(i.email,''),v.email) email,coalesce(nullif(i.phone,''),v.phone) phone,coalesce(v.billing_address,'') billing_address,coalesce(nullif(i.selling,''),v.description,'') description,coalesce(i.category_id,v.category_id) category_id,to_char(e.date,'YYYY-MM-DD') event_date,e.title,e.start_time,e.end_time,l.name location,l.address from market.imported_attendees i left join market.vendors v on v.id=i.vendor_id join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${id}`;
+  return r||null;
+ }catch{return null;}
 }
 export default async req=>{
  try{
@@ -48,15 +53,39 @@ export default async req=>{
   if(p.action==='update'){
    const data={name:clean(p.name,200),business:clean(p.business,200),email:clean(p.email,320).toLowerCase(),phone:clean(p.phone,50),billing_address:clean(p.billing_address,500),description:clean(p.description,3000),category_id:clean(p.category_id,80)||null};
    if(!data.name||!data.business||!data.email)throw Error('Name, business name and email are required.');
-   if(!v.vendor_id)throw Error('This vendor is not linked to a master vendor account yet.');
-   if(data.category_id){const [cat]=await sql`select id from market.categories where id=${data.category_id} and active`;if(!cat)throw Error('Choose a valid category.');}const [before]=await sql`select id,account_number,name,business,email,phone,billing_address,description,category_id from market.vendors where id=${v.vendor_id}`;
+   if(data.category_id){const [cat]=await sql`select id from market.categories where id=${data.category_id} and active`;if(!cat)throw Error('Choose a valid category.');}
+
+   let vendorId=v.vendor_id||null;
+   let [before]=vendorId?await sql`select id,account_number,name,business,email,phone,billing_address,description,category_id from market.vendors where id=${vendorId}`:[];
+   const currentBookingEmail=clean(v.email,320).toLowerCase();
+   const linkedMasterEmail=clean(before?.email,320).toLowerCase();
+
+   // Imported/manual bookings can be accidentally linked to the wrong master vendor.
+   // If identities disagree, detach this booking before changing any shared master data.
+   if(imported&&(!before||(currentBookingEmail&&linkedMasterEmail&&currentBookingEmail!==linkedMasterEmail))){
+    const matches=await sql`select id,account_number,name,business,email,phone,billing_address,description,category_id from market.vendors where lower(trim(email))=${currentBookingEmail||data.email} limit 2`;
+    if(matches.length===1){before=matches[0];vendorId=before.id;}
+    else{
+     const [nv]=await sql`insert into market.vendors(name,business,email,phone,billing_address,description,category_id) values(${data.name},${data.business},${data.email},${data.phone},${data.billing_address},${data.description},${data.category_id}) returning id,account_number,name,business,email,phone,billing_address,description,category_id`;
+     before=nv;vendorId=nv.id;
+    }
+   }
+   if(!vendorId)throw Error('This vendor is not linked to a master vendor account yet.');
+
    await sql.begin(async tx=>{
-    await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},category_id=${data.category_id},updated_at=now() where id=${v.vendor_id}`;
-    await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},category_id=coalesce(${data.category_id},category_id) where vendor_id=${v.vendor_id}`;
-    await tx`update market.imported_attendees i set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description},category_id=coalesce(${data.category_id},i.category_id),category=coalesce((select name from market.categories where id=${data.category_id}),i.category) where vendor_id=${v.vendor_id}`;
-    await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:v.vendor_id,business:data.business,before,after:data});
+    if(imported){
+     // Limit propagation to this imported identity only; never rewrite unrelated vendors that happen to share a bad vendor_id.
+     await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},category_id=${data.category_id},updated_at=now() where id=${vendorId}`;
+     await tx`update market.imported_attendees i set vendor_id=${vendorId},name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description},category_id=coalesce(${data.category_id},i.category_id),category=coalesce((select name from market.categories where id=${data.category_id}),i.category)
+       where i.id=${p.id} or (i.vendor_id=${vendorId} and lower(trim(i.email))=${currentBookingEmail||data.email})`;
+    }else{
+     await tx`update market.vendors set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},category_id=${data.category_id},updated_at=now() where id=${vendorId}`;
+     await tx`update market.applications set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},billing_address=${data.billing_address},description=${data.description},category_id=coalesce(${data.category_id},category_id) where vendor_id=${vendorId}`;
+     await tx`update market.imported_attendees i set name=${data.name},business=${data.business},email=${data.email},phone=${data.phone},selling=${data.description},category_id=coalesce(${data.category_id},i.category_id),category=coalesce((select name from market.categories where id=${data.category_id}),i.category) where vendor_id=${vendorId}`;
+    }
+    await audit(tx,u,'master vendor updated',{id:p.id,vendor_id:vendorId,business:data.business,before,after:data,source:imported?'imported':'application'});
    });
-   return json({ok:true,vendor_id:v.vendor_id});
+   return json({ok:true,vendor_id:vendorId});
   }
   if(p.action==='request-missing-info'){
    const recipient=clean(v.email,320);if(!recipient)throw Error('This vendor does not have an email address, so a request cannot be emailed.');
