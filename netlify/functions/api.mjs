@@ -140,8 +140,8 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  }
  if(action==='apply'&&req.method==='POST'){
  const p=await req.json();required(p.name,'name');required(p.business,'business');required(p.description,'product description',5000);required(p.referral_source,'how you heard about us',200);if(p.referral_source==='Facebook')required(p.referral_group,'Facebook group',200);const phone=normalizePhone(p.phone);if(phone.length<10||phone.length>15)throw Error('Enter a valid phone number.');
- if(!Array.isArray(p.photos)||p.photos.length<1||p.photos.length>5||p.photos.some(x=>typeof x!=='string'||!x.startsWith(u.id+'/')||x.includes('..')))throw Error('Upload 1–5 product photos.');
- if(!['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','contract'].every(k=>p.agreements?.[k]===true)||typeof p.agreements?.signature!=='string'||p.agreements.signature.trim().length<2||p.agreements.signature.length>200)throw Error('Read the agreement, check the box, and type your full legal name.');
+ if(!Array.isArray(p.photos)||p.photos.length<1||p.photos.length>5||p.photos.some(x=>typeof x!=='string'||!x.startsWith(u.id+'/')||x.includes('..')))throw Error('Product photos are mandatory. Upload 1–5 photos of the actual products you plan to sell.');
+ if(!['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','paymentready','contract'].every(k=>p.agreements?.[k]===true)||typeof p.agreements?.signature!=='string'||p.agreements.signature.trim().length<2||p.agreements.signature.length>200)throw Error('Read and accept every required agreement, including the 24-hour payment acknowledgement, and type your full legal name.');
  if(!Array.isArray(p.dates)||!p.dates.length||p.dates.length>50||new Set(p.dates.map(d=>d.id)).size!==p.dates.length)throw Error('Select distinct market dates.');
  const result=await sql.begin(async tx=>{
  await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);if(await banned(tx,u,phone))throw Error('Your vendor access is restricted. Contact the organizer.');
