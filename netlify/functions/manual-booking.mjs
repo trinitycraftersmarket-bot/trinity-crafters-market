@@ -117,7 +117,9 @@ export default async req=>{
   const amount=p.amount==null||p.amount===''?(p.space==='Inside'?Number(event.indoor_price):Number(event.outdoor_price)):Math.round(Number(p.amount)*100);
   if(!Number.isFinite(amount)||amount<0)throw Error('Enter a valid payment amount.');
   let vendorId=null;{
-   const matches=await sql`select id from market.vendors where (nullif(trim(${email}),'') is not null and lower(trim(email))=lower(trim(${email}))) or (nullif(regexp_replace(${phone},'[^0-9]','','g'),'') is not null and regexp_replace(phone,'[^0-9]','','g')=regexp_replace(${phone},'[^0-9]','','g')) limit 2`;
+   // Email is required for manual bookings, so only an exact email match may attach an existing master vendor.
+   // A phone-only match can belong to a different person and must never merge two vendor identities.
+   const matches=await sql`select id from market.vendors where lower(trim(email))=lower(trim(${email})) limit 2`;
    if(matches.length===1)vendorId=matches[0].id;
    else if(matches.length===0){const [nv]=await sql`insert into market.vendors(name,business,email,phone,description,category_id) values(${name},${business||name},${email},${phone},${selling},${cat.id}) returning id`;vendorId=nv.id;}
   }
