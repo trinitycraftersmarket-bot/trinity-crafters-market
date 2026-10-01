@@ -75,12 +75,12 @@ async function ensureApplicationAttempts(sql){
  await sql`create index if not exists application_attempts_status_seen_idx on market.application_attempts(status,last_seen_at desc)`;
 }
 function cleanAttemptSnapshot(raw={}){
- const s=v=>String(v??'').trim(),clip=(v,n)=>s(v).slice(0,n);
- const dates=Array.isArray(raw.dates)?raw.dates.slice(0,50).map(d=>({id:clip(d?.id,80),space:['indoor','outdoor'].includes(d?.space)?d.space:''})).filter(d=>d.id):[];
+ const s=v=>String(v??'').trim(),clip=(v,n)=>s(v).slice(0,n),uuid=v=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s(v))?s(v):'';
+ const dates=Array.isArray(raw.dates)?raw.dates.slice(0,50).map(d=>({id:uuid(d?.id),space:['indoor','outdoor'].includes(d?.space)?d.space:''})).filter(d=>d.id):[];
  const photos=Array.isArray(raw.photos)?raw.photos.slice(0,5).map(x=>clip(x,500)).filter(Boolean):[];
  const photo_names=Array.isArray(raw.photo_names)?raw.photo_names.slice(0,5).map(x=>clip(x,200)).filter(Boolean):[];
  const agreements={};for(const k of ['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','paymentready','contract'])agreements[k]=raw.agreements?.[k]===true;
- return {name:clip(raw.name,200),business:clip(raw.business,200),phone:clip(raw.phone,40),billing_address:clip(raw.billing_address,500),description:clip(raw.description,5000),category:clip(raw.category,80),exception:clip(raw.exception,2000),referral_source:clip(raw.referral_source,200),referral_group:clip(raw.referral_group,200),signature:clip(raw.signature,200),dates,photos,photo_names,agreements};
+ return {name:clip(raw.name,200),business:clip(raw.business,200),phone:clip(raw.phone,40),billing_address:clip(raw.billing_address,500),description:clip(raw.description,5000),category:uuid(raw.category),exception:clip(raw.exception,2000),referral_source:clip(raw.referral_source,200),referral_group:clip(raw.referral_group,200),signature:clip(raw.signature,200),dates,photos,photo_names,agreements};
 }
 export default async req=>{
  try{
@@ -248,7 +248,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   return json(rows);
  }
  if(action==='application-attempt'&&req.method==='POST'){
-  await ensureApplicationAttempts(sql);const p=await req.json(),snap=cleanAttemptSnapshot(p.snapshot||{}),allowed=['draft','submitting','failed','completed'],status=allowed.includes(p.status)?p.status:'draft',step=String(p.step||'form').slice(0,100),errorMessage=String(p.error_message||'').trim().slice(0,1200),id=/^[0-9a-f-]{36}$/i.test(String(p.id||''))?String(p.id):crypto.randomUUID(),applicationId=/^[0-9a-f-]{36}$/i.test(String(p.application_id||''))?String(p.application_id):null;
+  await ensureApplicationAttempts(sql);const p=await req.json(),snap=cleanAttemptSnapshot(p.snapshot||{}),allowed=['draft','submitting','failed','completed'],status=allowed.includes(p.status)?p.status:'draft',step=String(p.step||'form').slice(0,100),errorMessage=String(p.error_message||'').trim().slice(0,1200),id=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(p.id||''))?String(p.id):crypto.randomUUID(),applicationId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(p.application_id||''))?String(p.application_id):null;
   const [existing]=await sql`select id,error_log from market.application_attempts where id=${id} and user_id=${u.id}`;
   let errorLog=Array.isArray(existing?.error_log)?existing.error_log:[];if(errorMessage)errorLog=[...errorLog,{at:new Date().toISOString(),step,message:errorMessage}].slice(-25);
   if(existing)await sql`update market.application_attempts set email=${u.email},name=${snap.name||null},business=${snap.business||null},phone=${snap.phone||null},category_id=${snap.category||null},snapshot=${sql.json(snap)},status=${status},step=${step},error_message=${errorMessage||null},error_log=${sql.json(errorLog)},last_seen_at=now(),completed_at=case when ${status}='completed' then now() else completed_at end,application_id=coalesce(${applicationId},application_id) where id=${id} and user_id=${u.id}`;
