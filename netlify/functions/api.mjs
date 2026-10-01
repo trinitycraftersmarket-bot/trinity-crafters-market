@@ -49,6 +49,39 @@ const marketDateOnly=d=>d instanceof Date?d.toISOString().slice(0,10):(String(d?
 const marketDateLabel=d=>{const ymd=marketDateOnly(d),x=ymd?new Date(ymd+'T12:00:00Z'):new Date(NaN);return Number.isNaN(x.getTime())?'Market date':x.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});};
 const MANAGER_PERMISSION_KEYS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages','live_chat'];
 const DEFAULT_MANAGER_PERMISSIONS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages'];
+async function ensureApplicationAttempts(sql){
+ await sql`create table if not exists market.application_attempts(
+  id uuid primary key,
+  user_id uuid not null,
+  email text not null,
+  name text,
+  business text,
+  phone text,
+  category_id uuid,
+  snapshot jsonb not null default '{}'::jsonb,
+  status text not null default 'draft',
+  step text,
+  error_message text,
+  error_log jsonb not null default '[]'::jsonb,
+  started_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  completed_at timestamptz,
+  application_id uuid,
+  overridden_at timestamptz,
+  overridden_by text,
+  reviewed_at timestamptz,
+  reviewed_by text
+ )`;
+ await sql`create index if not exists application_attempts_status_seen_idx on market.application_attempts(status,last_seen_at desc)`;
+}
+function cleanAttemptSnapshot(raw={}){
+ const s=v=>String(v??'').trim(),clip=(v,n)=>s(v).slice(0,n);
+ const dates=Array.isArray(raw.dates)?raw.dates.slice(0,50).map(d=>({id:clip(d?.id,80),space:['indoor','outdoor'].includes(d?.space)?d.space:''})).filter(d=>d.id):[];
+ const photos=Array.isArray(raw.photos)?raw.photos.slice(0,5).map(x=>clip(x,500)).filter(Boolean):[];
+ const photo_names=Array.isArray(raw.photo_names)?raw.photo_names.slice(0,5).map(x=>clip(x,200)).filter(Boolean):[];
+ const agreements={};for(const k of ['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','paymentready','contract'])agreements[k]=raw.agreements?.[k]===true;
+ return {name:clip(raw.name,200),business:clip(raw.business,200),phone:clip(raw.phone,40),billing_address:clip(raw.billing_address,500),description:clip(raw.description,5000),category:clip(raw.category,80),exception:clip(raw.exception,2000),referral_source:clip(raw.referral_source,200),referral_group:clip(raw.referral_group,200),signature:clip(raw.signature,200),dates,photos,photo_names,agreements};
+}
 export default async req=>{
  try{
  const url=new URL(req.url),action=url.searchParams.get('action')||'public';
@@ -214,6 +247,17 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
     order by name`;
   return json(rows);
  }
+ if(action==='application-attempt'&&req.method==='POST'){
+  await ensureApplicationAttempts(sql);const p=await req.json(),snap=cleanAttemptSnapshot(p.snapshot||{}),allowed=['draft','submitting','failed','completed'],status=allowed.includes(p.status)?p.status:'draft',step=String(p.step||'form').slice(0,100),errorMessage=String(p.error_message||'').trim().slice(0,1200),id=/^[0-9a-f-]{36}$/i.test(String(p.id||''))?String(p.id):crypto.randomUUID(),applicationId=/^[0-9a-f-]{36}$/i.test(String(p.application_id||''))?String(p.application_id):null;
+  const [existing]=await sql`select id,error_log from market.application_attempts where id=${id} and user_id=${u.id}`;
+  let errorLog=Array.isArray(existing?.error_log)?existing.error_log:[];if(errorMessage)errorLog=[...errorLog,{at:new Date().toISOString(),step,message:errorMessage}].slice(-25);
+  if(existing)await sql`update market.application_attempts set email=${u.email},name=${snap.name||null},business=${snap.business||null},phone=${snap.phone||null},category_id=${snap.category||null},snapshot=${sql.json(snap)},status=${status},step=${step},error_message=${errorMessage||null},error_log=${sql.json(errorLog)},last_seen_at=now(),completed_at=case when ${status}='completed' then now() else completed_at end,application_id=coalesce(${applicationId},application_id) where id=${id} and user_id=${u.id}`;
+  else await sql`insert into market.application_attempts(id,user_id,email,name,business,phone,category_id,snapshot,status,step,error_message,error_log,completed_at,application_id) values(${id},${u.id},${u.email},${snap.name||null},${snap.business||null},${snap.phone||null},${snap.category||null},${sql.json(snap)},${status},${step},${errorMessage||null},${sql.json(errorLog)},case when ${status}='completed' then now() else null end,${applicationId})`;
+  return json({ok:true,id});
+ }
+ if(action==='attempt-photo'){
+  if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const path=url.searchParams.get('path');if(!path)return json({error:'Photo not found'},404);const [owner]=await sql`select id from market.application_attempts where snapshot->'photos' @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});
+ }
  if(!staffActionAllowed(u,action))return json({error:'Access denied'},403);
  if(action==='staff-list')return json(await sql`
    select s.email,s.name,s.active,s.permissions,
@@ -282,6 +326,8 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   return json(await sql`select s.*,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id order by e.date desc,s.submitted_at desc nulls last,s.business,s.vendor_name`);
  }
  if(action==='admin'){
+  await ensureApplicationAttempts(sql);
+  const applicationAttempts=await sql`select aa.*,c.name category_name from market.application_attempts aa left join market.categories c on c.id=aa.category_id where aa.last_seen_at>now()-interval '45 days' and aa.status<>'completed' order by case when aa.status in ('failed','draft','submitting') then 0 else 1 end,aa.last_seen_at desc limit 250`;
   await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz, add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists payment_recorded_at timestamptz, add column if not exists payment_recorded_by text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
   await sql`alter table market.bookings add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
   const monthlyInvoices=await sql`select * from market.vendor_invoices order by created_at desc`;
@@ -341,11 +387,30 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
    ) au on true
    where vi.status='paid'
   ) p order by recorded_at desc nulls last,paid_at desc nulls last limit 500`;
-  return json({...(await publicData()),monthlyInvoices,paymentLog,importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,categoryLimits:await sql`select * from market.event_category_limits`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,e.start_time,e.end_time,l.name location,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});
+  return json({...(await publicData()),applicationAttempts,monthlyInvoices,paymentLog,importedAttendees:await sql`select * from market.imported_attendees order by created_at`,locations:await sql`select * from market.locations order by name`,allCategories:await sql`select * from market.categories order by name`,categoryLimits:await sql`select * from market.event_category_limits`,allEvents:await sql`select * from market.events order by date desc`,applications:await sql`select b.*,a.name,a.email,a.phone,a.billing_address,a.business,a.description,a.photos,a.category_id,a.exception_reason,a.referral_source,a.referral_group,a.ban_flagged,a.ban_match_reason,a.review_notes,a.user_id,a.agreements,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,e.date,e.start_time,e.end_time,l.name location,c.name category from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id join market.categories c on c.id=a.category_id order by a.created_at desc`,bans:await sql`select * from market.bans order by created_at desc`,expenses:await sql`select x.*,e.date event_date from market.expenses x left join market.events e on e.id=x.event_id order by x.expense_date desc,x.created_at desc`,settings:await sql`select * from market.settings`,mail:await sql`select id,recipient,subject,error,sent_at from market.outbox order by created_at desc limit 25`,integrations:{mail:!!(process.env.RESEND_API_KEY&&process.env.MAIL_FROM),calendar:!!(process.env.GOOGLE_REFRESH_TOKEN&&process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),ai:!!process.env.OPENAI_API_KEY,paypal:!!(process.env.PAYPAL_CLIENT_ID&&process.env.PAYPAL_CLIENT_SECRET)}});
  }
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
+ if(action==='application-attempt-dismiss'){
+  if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const id=String(p.id||'');const [row]=await sql`update market.application_attempts set status='dismissed',reviewed_at=now(),reviewed_by=${u.email},last_seen_at=now() where id=${id} and status<>'completed' returning id`;if(!row)throw Error('Application attempt not found.');await audit(sql,u,'application attempt dismissed',{attempt_id:id});return json({ok:true});
+ }
+ if(action==='recover-application'){
+  if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const attemptId=String(p.id||''),override=p.data||{};const [attempt]=await sql`select * from market.application_attempts where id=${attemptId} and status in ('failed','draft','submitting','dismissed')`;if(!attempt)throw Error('This application attempt is no longer available for recovery.');
+  const base=cleanAttemptSnapshot(attempt.snapshot||{}),merged=cleanAttemptSnapshot({...base,...override,dates:Array.isArray(override.dates)?override.dates:base.dates,photos:base.photos,photo_names:base.photo_names,agreements:base.agreements}),name=required(merged.name,'vendor name'),business=required(merged.business,'business name'),description=merged.description||'Product description was not captured before the failed submission.',phone=normalizePhone(merged.phone);if(phone.length<10||phone.length>15)throw Error('A valid vendor phone number is required before recovery.');if(!merged.category)throw Error('Choose a product category before recovery.');if(!merged.dates.length||merged.dates.some(d=>!d.id||!['indoor','outdoor'].includes(d.space)))throw Error('Choose at least one market date and space before recovery.');
+  const result=await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);if(await banned(tx,{id:attempt.user_id,email:attempt.email},phone))throw Error('This vendor is banned. Unban them before recovering the application.');const [cat]=await tx`select * from market.categories where id=${merged.category}`;if(!cat)throw Error('Choose a valid product category.');
+   const masters=await tx`select id from market.vendors where lower(trim(email))=lower(${attempt.email}) or regexp_replace(phone,'[^0-9]','','g')=${phone} limit 2`;let vendorId=masters.length===1?masters[0].id:null;if(masters.length===0){const [nv]=await tx`insert into market.vendors(name,business,email,phone,billing_address,description,category_id) values(${name},${business},${attempt.email},${phone},${merged.billing_address},${description},${cat.id}) returning id`;vendorId=nv.id;}else if(vendorId)await tx`update market.vendors set name=${name},business=${business},email=${attempt.email},phone=${phone},billing_address=${merged.billing_address},description=${description},category_id=${cat.id},updated_at=now() where id=${vendorId}`;
+   const photos=merged.photos.filter(path=>path.startsWith(String(attempt.user_id)+'/')&&!path.includes('..'));const agreements={...merged.agreements,signature:merged.signature||name,admin_recovery_override:true,admin_recovery_by:u.email};const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,photos,agreements,vendor_id,review_notes) values(${attempt.user_id},${name},${attempt.email},${phone},${merged.billing_address},${business},${description},${cat.id},${merged.exception},${merged.referral_source||'Recovered application'},${merged.referral_group},${tx.json(photos)},${tx.json(agreements)},${vendorId},${'Recovered from failed/abandoned application '+attempt.id}) returning id`;
+   const created=[];for(const d of merged.dates){const [event]=await tx`select e.*,l.name location,l.address,l.market_name,l.name title from market.events e join market.locations l on l.id=e.location_id where e.id=${d.id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('One selected market date is no longer available.');if(event.sold_out)throw Error(marketDateLabel(event.date)+': the market is marked sold out.');if(d.space==='indoor'&&event.indoor_open===false)throw Error(marketDateLabel(event.date)+': indoor vendor space is closed.');if(d.space==='outdoor'&&event.outdoor_open===false)throw Error(marketDateLabel(event.date)+': outdoor vendor space is closed.');
+    const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;const [importedSpace]=await tx`select count(*)::int used from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and lower(trim(space)) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;if(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0)>=event[d.space+'_capacity'])throw Error(marketDateLabel(event.date)+': '+d.space+' space is sold out.');
+    const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('pending','waitlist','approved','held','paid') and (a.user_id=${attempt.user_id} or lower(a.email)=lower(${attempt.email}) or regexp_replace(a.phone,'[^0-9]','','g')=${phone}) limit 1`;if(duplicate.length)throw Error(marketDateLabel(event.date)+': this vendor already has an application or booking.');
+    const categoryUsed=existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length;const [impCat]=await tx`select count(*)::int used from market.imported_attendees where event_id=${event.id} and category_id=${cat.id} and not coalesce(cancelled,false)`;const [limitOverride]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;const categoryLimit=limitOverride?.vendor_limit??cat.vendor_limit,categoryException=categoryUsed+Number(impCat.used||0)>=categoryLimit;
+    const [booking]=await tx`insert into market.bookings(application_id,event_id,space,price,status,category_exception) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},'approved',${categoryException}) returning *`;created.push({...booking,date:event.date,location:event.location,address:event.address,title:event.title});
+    const mail=decisionEmail({...booking,name,email:attempt.email,business,status:'approved'},event,'');await queue(tx,attempt.email,mail.subject,mail.body);
+   }
+   await tx`update market.application_attempts set status='overridden',application_id=${app.id},overridden_at=now(),overridden_by=${u.email},reviewed_at=now(),reviewed_by=${u.email},last_seen_at=now() where id=${attempt.id}`;await audit(tx,u,'application recovered',{attempt_id:attempt.id,application_id:app.id,bookings:created.map(x=>x.id),email:attempt.email});return {application_id:app.id,bookings:created};
+  });await flushMail();return json({ok:true,...result});
+ }
  if(action==='vendor-reengage'){
   if(!u.admin)return json({error:'Organizer access only'},403);const ids=Array.isArray(p.ids)?p.ids:[];if(!ids.length)throw Error('Select at least one vendor.');const appRows=await sql`select id,name,business,email from market.applications where id=any(${ids}::uuid[])`;const impRows=await sql`select id,name,coalesce(nullif(business,''),name) business,email from market.imported_attendees where id=any(${ids}::uuid[])`;const vendors=[...appRows,...impRows].filter(v=>v.email);const subject=String(p.subject||'We would love to have you back at Trinity Crafters Market'),msg=String(p.body||'').trim();if(!msg)throw Error('Email message is required.');await sql.begin(async tx=>{for(const v of vendors)await queue(tx,v.email,subject,msg.replaceAll('{{name}}',v.name||'Vendor').replaceAll('{{business}}',v.business||v.name||'your business'));await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — Vendor return invitation',msg+'\n\nSent to: '+vendors.length+' vendor(s).');});await flushMail();return json({ok:true,count:vendors.length});
  }
