@@ -7,7 +7,7 @@ NODE_VERSION = "22"
 [functions]
 node_bundler = "esbuild"
 [functions.maintenance]
-schedule = "0 13 * * *"
+schedule = "0 * * * *"
 [[headers]]
 for = "/*"
 [headers.values]
