@@ -927,6 +927,16 @@ trinitycraftersmarket@gmail.com`;
   else{const [x]=await sql`update market.bookings set featured_posted_at=${postedAt} where id=${p.id} returning id`;if(!x)throw Error('Booking not found.');}
   await audit(sql,u,'featured vendor post',{id:p.id,imported:!!p.imported,posted_at:postedAt});return json({ok:true,posted_at:postedAt});
  }
+ if(action==='category-review-approve'&&req.method==='POST'){
+  if(!p.id)throw Error('Booking not found.');
+  const [b]=await sql`select b.id,b.status,b.category_review_approved_at,a.business from market.bookings b join market.applications a on a.id=b.application_id where b.id=${p.id}`;
+  if(!b)throw Error('Booking not found.');
+  if(!['approved','held','paid'].includes(b.status))throw Error('Approve the vendor application before approving the category.');
+  const approvedAt=new Date().toISOString(),approvedBy=u.email||'Staff';
+  await sql`update market.bookings set category_review_approved_at=${approvedAt},category_review_approved_by=${approvedBy} where id=${b.id}`;
+  await audit(sql,u,'category review approved',{id:b.id,business:b.business});
+  return json({ok:true,approved_at:approvedAt,approved_by:approvedBy});
+ }
  if(action==='attendance'){
   if(!p.id||!['checked_in','no_show','clear'].includes(p.state))throw Error('Choose an attendance status.');
   const [b]=await sql`select id,status from market.bookings where id=${p.id}`;if(!b)throw Error('Booking not found.');
