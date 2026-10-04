@@ -203,7 +203,7 @@ function reportPanel(a,p){
  $('#report-date').onchange=draw;$('#import-pdf').onclick=()=>pdfImportModal(a);$('#print-report').onclick=null;$('#export-report').onclick=()=>{const id=$('#report-date').value,rows=getRows(id),csv=[['Vendor','Business','Disclosed','Approved','Not Approved','Category','Space','Inspection','Inspection Notes','Attendance'],...rows.map(b=>[b.name,b.business,b.disclosed,b.approved_products,b.declined_products,b.category,b.space,b.inspection_status,b.inspection_notes,b.attendance])].map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\n'),blob=new Blob([csv],{type:'text/csv'}),link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='market-inspection-'+id+'.csv';link.click();URL.revokeObjectURL(link.href);};draw();
 }
 function setupPanel(a,p){
- const events=a.allEvents||[],defaultId=events[0]?.id||'';
+ const todayKey=new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'}),events=(a.allEvents||[]).filter(e=>String(e.date||'').slice(0,10)>=todayKey).sort((x,y)=>String(x.date).localeCompare(String(y.date))),defaultId=events[0]?.id||'';
  const template=e=>{const loc=a.locations.find(l=>l.id===e?.location_id),brand=loc?.market_name||e?.title||'Crafters Market',venue=loc?.name||'',address=loc?.address||'',isTrinity=/trinity/i.test(brand);return `Hello Vendors,
 
 Here are the setup instructions for ${brand}.
