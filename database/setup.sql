@@ -7,6 +7,16 @@ create table market.events(id uuid primary key default gen_random_uuid(), locati
 create table market.bans(id uuid primary key default gen_random_uuid(), user_id uuid, name text not null, email text, phone text, reason text not null, active boolean not null default true, created_at timestamptz not null default now(), check(user_id is not null or email is not null or phone is not null));
 create table market.applications(id uuid primary key default gen_random_uuid(), user_id uuid not null, name text not null, email text not null, phone text not null, billing_address text not null default '', business text not null, description text not null, category_id uuid not null references market.categories, exception_reason text not null default '', referral_source text not null default '', referral_group text not null default '', ban_flagged boolean not null default false, ban_match_reason text not null default '', review_notes text not null default '', photos jsonb not null, agreements jsonb not null, terms_version text not null default '2026-09-v3', created_at timestamptz not null default now());
 create table market.bookings(id uuid primary key default gen_random_uuid(), application_id uuid not null references market.applications, event_id uuid not null references market.events, space text not null check(space in ('indoor','outdoor')), price int not null check(price>=0), status text not null default 'pending' check(status in ('pending','waitlist','approved','held','paid','expired','declined','cancelled')), category_exception boolean not null default false, category_review_approved_at timestamptz, category_review_approved_by text, checked_in boolean not null default false, no_show boolean not null default false, waitlist_offered_at timestamptz, payment_method text not null default '', hold_until timestamptz, invoice_reference text, payment_reference text, decision_reason text, paid_at timestamptz, unique(application_id,event_id));
+create or replace function market.auto_approve_category_review_when_paid() returns trigger language plpgsql as $
+begin
+  if new.status='paid' and new.category_review_approved_at is null then
+    new.category_review_approved_at:=coalesce(new.paid_at,now());
+    new.category_review_approved_by:='Automatic — paid booking';
+  end if;
+  return new;
+end;
+$;
+create trigger bookings_auto_category_review_paid before insert or update of status,paid_at on market.bookings for each row execute function market.auto_approve_category_review_when_paid();
 create table market.audit(id bigint generated always as identity primary key, actor text not null, action text not null, detail jsonb not null default '{}', created_at timestamptz not null default now());
 create table market.outbox(id uuid primary key default gen_random_uuid(), recipient text not null, subject text not null, body text not null, sent_at timestamptz, error text, created_at timestamptz not null default now());
 create table market.settings(key text primary key, value text not null);
