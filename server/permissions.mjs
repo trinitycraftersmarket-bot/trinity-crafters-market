@@ -7,7 +7,8 @@ const ACTION_PERMISSION={
  'imported-attendance':'attendees',
  'checkin-reminder':'attendees',
  inspection:'attendees',
- 'category-review-approve':'attendees'
+ 'category-review-approve':'attendees',
+ 'payment-reminder-now':'applications'
 };
 
 export function hasStaffPermission(u,permission){
