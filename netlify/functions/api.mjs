@@ -466,6 +466,43 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  if(action==='photo'){const path=url.searchParams.get('path');const [owner]=await sql`select id from market.applications where photos @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const p=await req.json();
+ if(action==='payment-reminder-now'){
+  const id=String(p.id||'').trim();if(!id)throw Error('Booking not found.');
+  const [b]=await sql`select b.id,b.status,b.hold_until,b.price,b.space,a.name,a.business,a.email,e.date,l.name location
+    from market.bookings b
+    join market.applications a on a.id=b.application_id
+    join market.events e on e.id=b.event_id
+    join market.locations l on l.id=e.location_id
+    where b.id=${id}`;
+  if(!b)throw Error('Booking not found.');
+  if(b.status!=='held')throw Error('This payment reminder is only available while the booking is awaiting payment.');
+  const deadline=new Date(b.hold_until);
+  if(!Number.isFinite(deadline.getTime()))throw Error('This booking does not have a valid payment deadline.');
+  const now=new Date(),remainingMs=deadline.getTime()-now.getTime();
+  if(remainingMs<=0)throw Error('The payment deadline has already passed. Refresh the dashboard to update this booking.');
+  const totalMinutes=Math.max(1,Math.ceil(remainingMs/60000)),hours=Math.floor(totalMinutes/60),minutes=totalMinutes%60;
+  const remaining=hours?hours+' hour'+(hours===1?'':'s')+(minutes?' '+minutes+' minute'+(minutes===1?'':'s'):''):minutes+' minute'+(minutes===1?'':'s');
+  const day=marketDateLabel(b.date),deadlineText=deadline.toLocaleString('en-US',{timeZone:'America/New_York',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+  const body=`Hi ${b.name||'Vendor'},
+
+PAYMENT REQUIRED
+
+We still have not received payment for your vendor space for ${day}.
+
+You currently have approximately ${remaining} remaining to pay. If payment is not received by ${deadlineText}, your booking will automatically be cancelled and the space will be released to another vendor.
+
+Market: ${b.location}
+Space: ${b.space==='indoor'?'Indoor':'Outdoor'}
+Amount due: ${(Number(b.price||0)/100).toFixed(2)}
+
+If you have already submitted payment, no further action is needed.
+
+Trinity Crafters Market
+trinitycraftersmarket@gmail.com`;
+  await sql.begin(async tx=>{await queue(tx,b.email,`Payment required — ${remaining} remaining for ${day}`,body);await audit(tx,u,'manual payment reminder sent',{id:b.id,deadline:deadline.toISOString(),remaining_minutes:totalMinutes});});
+  await flushMail();
+  return json({ok:true,remaining,deadline:deadline.toISOString()});
+ }
  if(action==='application-attempt-dismiss'){
   if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const id=String(p.id||'');const [row]=await sql`update market.application_attempts set status='dismissed',reviewed_at=now(),reviewed_by=${u.email},last_seen_at=now() where id=${id} and status<>'completed' returning id`;if(!row)throw Error('Application attempt not found.');await audit(sql,u,'application attempt dismissed',{attempt_id:id});return json({ok:true});
  }
