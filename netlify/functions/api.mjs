@@ -677,7 +677,11 @@ trinitycraftersmarket@gmail.com`;
   if(!p.event_id||!p.layout||typeof p.layout!=='object')throw Error('Floor plan data is required.');
   const image=String(p.image_data_url||'').trim();
   if(image&&(!image.startsWith('data:image/png;base64,')||image.length>5500000))throw Error('Floor plan image is invalid or too large.');
-  await sql`update market.events set floor_plan=${sql.json(p.layout)},floor_plan_image=case when ${image||null} is not null then ${image||null} else floor_plan_image end,floor_plan_image_updated_at=case when ${image||null} is not null then now() else floor_plan_image_updated_at end where id=${p.event_id}`;
+  if(image){
+   await sql`update market.events set floor_plan=${sql.json(p.layout)},floor_plan_image=${image},floor_plan_image_updated_at=now() where id=${p.event_id}`;
+  }else{
+   await sql`update market.events set floor_plan=${sql.json(p.layout)} where id=${p.event_id}`;
+  }
   await audit(sql,u,'floor plan saved',{event_id:p.event_id,vendors:Object.keys(p.layout||{}).length,image_saved:!!image});
   return json({ok:true,image_saved:!!image});
  }
