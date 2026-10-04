@@ -40,21 +40,21 @@ async function handleHeldPayments(){
     continue;
    }
   }
-  const heldAt=new Date(b.held_at),remindAt=new Date(heldAt.getTime()+12*3600000),cancelAt=new Date(heldAt.getTime()+30*3600000),now=new Date();
+  const heldAt=new Date(b.held_at),remindAt=new Date(heldAt.getTime()+12*3600000),cancelAt=new Date(heldAt.getTime()+24*3600000),now=new Date();
   if(!Number.isFinite(heldAt.getTime())){await audit(sql,'system','payment hold date invalid',{id:b.id,held_at:String(b.held_at||'')});continue;}
-  // Keep inventory reserved for the full 30-hour payment window.
-  if(!b.hold_until||new Date(b.hold_until).getTime()<cancelAt.getTime()-60000)await sql`update market.bookings set hold_until=${cancelAt.toISOString()} where id=${b.id} and status='held'`;
+  // Payment is due within 24 hours of the invoice/hold starting. Keep the stored deadline aligned with that rule.
+  if(!b.hold_until||Math.abs(new Date(b.hold_until).getTime()-cancelAt.getTime())>60000)await sql`update market.bookings set hold_until=${cancelAt.toISOString()} where id=${b.id} and status='held'`;
   if(now>=remindAt&&now<cancelAt){
    const [sent]=await sql`select id from market.audit where action='payment reminder sent' and detail->>'id'=${b.id}::text limit 1`;
    if(!sent){
-    const day=displayDate(b.date),body=`Hi ${b.name},\n\nThis is a reminder that payment has not yet been received for your Trinity Crafters Market space on ${day}.\n\nYour space is being held for 30 hours from the time your invoice was sent. If payment is not received by the end of that 30-hour window, your reservation will automatically cancel, the space will be released for another vendor, and you will need to reapply if you still want to attend.\n\nMarket: ${b.location}\nSpace: ${b.space==='indoor'?'Indoor':'Outdoor'}\nAmount: $${(Number(b.price)/100).toFixed(2)}\n\nIf you have already paid, no action is needed.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
-    await sql.begin(async tx=>{await queue(tx,b.email,`Payment reminder — ${day}`,body);await audit(tx,'system','payment reminder sent',{id:b.id,held_at:heldAt.toISOString(),cancel_at:cancelAt.toISOString()});});
+    const day=displayDate(b.date),deadline=cancelAt.toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}),body=`Hi ${b.name},\n\nPAYMENT REMINDER — your vendor space for ${day} has not been paid yet.\n\nYour reservation will automatically cancel if payment is not received by ${deadline}. Once cancelled, the space is released and may be booked by another vendor.\n\nMarket: ${b.location}\nSpace: ${b.space==='indoor'?'Indoor':'Outdoor'}\nAmount due: ${(Number(b.price)/100).toFixed(2)}\n\nIf you have already paid, no action is needed.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
+    await sql.begin(async tx=>{await queue(tx,b.email,`Payment required — 12 hours remaining for ${day}`,body);await audit(tx,'system','payment reminder sent',{id:b.id,held_at:heldAt.toISOString(),remind_at:remindAt.toISOString(),cancel_at:cancelAt.toISOString()});});
    }
   }
   if(now>=cancelAt){
    const [current]=await sql`select status from market.bookings where id=${b.id}`;
    if(current?.status==='held'){
-    const day=displayDate(b.date),body=`Hi ${b.name},\n\nYour Trinity Crafters Market reservation for ${day} has been automatically cancelled because payment was not received within 30 hours of the invoice being sent.\n\nThe space has now been released and may be booked by another vendor. If you would still like to attend this market, you will need to submit a new application, subject to current availability.\n\nMarket: ${b.location}\nSpace: ${b.space==='indoor'?'Indoor':'Outdoor'}\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
+    const day=displayDate(b.date),body=`Hi ${b.name},\n\nYour Trinity Crafters Market reservation for ${day} has been automatically cancelled because payment was not received within 24 hours of the invoice being sent.\n\nThe space has now been released and may be booked by another vendor. If you would still like to attend this market, you will need to submit a new application, subject to current availability.\n\nMarket: ${b.location}\nSpace: ${b.space==='indoor'?'Indoor':'Outdoor'}\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
     await sql.begin(async tx=>{await tx`update market.bookings set status='cancelled',hold_until=null where id=${b.id} and status='held'`;await queue(tx,b.email,`Reservation cancelled — ${day}`,body);await audit(tx,'system','payment hold auto-cancelled',{id:b.id,held_at:heldAt.toISOString(),cancel_at:cancelAt.toISOString()});});
    }
   }
