@@ -1,40 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {analyzeCategoryFit, categoryReviewMessage} from '../public/category-conflicts.js';
+import {analyzeCategoryFit,categoryReviewMessage} from '../public/category-conflicts.js';
 
-test('embroidery submitted as Sewed Goods is reviewed but not blocked',()=>{
-  const r=analyzeCategoryFit('Embroidered towels, blankets and bowl cozies','Sewed Goods');
-  assert.equal(r.needsReview,true);
-  assert.equal(r.likelyMismatch,true);
-  assert.ok(r.matched.includes('Embroidery'));
-  assert.match(categoryReviewMessage('Embroidered towels','Sewed Goods'),/still be submitted as usual/i);
-});
+const categories=[
+  {name:'Art (Wall Decor)'},{name:'Bags'},{name:'Candles'},{name:'Soap'},
+  {name:'Cookies, Cinnamon Rolls etc.'},{name:'Embroidery'},{name:'Sewed Goods'}
+];
 
-test('embroidery category can still flag clothing overlap',()=>{
-  const r=analyzeCategoryFit('Embroidered apparel and t-shirts','Embroidery');
-  assert.equal(r.likelyMismatch,false);
-  assert.ok(r.overlaps.includes('Clothing'));
-});
-
-test('matching simple category is not flagged',()=>{
-  const r=analyzeCategoryFit('Custom decorated sugar cookies','Cookies, Cinnamon Rolls etc.');
-  assert.equal(r.likelyMismatch,false);
-  assert.equal(r.overlaps.length,0);
-  assert.equal(r.needsReview,false);
-});
-
-test('Other is reviewed when a recognizable category exists',()=>{
-  const r=analyzeCategoryFit('Crocheted beach bags and knitted hats','Other (Do not use for a sold-out category)');
-  assert.equal(r.needsReview,true);
-  assert.ok(r.matched.includes('Crochet & Knit Goods (Not Plush Toys)'));
-});
-
-
-test('Candles and Soap submitted as Art is flagged for organizer review',()=>{
-  const r=analyzeCategoryFit('Candles and Soap','Art (Wall Decor)');
+test('Candles and Soap submitted as Bags is detected dynamically',()=>{
+  const r=analyzeCategoryFit('Candles and Soap','Bags',categories);
   assert.equal(r.needsReview,true);
   assert.equal(r.likelyMismatch,true);
   assert.ok(r.matched.includes('Candles'));
   assert.ok(r.matched.includes('Soap'));
-  assert.match(categoryReviewMessage('Candles and Soap','Art (Wall Decor)'),/still be submitted as usual/i);
+});
+
+test('cookies submitted as an unrelated category is detected from the live category name',()=>{
+  const r=analyzeCategoryFit('Decorated sugar cookies','Bags',categories);
+  assert.equal(r.needsReview,true);
+  assert.ok(r.matched.includes('Cookies, Cinnamon Rolls etc.'));
+});
+
+test('matching category does not create a mismatch',()=>{
+  const r=analyzeCategoryFit('Handmade tote bags','Bags',categories);
+  assert.equal(r.likelyMismatch,false);
+  assert.equal(r.unverifiedSelection,false);
+});
+
+test('unknown description is still sent for organizer review',()=>{
+  const msg=categoryReviewMessage('Handmade woven floor coverings','Bags',categories);
+  assert.match(msg,/organizer review/i);
 });
