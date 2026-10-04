@@ -63,12 +63,12 @@ function dedupeSetupRows(rows){const map=new Map(),rank=v=>v.status==='paid'||v.
 async function loadSetupRows(sql,eventId){
  return await sql`select * from (
   select 'booking'::text source,b.id,b.event_id,a.vendor_id,a.name,a.business,a.email,a.phone,c.name category,lower(trim(b.space)) space,b.status,
-   coalesce(nullif(b.social_products,''),nullif(b.approved_products,''),nullif(a.approved_products,''),nullif(a.description,''),c.name) products
+   coalesce(nullif(a.description,''),c.name) products
   from market.bookings b join market.applications a on a.id=b.application_id left join market.categories c on c.id=a.category_id
   where b.event_id=${eventId} and b.status in ('approved','held','paid')
   union all
   select 'imported'::text source,i.id,i.event_id,i.vendor_id,i.name,i.business,i.email,i.phone,nullif(i.category,'') category,lower(trim(i.space)) space,coalesce(nullif(i.payment_status,''),'paid') status,
-   coalesce(nullif(i.social_products,''),nullif(i.approved_products,''),nullif(i.selling,''),nullif(i.category,''),'Local handmade goods') products
+   coalesce(nullif(i.selling,''),nullif(i.category,''),'Local handmade goods') products
   from market.imported_attendees i where i.event_id=${eventId} and not coalesce(i.cancelled,false)
  ) q order by business,name`;
 }
