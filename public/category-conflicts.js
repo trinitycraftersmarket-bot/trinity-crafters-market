@@ -1,6 +1,20 @@
 const clean = value => String(value || '').toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9&/' -]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 export const CATEGORY_SCAN_RULES = [
+  {name:'Candles', terms:['candle','candles','wax melt','wax melts']},
+  {name:'Soap', terms:['soap','soaps','bar soap','soap bar','soap bars']},
+  {name:'Aromatherapy', terms:['essential oil','essential oils','aromatherapy','diffuser','diffusers']},
+  {name:'Body Scrubs', terms:['body scrub','body scrubs','sugar scrub','sugar scrubs','salt scrub','salt scrubs']},
+  {name:'3D Printed Art', terms:['3d print','3d printed','3-d print','3-d printed']},
+  {name:'Hair Care', terms:['hair care','hair oil','hair oils','shampoo','conditioner']},
+  {name:'Crystals (No Jewelry)', terms:['healing crystal','healing crystals','crystal tower','crystal towers','tumbled crystal','tumbled crystals']},
+  {name:'Sewed Goods', terms:['sewn','sewed','sewing','bowl cozy','bowl cozies','potato bag','potato bags','fabric goods']},
+  {name:'Scrap Books and Cards', terms:['scrapbook','scrapbooks','scrap book','scrap books','greeting card','greeting cards','handmade card','handmade cards']},
+  {name:'Lanterns', terms:['lantern','lanterns']},
+  {name:'Perfume', terms:['perfume','perfumes','cologne','colognes']},
+  {name:'Wind Spinners', terms:['wind spinner','wind spinners']},
+  {name:'Wood Work Practical', terms:['cutting board','cutting boards','charcuterie board','charcuterie boards','wooden tray','wooden trays']},
+  {name:'Wood Work Artist', terms:['wood art','wooden sign','wooden signs','wood sign','wood signs']},
   {name:'Embroidery', terms:['embroidery','embroidered','embroidering']},
   {name:'Crochet Plush Toys', terms:['crochet plush','crocheted plush','amigurumi']},
   {name:'Crochet & Knit Goods (Not Plush Toys)', terms:['knitted','knit hat','knit scarf','knit beanie','crochet bag','crocheted bag','crochet hat','crocheted hat','crochet scarf','crocheted scarf','crochet top','crocheted top','crochet coverup','crocheted coverup','dishcloth','scrubbie','ear warmer','hooded cowl']},

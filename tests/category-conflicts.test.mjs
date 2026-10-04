@@ -28,3 +28,13 @@ test('Other is reviewed when a recognizable category exists',()=>{
   assert.equal(r.needsReview,true);
   assert.ok(r.matched.includes('Crochet & Knit Goods (Not Plush Toys)'));
 });
+
+
+test('Candles and Soap submitted as Art is flagged for organizer review',()=>{
+  const r=analyzeCategoryFit('Candles and Soap','Art (Wall Decor)');
+  assert.equal(r.needsReview,true);
+  assert.equal(r.likelyMismatch,true);
+  assert.ok(r.matched.includes('Candles'));
+  assert.ok(r.matched.includes('Soap'));
+  assert.match(categoryReviewMessage('Candles and Soap','Art (Wall Decor)'),/still be submitted as usual/i);
+});
