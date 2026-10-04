@@ -133,3 +133,11 @@ insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
 values('chat-attachments','chat-attachments',false,10485760,array['image/jpeg','image/png','image/webp','image/gif','application/pdf'])
 on conflict(id) do update set public=false,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
 insert into market.settings(key,value) values('chat_open','false') on conflict(key) do nothing;
+
+
+-- Setup email floor-plan snapshots and attachments (2026-10-04)
+alter table market.outbox add column if not exists attachments jsonb;
+alter table market.events add column if not exists setup_floor_plan_pdf_base64 text;
+alter table market.events add column if not exists setup_floor_plan_filename text;
+alter table market.events add column if not exists setup_floor_plan_snapshot jsonb;
+alter table market.events add column if not exists setup_recipient_summary jsonb;

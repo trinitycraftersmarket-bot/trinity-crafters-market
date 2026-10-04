@@ -23,12 +23,30 @@ export async function identity(req){
 export async function banned(tx,u,phone){return (await tx`select id from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${normalizePhone(phone)})`).length>0;}
 export async function expire(tx=db()){await tx`update market.bookings set status='expired' where status='held' and hold_until<=now()`;}
 export async function audit(tx,u,action,detail){await tx`insert into market.audit(actor,action,detail) values(${u.email||u},${action},${tx.json(detail)})`;}
-export async function queue(tx,to,subject,body,htmlBody=null){await tx`insert into market.outbox(recipient,subject,body,html_body) values(${to},${subject},${body},${htmlBody})`;}
+export async function queue(tx,to,subject,body,htmlBody=null,attachments=null){
+ const [row]=await tx`insert into market.outbox(recipient,subject,body,html_body,attachments) values(${to},${subject},${body},${htmlBody},${attachments?tx.json(attachments):null}) returning id`;
+ return row;
+}
 export async function flushMail(){
- if(!process.env.RESEND_API_KEY||!process.env.MAIL_FROM)return;
- await db().begin(async tx=>{const rows=await tx`select * from market.outbox where sent_at is null order by created_at limit 10 for update skip locked`;
- for(const r of rows){try{const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body,...(r.html_body?{html:r.html_body}:{})}),signal:AbortSignal.timeout(8000)});if(!res.ok){const info=await res.json().catch(()=>({}));const detail=String(info.message||info.error||info.name||'').slice(0,300);throw Error('Email delivery failed: '+res.status+(detail?' — '+detail:''));}await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;}catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;}}
- });
+ if(!process.env.RESEND_API_KEY||!process.env.MAIL_FROM)return {sent:0,failed:0};
+ let sent=0,failed=0;
+ for(let batch=0;batch<25;batch++){
+  let processed=0;
+  await db().begin(async tx=>{
+   const rows=await tx`select * from market.outbox where sent_at is null and error is null order by created_at limit 10 for update skip locked`;
+   processed=rows.length;
+   for(const r of rows){
+    try{
+     const attachments=Array.isArray(r.attachments)?r.attachments.filter(a=>a&&a.filename&&a.content).map(a=>({filename:String(a.filename).slice(0,180),content:String(a.content)})):[];
+     const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body,...(r.html_body?{html:r.html_body}:{}),...(attachments.length?{attachments}:{})}),signal:AbortSignal.timeout(10000)});
+     if(!res.ok){const info=await res.json().catch(()=>({}));const detail=String(info.message||info.error||info.name||'').slice(0,300);throw Error('Email delivery failed: '+res.status+(detail?' — '+detail:''));}
+     await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;sent++;
+    }catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;failed++;}
+   }
+  });
+  if(processed<10)break;
+ }
+ return {sent,failed};
 }
 export async function publicData(){
  const sql=db();await expire(sql);
