@@ -389,9 +389,10 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   if(!u.admin)return json({error:'Organizer access only'},403);
   const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
   const [event]=await sql`select e.*,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${eventId}`;
+  if(event?.setup_floor_plan_image)return json({base64:String(event.setup_floor_plan_image).replace(/^data:image\/png;base64,/,''),filename:event.setup_floor_plan_filename||String(event.market_name||'Crafters Market').replace(/[^a-z0-9]+/gi,'-')+'-Floor-Plan-'+marketDateOnly(event.date)+'.png',mime:'image/png',sent_at:event.setup_sent_at});
   if(!event?.setup_floor_plan_snapshot)throw Error('No sent floor plan has been saved for this market yet.');
   const snap=event.setup_floor_plan_snapshot||{},base64=buildFloorPlanPdfBase64(snap.event||event,snap.inside||[],snap.layout||{});
-  return json({base64,filename:event.setup_floor_plan_filename||floorFileName(snap.event||event),sent_at:event.setup_sent_at});
+  return json({base64,filename:event.setup_floor_plan_filename||floorFileName(snap.event||event),mime:'application/pdf',sent_at:event.setup_sent_at});
  }
  if(action==='application-attempt'&&req.method==='POST'){
   await ensureApplicationAttempts(sql);const p=await req.json(),snap=cleanAttemptSnapshot(p.snapshot||{}),allowed=['draft','submitting','failed','completed'],status=allowed.includes(p.status)?p.status:'draft',step=String(p.step||'form').slice(0,100),errorMessage=String(p.error_message||'').trim().slice(0,1200),id=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(p.id||''))?String(p.id):crypto.randomUUID(),applicationId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(p.application_id||''))?String(p.application_id):null;
@@ -658,13 +659,13 @@ trinitycraftersmarket@gmail.com`;
   const rows=dedupeSetupRows(await loadSetupRows(sql,event.id)),subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
   const recipientMap=new Map();for(const row of rows){const email=setupEmail(row.email);if(!email)continue;const current=recipientMap.get(email)||{email,inside:false};current.inside=current.inside||['indoor','inside'].includes(String(row.space||'').toLowerCase());recipientMap.set(email,current);}
   const recipients=[...recipientMap.values()];if(!recipients.length)throw Error('No active attendee email addresses are available for this date.');
-  const layout=p.layout&&typeof p.layout==='object'?p.layout:(event.floor_plan||{}),inside=rows.filter(x=>['indoor','inside'].includes(String(x.space||'').toLowerCase())),attach=p.attach_floor_plan!==false&&inside.length>0,filename=floorFileName(event),base64=attach?buildFloorPlanPdfBase64(event,inside,layout):null,attachment=attach?[{filename,content:base64}]:null,vendorOutboxIds=[];
+  const layout=p.layout&&typeof p.layout==='object'?p.layout:(event.floor_plan||{}),inside=rows.filter(x=>['indoor','inside'].includes(String(x.space||'').toLowerCase())),attach=p.attach_floor_plan!==false&&inside.length>0;if(attach&&!event.floor_plan_image)throw Error('Save the floor plan first. The setup email uses the exact saved floor plan image.');const filename=String(event.market_name||event.title||'Crafters Market').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')+'-Floor-Plan-'+marketDateOnly(event.date)+'.png',base64=attach?String(event.floor_plan_image).replace(/^data:image\/png;base64,/,''):null,attachment=attach?[{filename,content:base64}]:null,vendorOutboxIds=[];
   const indoorNote='\n\nFLOOR PLAN FOR INSIDE VENDORS:\nYour assigned floor plan is attached. Please locate your business name before arriving. Spaces are assigned; do not switch locations without organizer approval.';
   const snapshot={event:{id:event.id,date:event.date,title:event.title,market_name:event.market_name,location:event.location,address:event.address},inside:inside.map(x=>({id:x.id,name:x.name,business:x.business,category:x.category,products:x.products})),layout};
   await sql.begin(async tx=>{
    for(const r of recipients){const q=await queue(tx,r.email,subject,body+(r.inside&&attach?indoorNote:''),null,r.inside&&attach?attachment:null);if(q?.id)vendorOutboxIds.push(q.id);}
    await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nACTIVE VENDOR EMAILS:\n'+recipients.map(r=>r.email).join('; ')+'\n\nActive vendors: '+rows.length+' • Recipient emails: '+recipients.length+(attach?' • Floor plan attached to inside-vendor messages: '+recipients.filter(r=>r.inside).length:''),null,attachment);
-   await tx`update market.events set setup_sent_at=now(),floor_plan=${tx.json(layout)},setup_floor_plan_filename=${attach?filename:null},setup_floor_plan_snapshot=${attach?tx.json(snapshot):null},setup_recipient_summary=${tx.json({vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,inside_attachment_recipients:attach?recipients.filter(r=>r.inside).length:0})} where id=${event.id}`;
+   await tx`update market.events set setup_sent_at=now(),floor_plan=${tx.json(layout)},setup_floor_plan_filename=${attach?filename:null},setup_floor_plan_image=${attach?event.floor_plan_image:null},setup_floor_plan_snapshot=${attach?tx.json(snapshot):null},setup_recipient_summary=${tx.json({vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,inside_attachment_recipients:attach?recipients.filter(r=>r.inside).length:0})} where id=${event.id}`;
    await audit(tx,u,'setup instructions email',{event_id:event.id,vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,floor_plan_attached:attach});
   });
   await flushMail();
@@ -674,9 +675,19 @@ trinitycraftersmarket@gmail.com`;
  if(action==='floor-plan-save'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   if(!p.event_id||!p.layout||typeof p.layout!=='object')throw Error('Floor plan data is required.');
-  await sql`update market.events set floor_plan=${sql.json(p.layout)} where id=${p.event_id}`;
-  await audit(sql,u,'floor plan saved',{event_id:p.event_id,vendors:Object.keys(p.layout||{}).length});
-  return json({ok:true});
+  const image=String(p.image_data_url||'').trim();
+  if(image&&(!image.startsWith('data:image/png;base64,')||image.length>5500000))throw Error('Floor plan image is invalid or too large.');
+  await sql`update market.events set floor_plan=${sql.json(p.layout)},floor_plan_image=case when ${image||null} is not null then ${image||null} else floor_plan_image end,floor_plan_image_updated_at=case when ${image||null} is not null then now() else floor_plan_image_updated_at end where id=${p.event_id}`;
+  await audit(sql,u,'floor plan saved',{event_id:p.event_id,vendors:Object.keys(p.layout||{}).length,image_saved:!!image});
+  return json({ok:true,image_saved:!!image});
+ }
+ if(action==='floor-plan-image'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
+  const [event]=await sql`select e.date,e.floor_plan_image,e.floor_plan_image_updated_at,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${eventId}`;
+  if(!event?.floor_plan_image)throw Error('No saved floor plan image yet. Arrange the floor plan and tap Save Floor Plan first.');
+  const base64=String(event.floor_plan_image).replace(/^data:image\/png;base64,/,''),filename=String(event.market_name||'Crafters Market').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')+'-Floor-Plan-'+marketDateOnly(event.date)+'.png';
+  return json({base64,filename,mime:'image/png',updated_at:event.floor_plan_image_updated_at});
  }
  if(action==='event-category-limit'){
   if(!u.admin)return json({error:'Organizer access only'},403);
