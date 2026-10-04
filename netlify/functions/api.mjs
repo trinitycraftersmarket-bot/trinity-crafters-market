@@ -74,20 +74,49 @@ async function loadSetupRows(sql,eventId){
 }
 const pdfAscii=s=>String(s??'').normalize('NFKD').replace(/[\u2018\u2019]/g,"'").replace(/[\u2013\u2014]/g,'-').replace(/[^\x20-\x7E]/g,'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)');
 function buildFloorPlanPdfBase64(event,insideRows,layout={}){
- const room={x:38,y:48,w:536,h:650},cmd=[];
- const text=(x,y,size,value,bold=false)=>cmd.push(`BT /${bold?'F2':'F1'} ${size} Tf ${x.toFixed(1)} ${y.toFixed(1)} Td (${pdfAscii(value)}) Tj ET`);
- const rect=(x,y,w,h,fill='1 1 1',stroke='0.25 0.25 0.25')=>cmd.push(`${fill} rg ${stroke} RG ${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re B`);
+ const room={x:56,y:54,w:500,h:631},cmd=[];
+ const text=(x,y,size,value,bold=false)=>cmd.push(`0 0 0 rg BT /${bold?'F2':'F1'} ${size} Tf ${x.toFixed(1)} ${y.toFixed(1)} Td (${pdfAscii(value)}) Tj ET`);
+ const rect=(x,y,w,h,fill='1 1 1',stroke='0.25 0.25 0.25',line=1)=>cmd.push(`${line} w ${fill} rg ${stroke} RG ${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re B`);
  const parse=(v,axis,fallback)=>{if(v==null)return fallback;const s=String(v).trim();let n=parseFloat(s);if(!Number.isFinite(n))return fallback;if(s.endsWith('%'))return n/100;if(s.endsWith('px'))return n/(axis==='x'?650:820);return n>1?n/(axis==='x'?650:820):n;};
- text(38,760,18,(event.market_name||event.title||'Crafters Market')+' — Indoor Vendor Floor Plan',true);
- text(38,741,10,marketDateLabel(event.date)+' • '+(event.location||''),false);
- if(event.address)text(38,726,9,event.address,false);
- text(38,711,8,'Please locate your business before arrival. Spaces are assigned; do not switch without organizer approval.',false);
- rect(room.x,room.y,room.w,room.h,'0.91 0.89 0.73','0.15 0.15 0.15');
+ const wrap=(value,max)=>{const words=pdfAscii(value).replace(/\s+/g,' ').trim().split(' ').filter(Boolean),lines=[];let line='';for(const word of words){const next=line?line+' '+word:word;if(next.length<=max)line=next;else{if(line)lines.push(line);line=word;}}if(line)lines.push(line);return lines;};
+ text(42,760,17,(event.market_name||event.title||'Crafters Market')+' - Indoor Vendor Floor Plan',true);
+ text(42,741,9.5,marketDateLabel(event.date)+' • '+(event.location||''),false);
+ if(event.address)text(42,726,8.5,event.address,false);
+ text(42,711,7.5,'Please locate your business before arrival. Spaces are assigned; do not switch without organizer approval.',false);
+ rect(room.x,room.y,room.w,room.h,'0.91 0.89 0.73','0.15 0.15 0.15',1.4);
+
  const tables=[[36,1,false],[3,20,true],[3,45,true],[3,70,true],[68,20,false],[68,45,false],[68,70,false],[18,85,true],[55,85,false]];
- for(const [x,y,flip] of tables){const bx=room.x+room.w*x/100,top=room.h*y/100,bw=room.w*.29,bh=room.h*.14,by=room.y+room.h-top-bh,hbar=bw*.78,vbar=bw*.18,barh=bh*.29;rect(flip?bx+bw-hbar:bx,by+bh-barh,hbar,barh,'1 1 1','0.55 0.55 0.55');rect(flip?bx+bw-vbar:bx,by,vbar,bh,'1 1 1','0.55 0.55 0.55');}
- const placed=(insideRows||[]).map((v,i)=>{const pos=layout?.[String(v.id)]||{},left=parse(pos.left,'x',(3+(i%3)*32)/100),top=parse(pos.top,'y',(4+Math.floor(i/3)*16)/100);return {...v,left,top};}).sort((a,b)=>a.top-b.top||a.left-b.left||String(a.business||a.name).localeCompare(String(b.business||b.name)));
- placed.forEach((v,i)=>{const bw=112,bh=38,x=room.x+Math.max(0,Math.min(.80,v.left))*room.w,y=room.y+room.h-Math.max(0,Math.min(.94,v.top))*room.h-bh;rect(x,y,bw,bh,'1 1 1','0.05 0.31 0.27');text(x+5,y+25,7.5,'Space '+(i+1)+' — '+String(v.business||v.name||'Vendor').slice(0,34),true);text(x+5,y+12,6.5,String(v.category||v.products||'').replace(/\s+/g,' ').slice(0,42),false);});
- text(38,26,7.5,'Generated from the organizer floor plan saved for this market date.',false);
+ for(const [x,y,flip] of tables){
+  const bx=room.x+room.w*x/100,top=room.h*y/100,bw=room.w*.29,bh=room.h*.14,by=room.y+room.h-top-bh,hbar=bw*.78,vbar=bw*.18,barh=bh*.29;
+  rect(flip?bx+bw-hbar:bx,by+bh-barh,hbar,barh,'1 1 1','0.55 0.55 0.55',.6);
+  rect(flip?bx+bw-vbar:bx,by,vbar,bh,'1 1 1','0.55 0.55 0.55',.6);
+ }
+
+ const placed=(insideRows||[]).map((v,i)=>{
+  const pos=layout?.[String(v.id)]||{},
+   left=parse(pos.left,'x',(3+(i%3)*32)/100),
+   top=parse(pos.top,'y',(4+Math.floor(i/3)*16)/100),
+   width=parse(pos.width,'x',105/650),
+   height=parse(pos.height,'y',54/820);
+  return {...v,left,top,width,height};
+ }).sort((a,b)=>a.top-b.top||a.left-b.left||String(a.business||a.name).localeCompare(String(b.business||b.name)));
+
+ placed.forEach(v=>{
+  const bw=Math.max(62,Math.min(112,v.width*room.w)),
+        bh=Math.max(34,Math.min(78,v.height*room.h)),
+        x=room.x+Math.max(0,Math.min(1-v.width,v.left))*room.w,
+        y=room.y+room.h-Math.max(0,Math.min(1-v.height,v.top))*room.h-bh;
+  rect(x,y,bw,bh,'1 1 1','0.05 0.31 0.27',1.4);
+  const name=String(v.business||v.name||'Vendor'),
+        cat=String(v.category||'').replace(/\s+/g,' '),
+        nameLines=wrap(name,Math.max(10,Math.floor((bw-8)/4.6))).slice(0,3),
+        catLines=wrap(cat,Math.max(10,Math.floor((bw-8)/4.25))).slice(0,4);
+  let ty=y+bh-10;
+  for(const line of nameLines){text(x+4,ty,6.7,line,true);ty-=7.5;}
+  if(catLines.length&&ty>y+7){ty-=1;for(const line of catLines){if(ty<y+6)break;text(x+4,ty,6.3,line,false);ty-=7;}}
+ });
+
+ text(42,30,7,'Floor plan generated from the organizer layout for this market date.',false);
  const stream=cmd.join('\n'),objects=[
   '<< /Type /Catalog /Pages 2 0 R >>',
   '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
