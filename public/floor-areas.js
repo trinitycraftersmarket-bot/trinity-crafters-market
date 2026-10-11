@@ -120,7 +120,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '<summary style="cursor:pointer;font-weight:600">Change image or reuse a layout</summary>'+
       '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;align-items:end">'+
         '<label style="flex:1;min-width:170px">Upload room image (PNG, JPG or WebP)<input id="fam-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>'+
-        '<button id="fam-download" type="button" class="secondary">Download image</button>'+
+        '<button id="fam-download" type="button" class="secondary">Download floor plan with names</button>'+
         '<button id="fam-reuse" type="button" class="secondary">Reuse prior venue layouts</button>'+
         '<button id="fam-clear" type="button" class="secondary">Remove this image</button>'+
       '</div>'+
@@ -129,7 +129,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   '</section>';
   const q=id=>host.querySelector('#'+id);
   const status=message=>{q('fam-status').textContent=message;};
-  const markDirty=()=>{state.dirty=true;state.revision++;status('Saving your changes…');};
+  const markDirty=()=>{state.dirty=true;state.revision++;status('Unsaved changes — saving now… Please wait for confirmation before refreshing.');};
   const clone=data=>JSON.parse(JSON.stringify(data));
   const inputForSave=()=>{
     const bases=new Map(state.baseAreas.map(a=>[a.area_key,a]));
@@ -157,6 +157,9 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     return [...latestByKey.values()];
   }
   let saving=false;
+  // Warn before abandoning the page while an image or booth edit is in flight.
+  const warnUnsaved=event=>{if(state.dirty||saving){event.preventDefault();event.returnValue='';}};
+  window.addEventListener('beforeunload',warnUnsaved);
   async function saveChanges(){
     if(saving||!state.eventId)return;
     saving=true;
@@ -175,7 +178,8 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
           state.areas=clone(server);
           state.baseAreas=clone(server);
           state.dirty=false;
-          status('Saved and shared — '+result.area_count+' floor plan areas. Other organizer edits were preserved.');
+          const imageCount=server.filter(a=>imageAllowed(a.image_data_url)).length;
+          status('Saved to database ✓ '+result.area_count+' floor plan area(s), '+imageCount+' uploaded image(s). You can safely refresh now.');
           render();
           return;
         }
@@ -187,7 +191,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       }
     }catch(error){
       if(state.eventId===eventId){
-        status('Save blocked: '+error.message+' Use Refresh shared plans to review what changed; your edit was not silently overwritten.');
+        status('NOT SAVED — '+error.message+' Do not refresh until you retry Save changes or resolve the issue.');
       }
     }finally{
       saving=false;
@@ -459,6 +463,62 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     if(state.dirty&&!confirm('You have unsaved changes. Refreshing will discard only those local changes. Continue?'))return;
     void load();
   };
-  q('fam-download').onclick=()=>{const a=current();if(!a||!imageAllowed(a.image_data_url))return;const link=document.createElement('a');link.href=a.image_data_url;link.download=String(a.title).replace(/[^a-z0-9]+/gi,'-')+'-Floor-Plan.jpg';link.click();};
+  q('fam-download').onclick=async()=>{
+    const area=current();
+    if(!area||!imageAllowed(area.image_data_url)){notice('Upload and save a floor plan image before downloading.');return;}
+    const assignments=Array.from({length:area.capacity},(_,i)=>{
+      const id=spot(area,i),entry=area.assignments?.[id]||{};
+      const vendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id||''));
+      if(!vendor)return null;
+      const fallback=autoLabelPosition(area,i);
+      return {
+        label:String(vendor.business||vendor.name||'Vendor'),
+        x:entry.x!=null&&Number.isFinite(Number(entry.x))?Number(entry.x):fallback.x,
+        y:entry.y!=null&&Number.isFinite(Number(entry.y))?Number(entry.y):fallback.y
+      };
+    }).filter(Boolean);
+    if(!assignments.length){notice('No vendor names are assigned in '+area.title+' yet. Assign vendors before downloading the completed floor plan.');return;}
+    const button=q('fam-download'),oldLabel=button.textContent;
+    button.disabled=true;button.textContent='Preparing named floor plan…';
+    try{
+      // The map contains the actual uploaded image and movable labels.
+      // Capturing this element preserves the exact visible name positions and wraps.
+      const el=q('fam-map');
+      if(!window.html2canvas)throw Error('Floor plan image export is still loading. Refresh the page and try again.');
+      // Make sure the image decoded before capture; otherwise some phones produce a blank picture.
+      await Promise.all([...el.querySelectorAll('img')].map(img=>img.decode?img.decode():Promise.resolve()));
+      const width=el.getBoundingClientRect().width||600;
+      // Labels must be included even when the organizer toggled their view off.
+      const wasShowing=state.showNames;
+      state.showNames=true;renderPins();
+      try{
+        const canvas=await window.html2canvas(el,{
+          backgroundColor:'#ffffff',scale:Math.min(3,Math.max(1.8,1500/width)),
+          useCORS:true,logging:false,removeContainer:true
+        });
+        if(!canvas.width||!canvas.height)throw Error('The image export was empty. Please try again.');
+        await new Promise((resolve,reject)=>{
+          canvas.toBlob(blob=>{
+            if(!blob){reject(Error('Could not prepare the exported image.'));return;}
+            const href=URL.createObjectURL(blob),link=document.createElement('a');
+            link.href=href;
+            const evt=events.find(e=>e.id===state.eventId);
+            link.download=String(evt?.date||'Event')+'-'+String(area.title||'Floor-Plan').replace(/[^a-z0-9]+/gi,'-')+'-With-Vendors.png';
+            document.body.appendChild(link);link.click();link.remove();
+            setTimeout(()=>URL.revokeObjectURL(href),15000);resolve();
+          },'image/png');
+        });
+        status('Downloaded floor plan WITH '+assignments.length+' vendor name label(s).');
+      }finally{
+        state.showNames=wasShowing;
+        renderPins();
+        q('fam-toggle').checked=state.showNames;
+      }
+    }catch(error){
+      status('Image download failed: '+error.message);
+    }finally{
+      button.disabled=false;button.textContent=oldLabel;
+    }
+  };
   return {load};
 }
