@@ -1,6 +1,6 @@
 // Event-specific multi-area floor plan management, separate from the legacy editor.
 export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc,notice}) {
-  const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:false,placing:null,dirty:false,request:0};
+  const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:true,placing:null,dirty:false,request:0};
   const safe=s=>esc(String(s==null?'':s));
   const imageAllowed=url=>typeof url==='string'&&/^data:image\/(png|jpeg|webp);base64,/.test(url);
   const venueDefaults=event=>{
@@ -29,6 +29,33 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   const positions=(a,i)=>{
     const rows=Math.ceil(a.capacity/2),col=i<rows?0:1,row=col?i-rows:i;
     return {x:col?76:24,y:12+Math.max(0,row)*76/Math.max(1,rows-1)};
+  };
+
+  // Positions are percentages of the full uploaded floor plan graphic, including its
+  // heading/borders, so names appear next to the pre-printed booth numbers.
+  // Any manually placed x/y in this event takes priority over these defaults.
+  const mainRoomLabels={
+    1:[85,62],2:[86,49.5],3:[86,37.5],4:[86,24.5],
+    5:[65,16],6:[32,21],7:[56,31],8:[51,49],
+    9:[55,65],10:[59,85.5],11:[68,86.5],12:[28,86.5],
+    13:[44,76.3],14:[46,66],15:[46,49.5],16:[43,30.2],
+    17:[12,33.5],18:[12,46],19:[12,58],20:[12,69],21:[12,82]
+  };
+  const autoLabelPosition=(area,index)=>{
+    if(area.prefix==='MR'&&area.capacity===21){
+      const p=mainRoomLabels[index+1];if(p)return {x:p[0],y:p[1]};
+    }
+    // Hilton foyer graphic shows 23-27, rising from bottom to top.
+    if(area.prefix==='H1'&&area.capacity===5)
+      return {x:55,y:[89,74,59,42,27][index]};
+    // Hilton side room graphic shows 28-30 rising from bottom to top.
+    if(area.prefix==='H2'&&area.capacity===3)
+      return {x:43,y:[84,56,29][index]};
+    if(area.prefix==='HI'&&area.capacity===9){
+      const p=[[50,22],[28,38],[74,38],[27,53],[74,53],[27,68],[74,68],[24,89],[58,89]][index];
+      if(p)return {x:p[0],y:p[1]};
+    }
+    return positions(area,index);
   };
   const choices=(selected,area)=>{
     const assignedElsewhere=new Set(state.areas.flatMap(a=>Object.values(a.assignments||{}).map(v=>String(v.vendor_id||'')).filter(Boolean)));
@@ -67,12 +94,12 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '</div>'+
       '<p id="fam-spot-info" class="muted" style="font-size:13px;margin:9px 0"></p>'+
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">'+
-        '<button class="secondary" type="button" id="fam-place">Place vendor label on image</button>'+
+        '<button class="secondary" type="button" id="fam-place">Move selected label</button>'+
         '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:0">'+
-          '<input type="checkbox" id="fam-toggle" style="width:16px;height:16px"> Show placed labels'+
+          '<input type="checkbox" id="fam-toggle" style="width:16px;height:16px"> Show vendor names'+
         '</label>'+
       '</div>'+
-      '<p class="muted" style="font-size:12px;margin:8px 0 0">The image stays clean by default. Labels appear only when you choose to show them; use Place to choose an exact location.</p>'+
+      '<p class="muted" style="font-size:12px;margin:8px 0 0">Assigned vendor names appear automatically beside their numbered booths. Use Move selected label if one needs repositioning.</p>'+
     '</section>'+
     '<details id="fam-assignment-details" style="border:1px solid #dde5df;border-radius:9px;padding:10px 12px;margin:12px 0">'+
       '<summary id="fam-assignments-title" style="cursor:pointer;font-weight:600"></summary>'+
@@ -121,17 +148,18 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     if(!state.showNames)return;
     for(let i=0;i<a.capacity;i++){
       const id=spot(a,i),entry=a.assignments[id]||{};
-      // The printed floor plan already has its own numbered booths.
-      // Never put 21 default labels over the image. Only show labels
-      // explicitly placed by the organizer and linked to a vendor.
-      if(!entry.vendor_id||!Number.isFinite(Number(entry.x))||!Number.isFinite(Number(entry.y)))continue;
+      if(!entry.vendor_id)continue;
       const vendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id));
       if(!vendor)continue;
+      const fallback=autoLabelPosition(a,i);
+      const x=Number.isFinite(Number(entry.x))&&entry.x!=null?Number(entry.x):fallback.x;
+      const y=Number.isFinite(Number(entry.y))&&entry.y!=null?Number(entry.y):fallback.y;
       const pin=document.createElement('button');pin.type='button';pin.className='fam-pin';
-      pin.style.cssText='position:absolute;z-index:2;left:'+entry.x+'%;top:'+entry.y+'%;transform:translate(-50%,-50%);background:#115549;color:white;border:1px solid white;border-radius:12px;font-size:10px;line-height:1.15;padding:3px 6px;max-width:38%;box-shadow:0 1px 3px #777;cursor:pointer';
-      pin.textContent=id+' · '+String(vendor.business||vendor.name);
-      pin.title='Reposition label '+id;
-      pin.onclick=e=>{e.stopPropagation();state.selectedSpot=id;state.placing=id;status('Tap the image to move '+id+'.');render();};
+      pin.style.cssText='position:absolute;z-index:2;left:'+x+'%;top:'+y+'%;transform:translate(-50%,-50%);background:rgba(255,255,255,.96);color:#103e35;border:1px solid #16594a;border-radius:6px;font-size:clamp(9px,1.3vw,12px);line-height:1.15;font-weight:700;padding:3px 5px;max-width:22%;box-shadow:0 1px 3px #777;cursor:pointer;overflow-wrap:anywhere;text-align:center';
+      pin.textContent=String(vendor.business||vendor.name);
+      pin.title=id+' — '+String(vendor.business||vendor.name)+'. Tap to reposition name.';
+      pin.setAttribute('aria-label','Move '+id+' '+String(vendor.business||vendor.name));
+      pin.onclick=e=>{e.stopPropagation();state.selectedSpot=id;state.placing=id;render();status('Tap the image where '+id+' should display its vendor name.');};
       map.appendChild(pin);
     }
   }
@@ -198,12 +226,12 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       state.vendors=rows||[];
       state.template=(result.template||[]).map(standardize);
       state.areas=(result.areas&&result.areas.length?result.areas:venueDefaults(event)).map(standardize);
-      state.active=0;state.selectedSpot=null;state.showNames=false;state.dirty=false;
+      state.active=0;state.selectedSpot=null;state.showNames=true;state.dirty=false;
       status(result.areas?.length?'Loaded saved floor plans for this event.':'New event layouts prepared. Upload photos and save to keep these plans for this event.');
       render();
     }catch(e){status('Could not load area plans: '+e.message);}
   }
-  q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.selectedSpot=null;state.placing=null;state.showNames=false;render();};
+  q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.selectedSpot=null;state.placing=null;state.showNames=true;render();};
   q('fam-place').onclick=()=>{
     const a=current(),id=state.selectedSpot;
     if(!a||!a.assignments[id]?.vendor_id)return;
@@ -236,7 +264,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   q('fam-clear').onclick=()=>{const a=current();if(!a||!a.image_data_url)return;if(!confirm('Remove this area image for this event? Existing vendor assignments will remain.'))return;a.image_data_url='';markDirty();render();};
   q('fam-reuse').onclick=()=>{
     if(!state.template.length||!confirm('Copy the latest venue layouts and images into this event? Vendor assignments will be cleared.'))return;
-    state.areas=copyDefaults(state.template);state.active=0;state.selectedSpot=null;state.showNames=false;markDirty();render();
+    state.areas=copyDefaults(state.template);state.active=0;state.selectedSpot=null;state.showNames=true;markDirty();render();
   };
   q('fam-save').onclick=async()=>{
     if(!state.eventId)return;
