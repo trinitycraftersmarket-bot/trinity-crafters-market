@@ -14,7 +14,8 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       {area_key:'outside',title:'Outside',capacity:2,space_type:'outdoor',prefix:'OUT'}
     ];
     if(/hampton inn|odessa trinity/.test(name))return [
-      {area_key:'main',title:'Indoor Room',capacity:9,space_type:'indoor',prefix:'HI'}
+      {area_key:'main',title:'Indoor Room',capacity:9,space_type:'indoor',prefix:'HI'},
+      {area_key:'hallway',title:'Hallway',capacity:1,space_type:'indoor',prefix:'HW'}
     ];
     if(/trinity yoga|holistic experience/.test(name))return [
       {area_key:'studio',title:'Yoga Studio',capacity:8,space_type:'indoor',prefix:'YS'}
@@ -23,6 +24,20 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       {area_key:'inside',title:'Indoor Area',capacity:9,space_type:'indoor',prefix:'IN'},
       {area_key:'outside',title:'Outdoor Area',capacity:2,space_type:'outdoor',prefix:'OUT'}
     ];
+  };
+
+  const hamptonHallwayArea=()=>({
+    area_key:'hallway',title:'Hallway',capacity:1,
+    space_type:'indoor',prefix:'HW',image_data_url:'',assignments:{}
+  });
+  const isHamptonEvent=event=>{
+    const place=locations.find(x=>x.id===event?.location_id);
+    const name=String((place?.name||'')+' '+(event?.title||'')).toLowerCase();
+    return /hampton inn|odessa trinity/.test(name)&&!/hilton garden inn/.test(name);
+  };
+  const addHamptonHallway=(areas,event)=>{
+    if(!isHamptonEvent(event)||areas.some(a=>a.area_key==='hallway'))return areas;
+    return [...areas,hamptonHallwayArea()];
   };
   const standardize=area=>({...area,assignments:area.assignments&&typeof area.assignments==='object'?area.assignments:{},image_data_url:area.image_data_url||''});
   const spot=(area,i)=>String(area.prefix||area.area_key.toUpperCase())+'-'+String(i+1).padStart(2,'0');
@@ -207,7 +222,9 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     }else{
       const placeholder=document.createElement('div');
       placeholder.style.cssText='aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;padding:24px;color:#235044;text-align:center';
-      placeholder.textContent='No floor plan image uploaded for '+a.title+'. Open "Change image or reuse a layout" to add one.';
+      placeholder.textContent=a.area_key==='hallway'&&isHamptonEvent(events.find(e=>e.id===state.eventId))
+        ?'Hampton Hallway — select HW-01 and choose an indoor vendor below. An image is optional. Keep entrances and emergency exits clear.'
+        :'No floor plan image uploaded for '+a.title+'. Open "Change image or reuse a layout" to add one.';
       map.appendChild(placeholder);
     }
     renderPins();
@@ -299,7 +316,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     const outside=overflow.filter(v=>['outside','outdoor'].includes(String(v.space||'').toLowerCase()));
     const assignedInArea=ids.filter(id=>!!a.assignments[id]?.vendor_id).length;
     q('fam-area').innerHTML=state.areas.map((v,i)=>'<option value="'+i+'"'+(i===state.active?' selected':'')+'>'+safe(v.title)+' ('+v.capacity+')</option>').join('');
-    q('fam-area-info').textContent=a.title+' · '+assignedInArea+' of '+a.capacity+' booths assigned · '+a.space_type;
+    q('fam-area-info').textContent=a.title+' · '+assignedInArea+' of '+a.capacity+' booths assigned · '+a.space_type+(a.area_key==='hallway'&&isHamptonEvent(events.find(e=>e.id===state.eventId))?' · Separate hallway placement (subject to venue clearance)':'');
     q('fam-overflow-title').textContent=state.vendors.length+' active vendors · '+occupied.size+' assigned · '+overflow.length+' waiting for a spot (tap for names)';
     q('fam-overflow-content').innerHTML=overflow.length?
       '<strong>Unassigned / overflow</strong><p>'+overflow.map(v=>safe(v.business||v.name||'Vendor')+' ('+safe(v.space||'')+')').join(' · ')+'</p><p>Unassigned indoor: '+interior.length+'; outside: '+outside.length+'. Booking and payment statuses are unchanged.</p>':
@@ -414,7 +431,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       const event=events.find(e=>e.id===eid);
       state.vendors=rows||[];
       state.template=(result.template||[]).map(standardize);
-      state.areas=(result.areas&&result.areas.length?result.areas:venueDefaults(event)).map(standardize);
+      state.areas=addHamptonHallway((result.areas&&result.areas.length?result.areas:venueDefaults(event)).map(standardize),event);
       state.active=0;state.selectedSpot=null;state.showNames=true;state.dirty=false;state.revision=0;state.baseAreas=clone((result.areas||[]).map(standardize));
       status(result.areas?.length?'Loaded saved floor plans for this event.':'New event layouts prepared. Upload photos and save to keep these plans for this event.');
       render();
@@ -456,7 +473,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   q('fam-clear').onclick=()=>{const a=current();if(!a||!a.image_data_url)return;if(!confirm('Remove this area image for this event? Existing vendor assignments will remain.'))return;a.image_data_url='';markDirty();render();void saveChanges();};
   q('fam-reuse').onclick=()=>{
     if(!state.template.length||!confirm('Copy the latest venue layouts and images into this event? Vendor assignments will be cleared.'))return;
-    state.areas=copyDefaults(state.template);state.active=0;state.selectedSpot=null;state.showNames=true;markDirty();render();void saveChanges();
+    state.areas=addHamptonHallway(copyDefaults(state.template),events.find(e=>e.id===state.eventId));state.active=0;state.selectedSpot=null;state.showNames=true;markDirty();render();void saveChanges();
   };
   q('fam-save').onclick=()=>{void saveChanges();};
   q('fam-refresh').onclick=()=>{
