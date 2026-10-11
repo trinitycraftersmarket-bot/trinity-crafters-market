@@ -15,7 +15,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     ];
     if(/hampton inn|odessa trinity/.test(name))return [
       {area_key:'main',title:'Indoor Room',capacity:9,space_type:'indoor',prefix:'HI'},
-      {area_key:'hallway',title:'Hallway',capacity:1,space_type:'indoor',prefix:'HW'}
+      {area_key:'hallway',title:'Hallway',capacity:2,space_type:'indoor',prefix:'HW'}
     ];
     if(/trinity yoga|holistic experience/.test(name))return [
       {area_key:'studio',title:'Yoga Studio',capacity:8,space_type:'indoor',prefix:'YS'}
@@ -27,7 +27,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   };
 
   const hamptonHallwayArea=()=>({
-    area_key:'hallway',title:'Hallway',capacity:1,
+    area_key:'hallway',title:'Hallway',capacity:2,
     space_type:'indoor',prefix:'HW',image_data_url:'',assignments:{}
   });
   const isHamptonEvent=event=>{
@@ -36,7 +36,13 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     return /hampton inn|odessa trinity/.test(name)&&!/hilton garden inn/.test(name);
   };
   const addHamptonHallway=(areas,event)=>{
-    if(!isHamptonEvent(event)||areas.some(a=>a.area_key==='hallway'))return areas;
+    if(!isHamptonEvent(event))return areas;
+    const hallway=areas.find(a=>a.area_key==='hallway');
+    if(hallway){
+      // Upgrade an existing one-spot hallway without touching HW-01 or any main-room data.
+      if(hallway.capacity<2)hallway.capacity=2;
+      return areas;
+    }
     return [...areas,hamptonHallwayArea()];
   };
   const standardize=area=>({...area,assignments:area.assignments&&typeof area.assignments==='object'?area.assignments:{},image_data_url:area.image_data_url||''});
@@ -117,6 +123,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
         '<label style="min-width:0">Booth number<select id="fam-spot" style="width:100%"></select></label>'+
         '<label style="min-width:0">Vendor — what they sell<select id="fam-vendor" style="width:100%"></select></label>'+
       '</div>'+
+      '<p id="fam-hallway-help" class="muted" style="font-size:12px;margin:5px 0 0"></p>'+
       '<p id="fam-spot-info" class="muted" style="font-size:13px;margin:9px 0 4px"></p>'+
       '<p id="fam-sells-info" style="font-size:13px;line-height:1.45;margin:0 0 12px;overflow-wrap:anywhere"></p>'+
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">'+
@@ -316,14 +323,27 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     const outside=overflow.filter(v=>['outside','outdoor'].includes(String(v.space||'').toLowerCase()));
     const assignedInArea=ids.filter(id=>!!a.assignments[id]?.vendor_id).length;
     q('fam-area').innerHTML=state.areas.map((v,i)=>'<option value="'+i+'"'+(i===state.active?' selected':'')+'>'+safe(v.title)+' ('+v.capacity+')</option>').join('');
-    q('fam-area-info').textContent=a.title+' · '+assignedInArea+' of '+a.capacity+' booths assigned · '+a.space_type+(a.area_key==='hallway'&&isHamptonEvent(events.find(e=>e.id===state.eventId))?' · Separate hallway placement (subject to venue clearance)':'');
+    q('fam-area-info').textContent=a.title+' · '+assignedInArea+' of '+a.capacity+' booths assigned · '+a.space_type+(a.area_key==='hallway'&&isHamptonEvent(events.find(e=>e.id===state.eventId))?' · Two separate hallway spots; keep exits and walking routes clear':'');
     q('fam-overflow-title').textContent=state.vendors.length+' active vendors · '+occupied.size+' assigned · '+overflow.length+' waiting for a spot (tap for names)';
     q('fam-overflow-content').innerHTML=overflow.length?
       '<strong>Unassigned / overflow</strong><p>'+overflow.map(v=>safe(v.business||v.name||'Vendor')+' ('+safe(v.space||'')+')').join(' · ')+'</p><p>Unassigned indoor: '+interior.length+'; outside: '+outside.length+'. Booking and payment statuses are unchanged.</p>':
       '<p>Every active vendor has an assigned booth.</p>';
     q('fam-reuse').disabled=!state.template.length;
     q('fam-download').disabled=!imageAllowed(a.image_data_url);
-    q('fam-spot').innerHTML=ids.map(id=>'<option value="'+safe(id)+'"'+(id===selected?' selected':'')+'>'+safe(id)+(a.assignments[id]?.vendor_id?' · Assigned':' · Open')+'</option>').join('');
+    // At Hampton, show Indoor Room and Hallway booth numbers in one picker.
+    // Selecting HW-01/HW-02 switches area automatically, avoiding a hidden second step.
+    const event=events.find(e=>e.id===state.eventId);
+    const spotAreas=isHamptonEvent(event)?state.areas.filter(x=>x.area_key==='main'||x.area_key==='hallway'):[a];
+    q('fam-spot').innerHTML=spotAreas.map(area=>
+      '<optgroup label="'+safe(area.title)+' ('+area.capacity+' spots)">'+
+      Array.from({length:area.capacity},(_,i)=>{
+        const id=spot(area,i);
+        return '<option value="'+safe(id)+'"'+(id===selected?' selected':'')+'>'+safe(id)+(area.assignments[id]?.vendor_id?' · Assigned':' · Open')+'</option>';
+      }).join('')+'</optgroup>'
+    ).join('');
+    q('fam-hallway-help').textContent=isHamptonEvent(events.find(e=>e.id===state.eventId))
+      ?'Choose HI-01–HI-09 for the room or HW-01 / HW-02 for the hallway. The floor-plan area changes automatically.'
+      :'';
     q('fam-vendor').innerHTML=choices(entry.vendor_id||'',a);
     const selectedVendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id||''));
     q('fam-spot-info').textContent=selectedVendor?'Currently: '+String(selectedVendor.business||selectedVendor.name)+' at '+selected+'.':
@@ -342,7 +362,13 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       state.selectedSpot=el.dataset.openSpot;render();
       q('fam-booth-editor').scrollIntoView({behavior:'smooth',block:'center'});
     });
-    q('fam-spot').onchange=e=>{state.selectedSpot=e.target.value;state.placing=null;render();};
+    q('fam-spot').onchange=e=>{
+      const id=e.target.value;
+      const index=state.areas.findIndex(area=>
+        Array.from({length:area.capacity},(_,i)=>spot(area,i)).includes(id));
+      if(index>=0)state.active=index;
+      state.selectedSpot=id;state.placing=null;render();
+    };
     q('fam-vendor').onchange=e=>{
       const newId=e.target.value;
       if(newId&&state.areas.some(area=>Object.entries(area.assignments||{}).some(([key,v])=>!(area===a&&key===selected)&&String(v.vendor_id||'')===newId))){
