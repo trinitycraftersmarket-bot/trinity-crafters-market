@@ -57,13 +57,21 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     }
     return positions(area,index);
   };
+  // Selling information is only a selection aid for staff. The map and
+  // printable booth roster continue to show the vendor's name, never products.
+  const sells=v=>String(v?.products||v?.category||'Not specified').replace(/\s+/g,' ').trim();
+  const sellerPreview=v=>{
+    const detail=sells(v);
+    return detail.length>85?detail.slice(0,82).trimEnd()+'…':detail;
+  };
   const choices=(selected,area)=>{
     const assignedElsewhere=new Set(state.areas.flatMap(a=>Object.values(a.assignments||{}).map(v=>String(v.vendor_id||'')).filter(Boolean)));
     return '<option value="">Unassigned</option>'+state.vendors
       .filter(v=>(['outside','outdoor'].includes(String(v.space||'').toLowerCase())?'outdoor':'indoor')===area.space_type)
+      .sort((a,b)=>String(a.business||a.name||'').localeCompare(String(b.business||b.name||'')))
       .map(v=>{
         const id=String(v.id),taken=assignedElsewhere.has(id)&&id!==String(selected||'');
-        const label=String(v.business||v.name||'Unnamed vendor')+(taken?' (assigned elsewhere)':'');
+        const label=String(v.business||v.name||'Unnamed vendor')+' — Sells: '+sellerPreview(v)+(taken?' (assigned elsewhere)':'');
         return '<option value="'+safe(id)+'"'+(id===String(selected||'')?' selected':'')+(taken?' disabled':'')+'>'+safe(label)+'</option>';
       }).join('');
   };
@@ -92,9 +100,10 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '<h3 style="margin:0 0 12px;font-size:19px">Assign a booth</h3>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">'+
         '<label style="min-width:0">Booth number<select id="fam-spot" style="width:100%"></select></label>'+
-        '<label style="min-width:0">Vendor<select id="fam-vendor" style="width:100%"></select></label>'+
+        '<label style="min-width:0">Vendor — what they sell<select id="fam-vendor" style="width:100%"></select></label>'+
       '</div>'+
-      '<p id="fam-spot-info" class="muted" style="font-size:13px;margin:9px 0"></p>'+
+      '<p id="fam-spot-info" class="muted" style="font-size:13px;margin:9px 0 4px"></p>'+
+      '<p id="fam-sells-info" style="font-size:13px;line-height:1.45;margin:0 0 12px;overflow-wrap:anywhere"></p>'+
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">'+
         '<button class="secondary" type="button" id="fam-reset">Reset name position</button>'+
         '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:0">'+
@@ -298,6 +307,8 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     const selectedVendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id||''));
     q('fam-spot-info').textContent=selectedVendor?'Currently: '+String(selectedVendor.business||selectedVendor.name)+' at '+selected+'.':
       selected+' is currently unassigned.';
+    q('fam-sells-info').innerHTML=selectedVendor?'<strong>What they sell:</strong> '+safe(sells(selectedVendor)):
+      '<span class="muted">Choose a vendor to see their products before assigning the booth.</span>';
     q('fam-toggle').checked=state.showNames;
     q('fam-reset').disabled=!entry.vendor_id||!(entry.x!=null&&entry.y!=null);
     q('fam-assignments-title').textContent='View all '+a.capacity+' booths ('+assignedInArea+' assigned)';
