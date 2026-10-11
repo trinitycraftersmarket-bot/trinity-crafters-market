@@ -1,6 +1,6 @@
 // Event-specific multi-area floor plan management, separate from the legacy editor.
 export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc,notice}) {
-  const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:true,placing:null,dirty:false,request:0,revision:0};
+  const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:true,placing:null,dirty:false,request:0,revision:0,baseAreas:[]};
   const safe=s=>esc(String(s==null?'':s));
   const imageAllowed=url=>typeof url==='string'&&/^data:image\/(png|jpeg|webp);base64,/.test(url);
   const venueDefaults=event=>{
@@ -79,6 +79,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '<label style="flex:1;min-width:165px">Floor plan area<select id="fam-area"></select></label>'+
       '<button type="button" id="fam-print" class="secondary" style="flex:0 0 auto">Print booth list</button>'+ 
       '<button type="button" id="fam-save" style="flex:0 0 auto">Save changes</button>'+
+      '<button type="button" id="fam-refresh" class="secondary" style="flex:0 0 auto">Refresh shared plans</button>'+
     '</div>'+
     '<p id="fam-status" class="muted" role="status"></p>'+
     '<p id="fam-area-info" style="font-weight:600"></p>'+
@@ -120,6 +121,32 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   const q=id=>host.querySelector('#'+id);
   const status=message=>{q('fam-status').textContent=message;};
   const markDirty=()=>{state.dirty=true;state.revision++;status('Saving your changes…');};
+  const clone=data=>JSON.parse(JSON.stringify(data));
+  const inputForSave=()=>{
+    const bases=new Map(state.baseAreas.map(a=>[a.area_key,a]));
+    return {
+      event_id:state.eventId,
+      areas:state.areas.map(a=>({...a,image_changed:(a.image_data_url||'')!==(bases.get(a.area_key)?.image_data_url||'')})),
+      base_areas:state.baseAreas.map(a=>({area_key:a.area_key,title:a.title,prefix:a.prefix,capacity:a.capacity,space_type:a.space_type,updated_at:a.updated_at,assignments:a.assignments}))
+    };
+  };
+  function rebaseEdits(server,currentEdits,sent){
+    const sentByKey=new Map(sent.map(a=>[a.area_key,a]));
+    const latestByKey=new Map(server.map(a=>[a.area_key,a]));
+    for(const edited of currentEdits){
+      const sentArea=sentByKey.get(edited.area_key);
+      const latest=latestByKey.get(edited.area_key);
+      if(!latest){latestByKey.set(edited.area_key,edited);continue;}
+      if(!sentArea)continue;
+      for(const [slot,entry] of Object.entries(edited.assignments||{})){
+        if(JSON.stringify(entry)!==JSON.stringify(sentArea.assignments?.[slot])){
+          latest.assignments[slot]=entry;
+        }
+      }
+      if(edited.image_data_url!==sentArea.image_data_url)latest.image_data_url=edited.image_data_url;
+    }
+    return [...latestByKey.values()];
+  }
   let saving=false;
   async function saveChanges(){
     if(saving||!state.eventId)return;
@@ -129,19 +156,30 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     try{
       while(state.eventId===eventId&&state.dirty){
         const revision=state.revision;
-        status('Saving vendor positions…');
-        // api() serializes its payload before awaiting, so an edit made during
-        // the request triggers another save rather than being silently lost.
-        const result=await api('floor-area-plans-save',{event_id:eventId,areas:state.areas});
+        const payload=inputForSave();
+        const sent=clone(state.areas);
+        status('Saving shared booth assignments…');
+        const result=await api('floor-area-plans-save',payload);
         if(state.eventId!==eventId)return;
+        const server=result.areas.map(standardize);
         if(state.revision===revision){
+          state.areas=clone(server);
+          state.baseAreas=clone(server);
           state.dirty=false;
-          status('Saved '+result.area_count+' area plans — vendor labels will stay where you moved them.');
+          status('Saved and shared — '+result.area_count+' floor plan areas. Other organizer edits were preserved.');
+          render();
           return;
         }
+        // Edits made locally while a request was in flight must be layered on top
+        // of the server's merged result instead of discarding either editor's work.
+        const pending=clone(state.areas);
+        state.baseAreas=clone(server);
+        state.areas=rebaseEdits(clone(server),pending,sent);
       }
     }catch(error){
-      if(state.eventId===eventId)status('Could not save changes: '+error.message+'. Tap Save changes to retry.');
+      if(state.eventId===eventId){
+        status('Save blocked: '+error.message+' Use Refresh shared plans to review what changed; your edit was not silently overwritten.');
+      }
     }finally{
       saving=false;
       saveButton.disabled=false;
@@ -279,7 +317,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
         notice('That vendor is already assigned to another booth.');render();return;
       }
       a.assignments[selected]={...(a.assignments[selected]||{}),vendor_id:newId};
-      markDirty();render();
+      markDirty();render();void saveChanges();
     };
     renderMap();
   }
@@ -362,7 +400,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       state.vendors=rows||[];
       state.template=(result.template||[]).map(standardize);
       state.areas=(result.areas&&result.areas.length?result.areas:venueDefaults(event)).map(standardize);
-      state.active=0;state.selectedSpot=null;state.showNames=true;state.dirty=false;state.revision=0;
+      state.active=0;state.selectedSpot=null;state.showNames=true;state.dirty=false;state.revision=0;state.baseAreas=clone((result.areas||[]).map(standardize));
       status(result.areas?.length?'Loaded saved floor plans for this event.':'New event layouts prepared. Upload photos and save to keep these plans for this event.');
       render();
     }catch(e){status('Could not load area plans: '+e.message);}
@@ -396,16 +434,20 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       if(output.length>2800000)output=canvas.toDataURL('image/jpeg',0.67);
       if(output.length>2800000)throw Error('Image is still too large after resizing. Please use a smaller source image.');
       if(state.eventId!==eventSelect.value)return;
-      a.image_data_url=output;markDirty();render();
+      a.image_data_url=output;markDirty();render();void saveChanges();
     }catch(error){notice('Image upload failed: '+error.message);}
     e.target.value='';
   };
-  q('fam-clear').onclick=()=>{const a=current();if(!a||!a.image_data_url)return;if(!confirm('Remove this area image for this event? Existing vendor assignments will remain.'))return;a.image_data_url='';markDirty();render();};
+  q('fam-clear').onclick=()=>{const a=current();if(!a||!a.image_data_url)return;if(!confirm('Remove this area image for this event? Existing vendor assignments will remain.'))return;a.image_data_url='';markDirty();render();void saveChanges();};
   q('fam-reuse').onclick=()=>{
     if(!state.template.length||!confirm('Copy the latest venue layouts and images into this event? Vendor assignments will be cleared.'))return;
-    state.areas=copyDefaults(state.template);state.active=0;state.selectedSpot=null;state.showNames=true;markDirty();render();
+    state.areas=copyDefaults(state.template);state.active=0;state.selectedSpot=null;state.showNames=true;markDirty();render();void saveChanges();
   };
   q('fam-save').onclick=()=>{void saveChanges();};
+  q('fam-refresh').onclick=()=>{
+    if(state.dirty&&!confirm('You have unsaved changes. Refreshing will discard only those local changes. Continue?'))return;
+    void load();
+  };
   q('fam-download').onclick=()=>{const a=current();if(!a||!imageAllowed(a.image_data_url))return;const link=document.createElement('a');link.href=a.image_data_url;link.download=String(a.title).replace(/[^a-z0-9]+/gi,'-')+'-Floor-Plan.jpg';link.click();};
   return {load};
 }
