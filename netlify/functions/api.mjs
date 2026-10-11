@@ -385,6 +385,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
   return json(dedupeSetupRows(await loadSetupRows(sql,eventId)));
  }
+ if(action==='floor-area-plans')return await getAreaPlans(sql,url,u);
  if(action==='floor-plan-last-sent'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
@@ -647,6 +648,7 @@ trinitycraftersmarket@gmail.com`;
   const body=`TRINITY CRAFTERS MARKET\nYEAR-END VENDOR PAYMENT STATEMENT — ${year}\n\nVendor: ${v.business||v.name}\nContact: ${v.name}\n${v.billing_address?'Billing address: '+v.billing_address+'\n':''}\nMarket dates:\n${itemLines}\n\nTotal recorded paid bookings: $${(total/100).toFixed(2)}\n\nThis statement summarizes payments recorded by Trinity Crafters Market and is provided for recordkeeping. It is not tax advice or an IRS tax form.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
   await sql.begin(async tx=>{await queue(tx,v.email,`Trinity Crafters Market ${year} Year-End Statement`,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+year+' Statement — '+(v.business||v.name),body);});await flushMail();return json({ok:true});
  }
+ if(action==='floor-area-plans-save')return await saveAreaPlans(sql,p,u);
  if(action==='floor-plan-pdf'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   const [event]=await sql`select e.*,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;if(!event)throw Error('Market date not found.');
@@ -1123,3 +1125,58 @@ trinitycraftersmarket@gmail.com`;
  } catch(e){console.error('Market request failed',e.code||e.name);return json({error:e.message||'The request could not be saved.'},400);}
 };
 
+
+
+async function getAreaPlans(sql,url,u){
+ if(!u.admin)return json({error:'Organizer access only'},403);
+ const id=url.searchParams.get('event_id');if(!id)throw Error('Market date is required.');
+ const [event]=await sql`select e.id,e.location_id from market.events e where e.id=${id}`;
+ if(!event)throw Error('Market date not found.');
+ const areas=await sql`select area_key,title,prefix,capacity,space_type,image_data_url,assignments from market.floor_plan_areas where event_id=${id} order by sort_order,area_key`;
+ let template=[];
+ if(!areas.length){
+  const [prior]=await sql`select e.id from market.events e where e.location_id=${event.location_id} and e.id<>${id} and exists(select 1 from market.floor_plan_areas a where a.event_id=e.id) order by e.date desc limit 1`;
+  if(prior)template=await sql`select area_key,title,prefix,capacity,space_type,image_data_url from market.floor_plan_areas where event_id=${prior.id} order by sort_order,area_key`;
+ }
+ return json({areas,template});
+}
+
+async function saveAreaPlans(sql,p,u){
+ if(!u.admin)return json({error:'Organizer access only'},403);
+ if(!p.event_id||!Array.isArray(p.areas)||p.areas.length<1||p.areas.length>12)throw Error('Choose an event and between one and twelve floor areas.');
+ const [event]=await sql`select id from market.events where id=${p.event_id}`;
+ if(!event)throw Error('Market date not found.');
+ const rows=dedupeSetupRows(await loadSetupRows(sql,p.event_id));
+ const allowed=new Map(rows.map(r=>[String(r.id),['outdoor','outside'].includes(String(r.space).toLowerCase())?'outdoor':'indoor']));
+ const usedAreas=new Set(),usedVendors=new Set(),areas=[];
+ for(const [index,row] of p.areas.entries()){
+  const key=String(row.area_key||'').trim(),title=String(row.title||'').trim().slice(0,100),prefix=String(row.prefix||key).trim().slice(0,12),capacity=Number(row.capacity),space=String(row.space_type||'').toLowerCase();
+  if(!/^[a-z0-9_-]{1,32}$/.test(key)||usedAreas.has(key))throw Error('A floor plan area has an invalid or duplicate ID.');
+  usedAreas.add(key);
+  if(!title||!prefix||!Number.isInteger(capacity)||capacity<1||capacity>100||!['indoor','outdoor'].includes(space))throw Error('Invalid area settings for '+key+'.');
+  const image=String(row.image_data_url||'');
+  if(image&&(image.length>2800000||!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image)))throw Error('Floor image for '+title+' is too large or invalid.');
+  const raw=row.assignments&&typeof row.assignments==='object'&&!Array.isArray(row.assignments)?row.assignments:{},assignments={};
+  for(let i=0;i<capacity;i++){
+   const slot=prefix+'-'+String(i+1).padStart(2,'0'),entry=raw[slot]||{},vendor_id=String(entry.vendor_id||'');
+   if(vendor_id){
+    if(!allowed.has(vendor_id))throw Error('One assigned vendor no longer belongs to this event. Please refresh the vendor list.');
+    if(allowed.get(vendor_id)!==space)throw Error('An indoor/outdoor vendor is assigned to the wrong area: '+slot+'.');
+    if(usedVendors.has(vendor_id))throw Error('The same vendor is assigned to more than one space.');
+    usedVendors.add(vendor_id);
+   }
+   const validPercent=n=>Number.isFinite(Number(n))&&Number(n)>=0&&Number(n)<=100;
+   assignments[slot]={vendor_id,...(validPercent(entry.x)&&validPercent(entry.y)?{x:Number(entry.x),y:Number(entry.y)}:{})};
+  }
+  areas.push({key,title,prefix,capacity,space,image,assignments,index});
+ }
+ await sql.begin(async tx=>{
+  for(const a of areas){
+   await tx`insert into market.floor_plan_areas (event_id,area_key,title,prefix,capacity,space_type,image_data_url,assignments,sort_order)
+     values (${p.event_id},${a.key},${a.title},${a.prefix},${a.capacity},${a.space},${a.image||null},${tx.json(a.assignments)},${a.index})
+     on conflict (event_id,area_key) do update set title=excluded.title,prefix=excluded.prefix,capacity=excluded.capacity,space_type=excluded.space_type,image_data_url=excluded.image_data_url,assignments=excluded.assignments,sort_order=excluded.sort_order,updated_at=now()`;
+  }
+  await audit(tx,u,'event floor areas saved',{event_id:p.event_id,areas:areas.map(a=>({key:a.key,capacity:a.capacity,assigned:Object.values(a.assignments).filter(v=>v.vendor_id).length,image:!!a.image}))});
+ });
+ return json({ok:true,area_count:areas.length});
+}
