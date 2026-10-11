@@ -127,6 +127,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '<p id="fam-spot-info" class="muted" style="font-size:13px;margin:9px 0 4px"></p>'+
       '<p id="fam-sells-info" style="font-size:13px;line-height:1.45;margin:0 0 12px;overflow-wrap:anywhere"></p>'+
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">'+
+        '<button class="secondary" type="button" id="fam-remove" style="color:#9d2626;border-color:#dbb5b5">Remove vendor from booth</button>'+
         '<button class="secondary" type="button" id="fam-reset">Reset name position</button>'+
         '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:0">'+
           '<input type="checkbox" id="fam-toggle" style="width:16px;height:16px"> Show vendor names'+
@@ -351,6 +352,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     q('fam-sells-info').innerHTML=selectedVendor?'<strong>What they sell:</strong> '+safe(sells(selectedVendor)):
       '<span class="muted">Choose a vendor to see their products before assigning the booth.</span>';
     q('fam-toggle').checked=state.showNames;
+    q('fam-remove').disabled=!entry.vendor_id;
     q('fam-reset').disabled=!entry.vendor_id||!(entry.x!=null&&entry.y!=null);
     q('fam-assignments-title').textContent='View all '+a.capacity+' booths ('+assignedInArea+' assigned)';
     q('fam-assignments').innerHTML=ids.map(id=>{
@@ -374,7 +376,10 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       if(newId&&state.areas.some(area=>Object.entries(area.assignments||{}).some(([key,v])=>!(area===a&&key===selected)&&String(v.vendor_id||'')===newId))){
         notice('That vendor is already assigned to another booth.');render();return;
       }
-      a.assignments[selected]={...(a.assignments[selected]||{}),vendor_id:newId};
+      if(String(a.assignments[selected]?.vendor_id||'')===String(newId||''))return;
+      // Moving a booth to a different person also removes the former person's
+      // label coordinates, so the new vendor starts in a sensible location.
+      a.assignments[selected]={vendor_id:newId};
       markDirty();render();void saveChanges();
     };
     renderMap();
@@ -465,6 +470,17 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   }
   q('fam-print').onclick=printAssignments;
   q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.selectedSpot=null;state.placing=null;state.showNames=true;render();};
+  q('fam-remove').onclick=()=>{
+    const a=current(),id=state.selectedSpot,entry=a?.assignments?.[id];
+    if(!a||!entry?.vendor_id)return;
+    const vendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id));
+    const name=String(vendor?.business||vendor?.name||'this vendor');
+    if(!confirm('Remove '+name+' from booth '+id+'? This only removes the booth assignment. Their event booking and payment remain unchanged.'))return;
+    a.assignments[id]={vendor_id:''};
+    markDirty();
+    render();
+    void saveChanges();
+  };
   q('fam-reset').onclick=()=>{
     const a=current(),id=state.selectedSpot,entry=a?.assignments[id];
     if(!entry||entry.x==null||entry.y==null)return;
