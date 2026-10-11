@@ -1,6 +1,6 @@
 // Event-specific multi-area floor plan management, separate from the legacy editor.
 export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc,notice}) {
-  const state={eventId:'',areas:[],vendors:[],template:[],active:0,placing:null,dirty:false,request:0};
+  const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:false,placing:null,dirty:false,request:0};
   const safe=s=>esc(String(s==null?'':s));
   const imageAllowed=url=>typeof url==='string'&&/^data:image\/(png|jpeg|webp);base64,/.test(url);
   const venueDefaults=event=>{
@@ -30,30 +30,65 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     const rows=Math.ceil(a.capacity/2),col=i<rows?0:1,row=col?i-rows:i;
     return {x:col?76:24,y:12+Math.max(0,row)*76/Math.max(1,rows-1)};
   };
-  const choices=(selected,spotId)=>'<option value="">Unassigned</option>'+state.vendors.map(v=>{
-    const id=String(v.id);
-    const label=String(v.business||v.name||'Unnamed vendor')+' — '+String(v.space||'');
-    return '<option value="'+safe(id)+'"'+(id===selected?' selected':'')+'>'+safe(label)+'</option>';
-  }).join('');
+  const choices=(selected,area)=>{
+    const assignedElsewhere=new Set(state.areas.flatMap(a=>Object.values(a.assignments||{}).map(v=>String(v.vendor_id||'')).filter(Boolean)));
+    return '<option value="">Unassigned</option>'+state.vendors
+      .filter(v=>(['outside','outdoor'].includes(String(v.space||'').toLowerCase())?'outdoor':'indoor')===area.space_type)
+      .map(v=>{
+        const id=String(v.id),taken=assignedElsewhere.has(id)&&id!==String(selected||'');
+        const label=String(v.business||v.name||'Unnamed vendor')+(taken?' (assigned elsewhere)':'');
+        return '<option value="'+safe(id)+'"'+(id===String(selected||'')?' selected':'')+(taken?' disabled':'')+'>'+safe(label)+'</option>';
+      }).join('');
+  };
   const current=()=>state.areas[state.active];
   const image=document.createElement('img');
   image.alt='Uploaded venue floor plan';
-  image.style.cssText='display:block;width:100%;height:auto;max-height:850px;object-fit:contain';
+  image.style.cssText='display:block;width:100%;height:auto;object-fit:contain';
   host.classList.add('floor-area-manager');
-  host.innerHTML='<section class="card"><h2>Event floor plan areas</h2>'+
-    '<p class="muted">Each event has its own saved plans. Upload a separate image for each room, assign vendors, and reuse venue layouts without copying vendor names.</p>'+
-    '<p id="fam-status" class="muted"></p><div class="actions" style="display:flex;gap:10px;flex-wrap:wrap">'+
-    '<label>Area<select id="fam-area"></select></label>'+
-    '<button id="fam-reuse" class="secondary" type="button">Reuse prior venue layouts</button>'+
-    '<button id="fam-save" type="button">Save all event areas</button>'+
-    '</div><p id="fam-area-info" class="muted"></p><div id="fam-overflow" style="padding:10px;margin:10px 0;background:#fff8e8;border:1px solid #d6c59b;border-radius:8px"></div>'+
+  host.innerHTML='<section class="card" style="max-width:100%;overflow:hidden">'+
+    '<h2 style="margin-bottom:6px">Event Floor Plans</h2>'+
+    '<p class="muted">Choose an area, review the floor plan, then assign vendors by booth number. These plans belong only to the selected event.</p>'+
     '<div class="actions" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">'+
-    '<label>Upload this area image (PNG, JPG or WebP)<input id="fam-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>'+
-    '<button id="fam-clear" type="button" class="secondary">Clear this image</button>'+
-    '<button id="fam-download" type="button" class="secondary">Download this area</button>'+
-    '</div><p id="fam-tip" class="muted">Choose a vendor for a numbered spot, then click Place and tap the matching spot on the floor plan to move its label.</p>'+
-    '<div id="fam-map" style="position:relative;width:100%;max-width:680px;margin:12px auto;background:#f7f3e7;border:2px solid #235044;border-radius:10px;overflow:hidden;min-height:160px"></div>'+
-    '<div id="fam-slots"></div></section>';
+      '<label style="flex:1;min-width:165px">Floor plan area<select id="fam-area"></select></label>'+
+      '<button type="button" id="fam-save" style="flex:0 0 auto">Save changes</button>'+
+    '</div>'+
+    '<p id="fam-status" class="muted" role="status"></p>'+
+    '<p id="fam-area-info" style="font-weight:600"></p>'+
+    '<details id="fam-overflow" style="background:#faf8f1;border:1px solid #e1dfd5;border-radius:8px;padding:9px 12px;margin:12px 0">'+
+      '<summary id="fam-overflow-title" style="cursor:pointer;font-weight:600"></summary>'+
+      '<div id="fam-overflow-content" class="muted" style="font-size:13px;line-height:1.5;margin-top:9px"></div>'+
+    '</details>'+
+    '<div id="fam-map" aria-label="Clean floor plan preview" style="position:relative;width:100%;max-width:640px;margin:12px auto 18px;background:#f7f3e7;border:1px solid #c8d6ce;border-radius:10px;overflow:hidden;min-height:160px"></div>'+
+    '<section id="fam-booth-editor" style="background:#f5f9f6;border:1px solid #d6e3da;border-radius:12px;padding:14px;margin:8px 0">'+
+      '<h3 style="margin:0 0 12px;font-size:19px">Assign a booth</h3>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">'+
+        '<label style="min-width:0">Booth number<select id="fam-spot" style="width:100%"></select></label>'+
+        '<label style="min-width:0">Vendor<select id="fam-vendor" style="width:100%"></select></label>'+
+      '</div>'+
+      '<p id="fam-spot-info" class="muted" style="font-size:13px;margin:9px 0"></p>'+
+      '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">'+
+        '<button class="secondary" type="button" id="fam-place">Place vendor label on image</button>'+
+        '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:0">'+
+          '<input type="checkbox" id="fam-toggle" style="width:16px;height:16px"> Show placed labels'+
+        '</label>'+
+      '</div>'+
+      '<p class="muted" style="font-size:12px;margin:8px 0 0">The image stays clean by default. Labels appear only when you choose to show them; use Place to choose an exact location.</p>'+
+    '</section>'+
+    '<details id="fam-assignment-details" style="border:1px solid #dde5df;border-radius:9px;padding:10px 12px;margin:12px 0">'+
+      '<summary id="fam-assignments-title" style="cursor:pointer;font-weight:600"></summary>'+
+      '<div id="fam-assignments" style="margin-top:10px"></div>'+
+    '</details>'+
+    '<details id="fam-image-tools" style="border:1px solid #dde5df;border-radius:9px;padding:10px 12px;margin:12px 0">'+
+      '<summary style="cursor:pointer;font-weight:600">Change image or reuse a layout</summary>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;align-items:end">'+
+        '<label style="flex:1;min-width:170px">Upload room image (PNG, JPG or WebP)<input id="fam-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>'+
+        '<button id="fam-download" type="button" class="secondary">Download image</button>'+
+        '<button id="fam-reuse" type="button" class="secondary">Reuse prior venue layouts</button>'+
+        '<button id="fam-clear" type="button" class="secondary">Remove this image</button>'+
+      '</div>'+
+      '<p class="muted" style="font-size:12px">Changing an image does not remove vendor assignments. Reusing a prior layout does reset assignments, after confirmation.</p>'+
+    '</details>'+
+  '</section>';
   const q=id=>host.querySelector('#'+id);
   const status=message=>{q('fam-status').textContent=message;};
   const markDirty=()=>{state.dirty=true;status('Unsaved edits — tap Save all event areas when ready.');};
@@ -61,68 +96,89 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     const a=current(),map=q('fam-map');map.replaceChildren();
     if(!a)return;
     if(imageAllowed(a.image_data_url)){
-      const img=image.cloneNode();img.src=a.image_data_url;img.onload=()=>{if(current()===a)renderPins();};
+      const img=image.cloneNode();img.src=a.image_data_url;
       map.appendChild(img);
     }else{
       const placeholder=document.createElement('div');
       placeholder.style.cssText='aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;padding:24px;color:#235044;text-align:center';
-      placeholder.textContent='Upload the '+a.title+' floor plan image. '+a.capacity+' numbered vendor positions are ready.';
+      placeholder.textContent='No floor plan image uploaded for '+a.title+'. Open "Change image or reuse a layout" to add one.';
       map.appendChild(placeholder);
     }
     renderPins();
+    map.style.cursor=state.placing?'crosshair':'default';
     map.onclick=e=>{
-      if(!state.placing)return;
+      if(!state.placing||e.target.closest('button'))return;
       const r=map.getBoundingClientRect();
       const x=100*(e.clientX-r.left)/r.width,y=100*(e.clientY-r.top)/r.height;
-      if(e.target.closest('button'))return;
-      const selected=state.placing;
-      const before=a.assignments[selected]||{};
+      const selected=state.placing,before=a.assignments[selected]||{};
       a.assignments[selected]={...before,x:Math.max(3,Math.min(97,+x.toFixed(2))),y:Math.max(3,Math.min(97,+y.toFixed(2)))};
-      state.placing=null;markDirty();render();
+      state.placing=null;state.showNames=true;markDirty();render();
     };
   }
   function renderPins(){
     const a=current(),map=q('fam-map');if(!a)return;
     map.querySelectorAll('.fam-pin').forEach(x=>x.remove());
+    if(!state.showNames)return;
     for(let i=0;i<a.capacity;i++){
-      const id=spot(a,i),item=a.assignments[id]||{},xy=positions(a,i);
-      const v=state.vendors.find(x=>String(x.id)===String(item.vendor_id||''));
+      const id=spot(a,i),entry=a.assignments[id]||{};
+      // The printed floor plan already has its own numbered booths.
+      // Never put 21 default labels over the image. Only show labels
+      // explicitly placed by the organizer and linked to a vendor.
+      if(!entry.vendor_id||!Number.isFinite(Number(entry.x))||!Number.isFinite(Number(entry.y)))continue;
+      const vendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id));
+      if(!vendor)continue;
       const pin=document.createElement('button');pin.type='button';pin.className='fam-pin';
-      pin.style.cssText='position:absolute;z-index:2;left:'+(item.x??xy.x)+'%;top:'+(item.y??xy.y)+'%;transform:translate(-50%,-50%);background:#115549;color:white;border:2px solid white;border-radius:18px;font-size:11px;line-height:1.2;padding:5px 7px;max-width:45%;box-shadow:0 1px 5px #555;cursor:pointer';
-      pin.textContent=id+(v?' • '+String(v.business||v.name):'');
-      pin.title='Click to choose placement for '+id;
-      pin.onclick=e=>{e.stopPropagation();state.placing=id;status('Tap the floor plan where '+id+' belongs.');};
+      pin.style.cssText='position:absolute;z-index:2;left:'+entry.x+'%;top:'+entry.y+'%;transform:translate(-50%,-50%);background:#115549;color:white;border:1px solid white;border-radius:12px;font-size:10px;line-height:1.15;padding:3px 6px;max-width:38%;box-shadow:0 1px 3px #777;cursor:pointer';
+      pin.textContent=id+' · '+String(vendor.business||vendor.name);
+      pin.title='Reposition label '+id;
+      pin.onclick=e=>{e.stopPropagation();state.selectedSpot=id;state.placing=id;status('Tap the image to move '+id+'.');render();};
       map.appendChild(pin);
     }
   }
   function render(){
     const a=current();if(!a)return;
+    const ids=Array.from({length:a.capacity},(_,i)=>spot(a,i));
+    if(!ids.includes(state.selectedSpot))state.selectedSpot=ids[0];
+    const selected=state.selectedSpot,entry=a.assignments[selected]||{};
     const occupied=new Set(state.areas.flatMap(area=>Object.values(area.assignments||{}).map(x=>String(x.vendor_id||'')).filter(Boolean)));
     const overflow=state.vendors.filter(v=>!occupied.has(String(v.id)));
     const interior=overflow.filter(v=>!['outside','outdoor'].includes(String(v.space||'').toLowerCase()));
     const outside=overflow.filter(v=>['outside','outdoor'].includes(String(v.space||'').toLowerCase()));
+    const assignedInArea=ids.filter(id=>!!a.assignments[id]?.vendor_id).length;
     q('fam-area').innerHTML=state.areas.map((v,i)=>'<option value="'+i+'"'+(i===state.active?' selected':'')+'>'+safe(v.title)+' ('+v.capacity+')</option>').join('');
-    q('fam-area-info').textContent=a.title+' • '+a.capacity+' spots • '+a.space_type+' • '+Object.values(a.assignments).filter(x=>x.vendor_id).length+' assigned';
-    q('fam-overflow').innerHTML='<strong>'+state.vendors.length+' active vendors</strong> · '+occupied.size+' assigned · <strong>'+overflow.length+' not assigned a physical booth</strong>'+(overflow.length?'<p><strong>Unassigned / overflow:</strong> '+overflow.map(v=>safe(v.business||v.name||'Vendor')+' ('+safe(v.space||'')+')').join(' · ')+'</p><p class="muted">Keep these vendors on the event record, but do not promise booth numbers until a space is confirmed. Unassigned indoor: '+interior.length+'; outside: '+outside.length+'.</p>':'<p>Every active vendor has a booth assignment.</p>');
+    q('fam-area-info').textContent=a.title+' · '+assignedInArea+' of '+a.capacity+' booths assigned · '+a.space_type;
+    q('fam-overflow-title').textContent=state.vendors.length+' active vendors · '+occupied.size+' assigned · '+overflow.length+' waiting for a spot (tap for names)';
+    q('fam-overflow-content').innerHTML=overflow.length?
+      '<strong>Unassigned / overflow</strong><p>'+overflow.map(v=>safe(v.business||v.name||'Vendor')+' ('+safe(v.space||'')+')').join(' · ')+'</p><p>Unassigned indoor: '+interior.length+'; outside: '+outside.length+'. Booking and payment statuses are unchanged.</p>':
+      '<p>Every active vendor has an assigned booth.</p>';
     q('fam-reuse').disabled=!state.template.length;
     q('fam-download').disabled=!imageAllowed(a.image_data_url);
-    q('fam-slots').innerHTML='<h3>Assign vendor booths</h3><div class="floor-slot-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:8px">'+
-      Array.from({length:a.capacity},(_,i)=>{
-        const id=spot(a,i),assignment=a.assignments[id]||{};
-        return '<div style="display:flex;gap:6px;align-items:end;padding:5px;background:#faf9f5;border:1px solid #d5dacd;border-radius:7px">'+
-          '<label style="flex:1;font-size:12px"><strong>'+safe(id)+'</strong><select data-assign="'+safe(id)+'" style="max-width:100%">'+choices(assignment.vendor_id||'',id)+'</select></label>'+
-          '<button type="button" data-place="'+safe(id)+'" class="secondary" style="font-size:12px">Place</button></div>';
-      }).join('')+'</div>';
-    q('fam-slots').querySelectorAll('[data-assign]').forEach(el=>el.onchange=()=>{
-      const id=el.dataset.assign,newId=el.value;
-      if(newId&&state.areas.some(x=>Object.entries(x.assignments).some(([key,v])=>!(x===a&&key===id)&&String(v.vendor_id||'')===newId))){
-        notice('That vendor is already assigned to another space.');render();return;
+    q('fam-spot').innerHTML=ids.map(id=>'<option value="'+safe(id)+'"'+(id===selected?' selected':'')+'>'+safe(id)+(a.assignments[id]?.vendor_id?' · Assigned':' · Open')+'</option>').join('');
+    q('fam-vendor').innerHTML=choices(entry.vendor_id||'',a);
+    const selectedVendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id||''));
+    q('fam-spot-info').textContent=selectedVendor?'Currently: '+String(selectedVendor.business||selectedVendor.name)+' at '+selected+'.':
+      selected+' is currently unassigned.';
+    q('fam-toggle').checked=state.showNames;
+    q('fam-place').disabled=!entry.vendor_id;
+    q('fam-assignments-title').textContent='View all '+a.capacity+' booths ('+assignedInArea+' assigned)';
+    q('fam-assignments').innerHTML=ids.map(id=>{
+      const vendor=state.vendors.find(v=>String(v.id)===String(a.assignments[id]?.vendor_id||''));
+      return '<button type="button" data-open-spot="'+safe(id)+'" class="secondary" style="display:flex;justify-content:space-between;gap:12px;text-align:left;width:100%;font-size:13px;padding:8px 10px;margin:3px 0;border-radius:6px">'+
+        '<strong>'+safe(id)+'</strong><span>'+safe(vendor?(vendor.business||vendor.name):'Open')+'</span></button>';
+    }).join('');
+    q('fam-assignments').querySelectorAll('[data-open-spot]').forEach(el=>el.onclick=()=>{
+      state.selectedSpot=el.dataset.openSpot;render();
+      q('fam-booth-editor').scrollIntoView({behavior:'smooth',block:'center'});
+    });
+    q('fam-spot').onchange=e=>{state.selectedSpot=e.target.value;state.placing=null;render();};
+    q('fam-vendor').onchange=e=>{
+      const newId=e.target.value;
+      if(newId&&state.areas.some(area=>Object.entries(area.assignments||{}).some(([key,v])=>!(area===a&&key===selected)&&String(v.vendor_id||'')===newId))){
+        notice('That vendor is already assigned to another booth.');render();return;
       }
-      a.assignments[id]={...(a.assignments[id]||{}),vendor_id:newId};markDirty();renderMap();
-    });
-    q('fam-slots').querySelectorAll('[data-place]').forEach(el=>el.onclick=()=>{
-      state.placing=el.dataset.place;status('Tap the floor plan where '+state.placing+' should be labeled.');
-    });
+      a.assignments[selected]={...(a.assignments[selected]||{}),vendor_id:newId};
+      markDirty();render();
+    };
     renderMap();
   }
   function copyDefaults(source){
@@ -142,12 +198,21 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       state.vendors=rows||[];
       state.template=(result.template||[]).map(standardize);
       state.areas=(result.areas&&result.areas.length?result.areas:venueDefaults(event)).map(standardize);
-      state.active=0;state.dirty=false;
+      state.active=0;state.selectedSpot=null;state.showNames=false;state.dirty=false;
       status(result.areas?.length?'Loaded saved floor plans for this event.':'New event layouts prepared. Upload photos and save to keep these plans for this event.');
       render();
     }catch(e){status('Could not load area plans: '+e.message);}
   }
-  q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.placing=null;render();};
+  q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.selectedSpot=null;state.placing=null;state.showNames=false;render();};
+  q('fam-place').onclick=()=>{
+    const a=current(),id=state.selectedSpot;
+    if(!a||!a.assignments[id]?.vendor_id)return;
+    state.placing=id;state.showNames=true;render();
+    status('Tap the exact table/booth on the image to place '+id+"'s vendor label.");
+    q('fam-map').scrollIntoView({behavior:'smooth',block:'center'});
+  };
+  q('fam-toggle').onchange=e=>{state.showNames=e.target.checked;renderPins();};
+
   q('fam-upload').onchange=async e=>{
     const file=e.target.files?.[0],a=current();if(!file||!a)return;
     if(!['image/png','image/jpeg','image/webp'].includes(file.type)){notice('Please choose PNG, JPG or WebP.');return;}
@@ -171,7 +236,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   q('fam-clear').onclick=()=>{const a=current();if(!a||!a.image_data_url)return;if(!confirm('Remove this area image for this event? Existing vendor assignments will remain.'))return;a.image_data_url='';markDirty();render();};
   q('fam-reuse').onclick=()=>{
     if(!state.template.length||!confirm('Copy the latest venue layouts and images into this event? Vendor assignments will be cleared.'))return;
-    state.areas=copyDefaults(state.template);state.active=0;markDirty();render();
+    state.areas=copyDefaults(state.template);state.active=0;state.selectedSpot=null;state.showNames=false;markDirty();render();
   };
   q('fam-save').onclick=async()=>{
     if(!state.eventId)return;
