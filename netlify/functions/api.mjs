@@ -132,7 +132,7 @@ function buildFloorPlanPdfBase64(event,insideRows,layout={}){
 }
 const floorFileName=event=>String(event.market_name||event.title||'Crafters Market').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')+'-Floor-Plan-'+marketDateOnly(event.date)+'.pdf';
 
-const MANAGER_PERMISSION_KEYS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages','live_chat'];
+const MANAGER_PERMISSION_KEYS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages','live_chat','floor_plans'];
 const DEFAULT_MANAGER_PERMISSIONS=['applications','attendees','waitlist','shopper_rsvps','vendor_messages'];
 async function ensureApplicationAttempts(sql){
  await sql`create table if not exists market.application_attempts(
@@ -381,7 +381,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   return json({ok:true});
  }
  if(action==='floor-attendees'){
-  if(!u.admin)return json({error:'Organizer access only'},403);
+  if(!hasStaffPermission(u,'floor_plans')&&!hasStaffPermission(u,'attendees'))return json({error:'Access denied'},403);
   const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
   return json(dedupeSetupRows(await loadSetupRows(sql,eventId)));
  }
@@ -431,7 +431,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  }
  if(action==='rsvp-list')return json(await sql`select r.id,r.event_id,r.name,r.email,r.party_size,r.referral_source,r.referral_group,e.date,l.name location from market.shopper_rsvps r join market.events e on e.id=r.event_id join market.locations l on l.id=e.location_id order by e.date,r.name`);
  if(action==='manager'){
-  const events=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date desc`;
+  const events=await sql`select e.id,e.date,e.title,e.location_id,l.name location,l.market_name,l.address from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date desc`;
   const canApplications=hasStaffPermission(u,'applications'),canAttendees=hasStaffPermission(u,'attendees'),canWaitlist=hasStaffPermission(u,'waitlist'),canMessages=hasStaffPermission(u,'vendor_messages');
   let applications=[];
   if(canApplications||canAttendees||canWaitlist||canMessages){
@@ -1133,11 +1133,11 @@ trinitycraftersmarket@gmail.com`;
 
 
 async function getAreaPlans(sql,url,u){
- if(!u.admin)return json({error:'Organizer access only'},403);
+ if(!hasStaffPermission(u,'floor_plans'))return json({error:'Access denied'},403);
  const id=url.searchParams.get('event_id');if(!id)throw Error('Market date is required.');
  const [event]=await sql`select e.id,e.location_id from market.events e where e.id=${id}`;
  if(!event)throw Error('Market date not found.');
- const areas=await sql`select area_key,title,prefix,capacity,space_type,image_data_url,assignments from market.floor_plan_areas where event_id=${id} order by sort_order,area_key`;
+ const areas=await sql`select area_key,title,prefix,capacity,space_type,image_data_url,assignments,updated_at from market.floor_plan_areas where event_id=${id} order by sort_order,area_key`;
  let template=[];
  if(!areas.length){
   const [prior]=await sql`select e.id from market.events e where e.location_id=${event.location_id} and e.id<>${id} and exists(select 1 from market.floor_plan_areas a where a.event_id=e.id) order by e.date desc limit 1`;
@@ -1147,45 +1147,88 @@ async function getAreaPlans(sql,url,u){
 }
 
 async function saveAreaPlans(sql,p,u){
- if(!u.admin)return json({error:'Organizer access only'},403);
- if(!p.event_id||!Array.isArray(p.areas)||p.areas.length<1||p.areas.length>12)throw Error('Choose an event and between one and twelve floor areas.');
- const [event]=await sql`select id from market.events where id=${p.event_id}`;
- if(!event)throw Error('Market date not found.');
+ if(!hasStaffPermission(u,'floor_plans'))return json({error:'Access denied'},403);
+ if(!p.event_id||!Array.isArray(p.areas)||!p.areas.length||p.areas.length>12||!Array.isArray(p.base_areas))
+  throw Error('Event, floor plans, and original versions are required. Reload the event and retry.');
  const rows=dedupeSetupRows(await loadSetupRows(sql,p.event_id));
  const allowed=new Map(rows.map(r=>[String(r.id),['outdoor','outside'].includes(String(r.space).toLowerCase())?'outdoor':'indoor']));
- const usedAreas=new Set(),usedVendors=new Set(),areas=[];
- for(const [index,row] of p.areas.entries()){
-  const key=String(row.area_key||'').trim(),title=String(row.title||'').trim().slice(0,100),prefix=String(row.prefix||key).trim().slice(0,12),capacity=Number(row.capacity),space=String(row.space_type||'').toLowerCase();
-  if(!/^[a-z0-9_-]{1,32}$/.test(key)||usedAreas.has(key))throw Error('A floor plan area has an invalid or duplicate ID.');
-  usedAreas.add(key);
-  if(!title||!prefix||!Number.isInteger(capacity)||capacity<1||capacity>100||!['indoor','outdoor'].includes(space))throw Error('Invalid area settings for '+key+'.');
-  const image=String(row.image_data_url||'');
-  if(image&&(image.length>2800000||!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image)))throw Error('Floor image for '+title+' is too large or invalid.');
-  const raw=row.assignments&&typeof row.assignments==='object'&&!Array.isArray(row.assignments)?row.assignments:{},assignments={};
-  for(let i=0;i<capacity;i++){
-   const slot=prefix+'-'+String(i+1).padStart(2,'0'),entry=raw[slot]||{},vendor_id=String(entry.vendor_id||'');
-   if(vendor_id){
-    if(!allowed.has(vendor_id))throw Error('One assigned vendor no longer belongs to this event. Please refresh the vendor list.');
-    if(allowed.get(vendor_id)!==space)throw Error('An indoor/outdoor vendor is assigned to the wrong area: '+slot+'.');
-    if(usedVendors.has(vendor_id))throw Error('The same vendor is assigned to more than one space.');
-    usedVendors.add(vendor_id);
+ const baseline=new Map(p.base_areas.map(a=>[String(a.area_key||''),a]));
+ const normalized=(item)=>{
+  const v=item&&typeof item==='object'?item:{},vendor_id=String(v.vendor_id||'');
+  const coords=Number.isFinite(Number(v.x))&&v.x!=null&&Number(v.x)>=0&&Number(v.x)<=100&&
+   Number.isFinite(Number(v.y))&&v.y!=null&&Number(v.y)>=0&&Number(v.y)<=100;
+  return {vendor_id,...(coords?{x:Number(v.x),y:Number(v.y)}:{})};
+ };
+ const same=(a,b)=>JSON.stringify(normalized(a))===JSON.stringify(normalized(b));
+ const stamp=v=>v?new Date(v).getTime():null;
+ const updated=await sql.begin(async tx=>{
+  const [event]=await tx`select id from market.events where id=${p.event_id} for update`;
+  if(!event)throw Error('Market date not found.');
+  const existing=await tx`select * from market.floor_plan_areas where event_id=${p.event_id} order by sort_order,area_key for update`;
+  const currentByKey=new Map(existing.map(x=>[x.area_key,x]));
+  const usedAreas=new Set();
+  for(const [index,row] of p.areas.entries()){
+   const key=String(row.area_key||''),title=String(row.title||'').trim().slice(0,100),prefix=String(row.prefix||key).trim().slice(0,12);
+   const capacity=Number(row.capacity),space=String(row.space_type||'').toLowerCase();
+   if(!/^[a-z0-9_-]{1,32}$/.test(key)||usedAreas.has(key))throw Error('Invalid or duplicate floor plan area.');
+   usedAreas.add(key);
+   if(!title||!prefix||!Number.isInteger(capacity)||capacity<1||capacity>100||!['indoor','outdoor'].includes(space))
+    throw Error('Invalid area settings for '+key+'.');
+   const old=currentByKey.get(key),base=baseline.get(key);
+   if(old&&!base)throw Error('This floor plan was created by another organizer. Reload to see their changes.');
+   if(old&&(old.prefix!==prefix||old.capacity!==capacity||old.space_type!==space||old.title!==title)&&
+      (old.prefix!==String(base?.prefix)||old.capacity!==Number(base?.capacity)||old.space_type!==String(base?.space_type)||old.title!==String(base?.title)))
+    throw Error('Someone changed the room layout. Reload this event before editing.');
+   const incoming=row.assignments&&typeof row.assignments==='object'?row.assignments:{};
+   const before=base?.assignments&&typeof base.assignments==='object'?base.assignments:{};
+   const merged={...(old?.assignments||{})};
+   for(let i=0;i<capacity;i++){
+    const slot=prefix+'-'+String(i+1).padStart(2,'0');
+    const desired=normalized(incoming[slot]),original=normalized(before[slot]);
+    if(!same(desired,original)){
+     if(old&&!same(merged[slot],original))
+      throw Error('Another organizer updated '+slot+' while you were editing. Your changes were NOT overwritten. Reload the event, then try again.');
+     merged[slot]=desired;
+    }else if(!old)merged[slot]=desired;
    }
-   const validPercent=n=>Number.isFinite(Number(n))&&Number(n)>=0&&Number(n)<=100;
-   assignments[slot]={vendor_id,...(validPercent(entry.x)&&validPercent(entry.y)?{x:Number(entry.x),y:Number(entry.y)}:{})};
+   let image=old?.image_data_url||null;
+   const changedImage=row.image_changed===true;
+   if(changedImage){
+    if(old&&stamp(base?.updated_at)!==stamp(old.updated_at))
+     throw Error('The layout image was updated by another organizer. Reload before replacing it.');
+    image=String(row.image_data_url||'')||null;
+    if(image&&(image.length>2800000||!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(image)))
+     throw Error('Image for '+title+' is invalid or too large.');
+   }
+   const valueChanged=JSON.stringify(merged)!==JSON.stringify(old?.assignments||{})||
+     changedImage||!old||old.title!==title||old.prefix!==prefix||old.capacity!==capacity||old.space_type!==space;
+   if(!old){
+    await tx`insert into market.floor_plan_areas(event_id,area_key,title,prefix,capacity,space_type,image_data_url,assignments,sort_order)
+      values(${p.event_id},${key},${title},${prefix},${capacity},${space},${image},${tx.json(merged)},${index})`;
+   }else if(valueChanged){
+    await tx`update market.floor_plan_areas set title=${title},prefix=${prefix},capacity=${capacity},
+      space_type=${space},image_data_url=${image},assignments=${tx.json(merged)},sort_order=${index},
+      updated_at=now() where event_id=${p.event_id} and area_key=${key}`;
+   }
   }
-  areas.push({key,title,prefix,capacity,space,image,assignments,index});
- }
- await sql.begin(async tx=>{
-  for(const a of areas){
-   await tx`insert into market.floor_plan_areas (event_id,area_key,title,prefix,capacity,space_type,image_data_url,assignments,sort_order)
-     values (${p.event_id},${a.key},${a.title},${a.prefix},${a.capacity},${a.space},${a.image||null},${tx.json(a.assignments)},${a.index})
-     on conflict (event_id,area_key) do update set title=excluded.title,prefix=excluded.prefix,capacity=excluded.capacity,space_type=excluded.space_type,image_data_url=excluded.image_data_url,assignments=excluded.assignments,sort_order=excluded.sort_order,updated_at=now()`;
+  const all=await tx`select area_key,title,prefix,capacity,space_type,image_data_url,assignments,updated_at
+    from market.floor_plan_areas where event_id=${p.event_id} order by sort_order,area_key`;
+  const seen=new Set();
+  for(const area of all){
+   for(const [slot,entry] of Object.entries(area.assignments||{})){
+    const vendorId=String(entry?.vendor_id||'');
+    if(!vendorId)continue;
+    if(!allowed.has(vendorId))throw Error('A booth has a vendor no longer active for this event: '+slot+'.');
+    if(allowed.get(vendorId)!==area.space_type)throw Error('An indoor/outdoor vendor is in the wrong area: '+slot+'.');
+    if(seen.has(vendorId))throw Error('That vendor was already assigned to a different booth. Reload to see the new assignments.');
+    seen.add(vendorId);
+   }
   }
-  await audit(tx,u,'event floor areas saved',{event_id:p.event_id,areas:areas.map(a=>({key:a.key,capacity:a.capacity,assigned:Object.values(a.assignments).filter(v=>v.vendor_id).length,image:!!a.image}))});
+  await audit(tx,u,'shared floor plans saved',{event_id:p.event_id,area_count:all.length,vendors_assigned:seen.size});
+  return all;
  });
- return json({ok:true,area_count:areas.length});
+ return json({ok:true,area_count:updated.length,areas:updated});
 }
-
 
 async function eventAreaMailPackages(sql,eventId,rows){
  const areas=await sql`select area_key,title,prefix,capacity,space_type,image_data_url,assignments from market.floor_plan_areas where event_id=${eventId} order by sort_order,area_key`;
