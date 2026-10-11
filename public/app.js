@@ -470,7 +470,8 @@ async function managerPanel(){
   can('waitlist')?'<button id="manager-waitlist">Wait list</button>':'',
   can('shopper_rsvps')?'<button id="manager-shoppers">Shopper RSVPs</button>':'',
   can('vendor_messages')?'<a class="button" href="#messages">Vendor messages</a>':'',
-  can('live_chat')?'<button type="button" data-live-chat-admin>Live Chat</button>':''
+  can('live_chat')?'<button type="button" data-live-chat-admin>Live Chat</button>':'',
+  can('floor_plans')?'<button type="button" id="manager-floor-plans">Floor plans & booth assignments</button>':''
  ].filter(Boolean).join('');
  app.innerHTML=`<h1>Manager workspace</h1><p>Signed in as ${esc(user.email)}</p><div class="actions" id="manager-toolbar">${tools||'<span class="muted">No manager tools have been assigned yet.</span>'}</div><div id="manager-content"></div>`;
  const p=$('#manager-content');
