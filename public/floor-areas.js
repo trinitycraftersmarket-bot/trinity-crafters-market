@@ -1,6 +1,6 @@
 // Event-specific multi-area floor plan management, separate from the legacy editor.
 export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc,notice}) {
-  const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:true,placing:null,dirty:false,request:0};
+  const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:true,placing:null,dirty:false,request:0,revision:0};
   const safe=s=>esc(String(s==null?'':s));
   const imageAllowed=url=>typeof url==='string'&&/^data:image\/(png|jpeg|webp);base64,/.test(url);
   const venueDefaults=event=>{
@@ -95,12 +95,12 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '</div>'+
       '<p id="fam-spot-info" class="muted" style="font-size:13px;margin:9px 0"></p>'+
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">'+
-        '<button class="secondary" type="button" id="fam-place">Move selected label</button>'+
+        '<button class="secondary" type="button" id="fam-reset">Reset name position</button>'+
         '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:0">'+
           '<input type="checkbox" id="fam-toggle" style="width:16px;height:16px"> Show vendor names'+
         '</label>'+
       '</div>'+
-      '<p class="muted" style="font-size:12px;margin:8px 0 0">Assigned vendor names appear automatically beside their numbered booths. Use Move selected label if one needs repositioning.</p>'+
+      '<p class="muted" style="font-size:12px;margin:8px 0 0">Press and drag any vendor name directly on the floor plan. Release it where you want it — the position saves automatically.</p>'+
     '</section>'+
     '<details id="fam-assignment-details" style="border:1px solid #dde5df;border-radius:9px;padding:10px 12px;margin:12px 0">'+
       '<summary id="fam-assignments-title" style="cursor:pointer;font-weight:600"></summary>'+
@@ -119,7 +119,34 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   '</section>';
   const q=id=>host.querySelector('#'+id);
   const status=message=>{q('fam-status').textContent=message;};
-  const markDirty=()=>{state.dirty=true;status('Unsaved edits — tap Save all event areas when ready.');};
+  const markDirty=()=>{state.dirty=true;state.revision++;status('Saving your changes…');};
+  let saving=false;
+  async function saveChanges(){
+    if(saving||!state.eventId)return;
+    saving=true;
+    const eventId=state.eventId,saveButton=q('fam-save');
+    saveButton.disabled=true;
+    try{
+      while(state.eventId===eventId&&state.dirty){
+        const revision=state.revision;
+        status('Saving vendor positions…');
+        // api() serializes its payload before awaiting, so an edit made during
+        // the request triggers another save rather than being silently lost.
+        const result=await api('floor-area-plans-save',{event_id:eventId,areas:state.areas});
+        if(state.eventId!==eventId)return;
+        if(state.revision===revision){
+          state.dirty=false;
+          status('Saved '+result.area_count+' area plans — vendor labels will stay where you moved them.');
+          return;
+        }
+      }
+    }catch(error){
+      if(state.eventId===eventId)status('Could not save changes: '+error.message+'. Tap Save changes to retry.');
+    }finally{
+      saving=false;
+      saveButton.disabled=false;
+    }
+  }
   function renderMap(){
     const a=current(),map=q('fam-map');map.replaceChildren();
     if(!a)return;
@@ -133,15 +160,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       map.appendChild(placeholder);
     }
     renderPins();
-    map.style.cursor=state.placing?'crosshair':'default';
-    map.onclick=e=>{
-      if(!state.placing||e.target.closest('button'))return;
-      const r=map.getBoundingClientRect();
-      const x=100*(e.clientX-r.left)/r.width,y=100*(e.clientY-r.top)/r.height;
-      const selected=state.placing,before=a.assignments[selected]||{};
-      a.assignments[selected]={...before,x:Math.max(3,Math.min(97,+x.toFixed(2))),y:Math.max(3,Math.min(97,+y.toFixed(2)))};
-      state.placing=null;state.showNames=true;markDirty();render();
-    };
+    map.style.cursor='default';
   }
   function renderPins(){
     const a=current(),map=q('fam-map');if(!a)return;
@@ -156,11 +175,65 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       const x=Number.isFinite(Number(entry.x))&&entry.x!=null?Number(entry.x):fallback.x;
       const y=Number.isFinite(Number(entry.y))&&entry.y!=null?Number(entry.y):fallback.y;
       const pin=document.createElement('button');pin.type='button';pin.className='fam-pin';
-      pin.style.cssText='position:absolute;z-index:2;left:'+x+'%;top:'+y+'%;transform:translate(-50%,-50%);background:rgba(255,255,255,.96);color:#103e35;border:1px solid #16594a;border-radius:6px;font-size:clamp(9px,1.3vw,12px);line-height:1.15;font-weight:700;padding:3px 5px;max-width:22%;box-shadow:0 1px 3px #777;cursor:pointer;overflow-wrap:anywhere;text-align:center';
+      pin.style.cssText='position:absolute;z-index:2;left:'+x+'%;top:'+y+'%;transform:translate(-50%,-50%);background:rgba(255,255,255,.97);color:#103e35;border:1px solid #16594a;border-radius:6px;font-size:clamp(9px,1.3vw,12px);line-height:1.15;font-weight:700;padding:5px 7px;max-width:26%;box-shadow:0 1px 3px #777;cursor:grab;overflow-wrap:anywhere;text-align:center;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none';
       pin.textContent=String(vendor.business||vendor.name);
-      pin.title=id+' — '+String(vendor.business||vendor.name)+'. Tap to reposition name.';
-      pin.setAttribute('aria-label','Move '+id+' '+String(vendor.business||vendor.name));
-      pin.onclick=e=>{e.stopPropagation();state.selectedSpot=id;state.placing=id;render();status('Tap the image where '+id+' should display its vendor name.');};
+      pin.title=id+' — drag to move '+String(vendor.business||vendor.name);
+      pin.setAttribute('aria-label','Drag '+id+' '+String(vendor.business||vendor.name)+' to reposition');
+      let drag=null;
+      pin.addEventListener('pointerdown',ev=>{
+        if(ev.button!==0)return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        state.selectedSpot=id;
+        // Keep the offset from the finger / mouse so the label does not jump.
+        drag={pointerId:ev.pointerId,screenX:ev.clientX,screenY:ev.clientY,x,y,moved:false};
+        pin.setPointerCapture(ev.pointerId);
+        pin.style.cursor='grabbing';
+        pin.style.zIndex='30';
+      });
+      pin.addEventListener('pointermove',ev=>{
+        if(!drag||drag.pointerId!==ev.pointerId)return;
+        ev.preventDefault();
+        const bounds=map.getBoundingClientRect();
+        if(!bounds.width||!bounds.height)return;
+        const shiftX=ev.clientX-drag.screenX,shiftY=ev.clientY-drag.screenY;
+        if(Math.hypot(shiftX,shiftY)>3)drag.moved=true;
+        const halfWidth=pin.offsetWidth/bounds.width*50;
+        const halfHeight=pin.offsetHeight/bounds.height*50;
+        const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+        const nextX=clamp(drag.x+shiftX/bounds.width*100,halfWidth,100-halfWidth);
+        const nextY=clamp(drag.y+shiftY/bounds.height*100,halfHeight,100-halfHeight);
+        pin.style.left=nextX+'%';
+        pin.style.top=nextY+'%';
+      });
+      pin.addEventListener('pointerup',ev=>{
+        if(!drag||drag.pointerId!==ev.pointerId)return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const moved=drag.moved;
+        drag=null;
+        pin.style.cursor='grab';
+        pin.style.zIndex='2';
+        if(pin.hasPointerCapture(ev.pointerId))pin.releasePointerCapture(ev.pointerId);
+        if(moved){
+          const left=parseFloat(pin.style.left),top=parseFloat(pin.style.top);
+          a.assignments[id]={...a.assignments[id],x:+left.toFixed(3),y:+top.toFixed(3)};
+          markDirty();
+          render();
+          void saveChanges();
+        }else{
+          render();
+        }
+      });
+      pin.addEventListener('pointercancel',ev=>{
+        if(!drag||drag.pointerId!==ev.pointerId)return;
+        drag=null;
+        pin.style.left=x+'%';
+        pin.style.top=y+'%';
+        pin.style.zIndex='2';
+        pin.style.cursor='grab';
+      });
+      pin.addEventListener('click',ev=>ev.stopPropagation());
       map.appendChild(pin);
     }
   }
@@ -188,7 +261,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     q('fam-spot-info').textContent=selectedVendor?'Currently: '+String(selectedVendor.business||selectedVendor.name)+' at '+selected+'.':
       selected+' is currently unassigned.';
     q('fam-toggle').checked=state.showNames;
-    q('fam-place').disabled=!entry.vendor_id;
+    q('fam-reset').disabled=!entry.vendor_id||!(entry.x!=null&&entry.y!=null);
     q('fam-assignments-title').textContent='View all '+a.capacity+' booths ('+assignedInArea+' assigned)';
     q('fam-assignments').innerHTML=ids.map(id=>{
       const vendor=state.vendors.find(v=>String(v.id)===String(a.assignments[id]?.vendor_id||''));
@@ -289,19 +362,21 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       state.vendors=rows||[];
       state.template=(result.template||[]).map(standardize);
       state.areas=(result.areas&&result.areas.length?result.areas:venueDefaults(event)).map(standardize);
-      state.active=0;state.selectedSpot=null;state.showNames=true;state.dirty=false;
+      state.active=0;state.selectedSpot=null;state.showNames=true;state.dirty=false;state.revision=0;
       status(result.areas?.length?'Loaded saved floor plans for this event.':'New event layouts prepared. Upload photos and save to keep these plans for this event.');
       render();
     }catch(e){status('Could not load area plans: '+e.message);}
   }
   q('fam-print').onclick=printAssignments;
   q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.selectedSpot=null;state.placing=null;state.showNames=true;render();};
-  q('fam-place').onclick=()=>{
-    const a=current(),id=state.selectedSpot;
-    if(!a||!a.assignments[id]?.vendor_id)return;
-    state.placing=id;state.showNames=true;render();
-    status('Tap the exact table/booth on the image to place '+id+"'s vendor label.");
-    q('fam-map').scrollIntoView({behavior:'smooth',block:'center'});
+  q('fam-reset').onclick=()=>{
+    const a=current(),id=state.selectedSpot,entry=a?.assignments[id];
+    if(!entry||entry.x==null||entry.y==null)return;
+    const {x,y,...rest}=entry;
+    a.assignments[id]=rest;
+    markDirty();
+    render();
+    void saveChanges();
   };
   q('fam-toggle').onchange=e=>{state.showNames=e.target.checked;renderPins();};
 
@@ -330,16 +405,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     if(!state.template.length||!confirm('Copy the latest venue layouts and images into this event? Vendor assignments will be cleared.'))return;
     state.areas=copyDefaults(state.template);state.active=0;state.selectedSpot=null;state.showNames=true;markDirty();render();
   };
-  q('fam-save').onclick=async()=>{
-    if(!state.eventId)return;
-    const id=state.eventId;const button=q('fam-save');button.disabled=true;status('Saving all '+state.areas.length+' areas…');
-    try{
-      const r=await api('floor-area-plans-save',{event_id:id,areas:state.areas});
-      if(id!==eventSelect.value)return;
-      state.dirty=false;status('Saved '+r.area_count+' event-specific area plans. Other dates and venues were not changed.');
-      notice('Floor plan areas saved for the selected event.');
-    }catch(error){status('Save failed: '+error.message);}finally{button.disabled=false;}
-  };
+  q('fam-save').onclick=()=>{void saveChanges();};
   q('fam-download').onclick=()=>{const a=current();if(!a||!imageAllowed(a.image_data_url))return;const link=document.createElement('a');link.href=a.image_data_url;link.download=String(a.title).replace(/[^a-z0-9]+/gi,'-')+'-Floor-Plan.jpg';link.click();};
   return {load};
 }
