@@ -661,18 +661,19 @@ trinitycraftersmarket@gmail.com`;
   const rows=dedupeSetupRows(await loadSetupRows(sql,event.id)),subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
   const recipientMap=new Map();for(const row of rows){const email=setupEmail(row.email);if(!email)continue;const current=recipientMap.get(email)||{email,inside:false};current.inside=current.inside||['indoor','inside'].includes(String(row.space||'').toLowerCase());recipientMap.set(email,current);}
   const recipients=[...recipientMap.values()];if(!recipients.length)throw Error('No active attendee email addresses are available for this date.');
-  const layout=p.layout&&typeof p.layout==='object'?p.layout:(event.floor_plan||{}),inside=rows.filter(x=>['indoor','inside'].includes(String(x.space||'').toLowerCase())),attach=p.attach_floor_plan!==false&&inside.length>0;if(attach&&!event.floor_plan_image)throw Error('Save the floor plan first. The setup email uses the exact saved floor plan image.');const filename=String(event.market_name||event.title||'Crafters Market').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')+'-Floor-Plan-'+marketDateOnly(event.date)+'.png',base64=attach?String(event.floor_plan_image).replace(/^data:image\/png;base64,/,''):null,attachment=attach?[{filename,content:base64}]:null,vendorOutboxIds=[];
+  const customFloor=await eventAreaMailPackages(sql,event.id,rows);
+  const layout=p.layout&&typeof p.layout==='object'?p.layout:(event.floor_plan||{}),inside=rows.filter(x=>['indoor','inside'].includes(String(x.space||'').toLowerCase())),attach=p.attach_floor_plan!==false&&inside.length>0&&!customFloor;if(attach&&!event.floor_plan_image)throw Error('Save the floor plan first. The setup email uses the exact saved floor plan image.');const filename=String(event.market_name||event.title||'Crafters Market').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')+'-Floor-Plan-'+marketDateOnly(event.date)+'.png',base64=attach?String(event.floor_plan_image).replace(/^data:image\/png;base64,/,''):null,attachment=attach?[{filename,content:base64}]:null,vendorOutboxIds=[];
   const indoorNote='\n\nFLOOR PLAN FOR INSIDE VENDORS:\nYour assigned floor plan is attached. Please locate your business name before arriving. Spaces are assigned; do not switch locations without organizer approval.';
-  const snapshot={event:{id:event.id,date:event.date,title:event.title,market_name:event.market_name,location:event.location,address:event.address},inside:inside.map(x=>({id:x.id,name:x.name,business:x.business,category:x.category,products:x.products})),layout};
+  const snapshot={event:{id:event.id,date:event.date,title:event.title,market_name:event.market_name,location:event.location,address:event.address},inside:inside.map(x=>({id:x.id,name:x.name,business:x.business,category:x.category,products:x.products})),layout,custom_floor_areas:customFloor?.area_names||[]};
   await sql.begin(async tx=>{
-   for(const r of recipients){const q=await queue(tx,r.email,subject,body+(r.inside&&attach?indoorNote:''),null,r.inside&&attach?attachment:null);if(q?.id)vendorOutboxIds.push(q.id);}
+   for(const r of recipients){const assigned=customFloor?.byEmail.get(r.email),customAttachments=p.attach_floor_plan!==false?assigned?.attachments:null,customNote=assigned?'\n\nYOUR ASSIGNED FLOOR PLAN AREA AND SPACE:\n'+assigned.notes.join('\n')+'\nYour area floor plan is attached when available. Please use your assigned space.':'',selectedAttachments=customFloor?(customAttachments?.length?customAttachments:null):(r.inside&&attach?attachment:null);const q=await queue(tx,r.email,subject,body+customNote+(r.inside&&attach?indoorNote:''),null,selectedAttachments);if(q?.id)vendorOutboxIds.push(q.id);}
    await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nACTIVE VENDOR EMAILS:\n'+recipients.map(r=>r.email).join('; ')+'\n\nActive vendors: '+rows.length+' • Recipient emails: '+recipients.length+(attach?' • Floor plan attached to inside-vendor messages: '+recipients.filter(r=>r.inside).length:''),null,attachment);
-   await tx`update market.events set setup_sent_at=now(),floor_plan=${tx.json(layout)},setup_floor_plan_filename=${attach?filename:null},setup_floor_plan_image=${attach?event.floor_plan_image:null},setup_floor_plan_snapshot=${attach?tx.json(snapshot):null},setup_recipient_summary=${tx.json({vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,inside_attachment_recipients:attach?recipients.filter(r=>r.inside).length:0})} where id=${event.id}`;
-   await audit(tx,u,'setup instructions email',{event_id:event.id,vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,floor_plan_attached:attach});
+   await tx`update market.events set setup_sent_at=now(),floor_plan=${tx.json(layout)},setup_floor_plan_filename=${attach?filename:null},setup_floor_plan_image=${attach?event.floor_plan_image:null},setup_floor_plan_snapshot=${attach?tx.json(snapshot):null},setup_recipient_summary=${tx.json({vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,inside_attachment_recipients:customFloor?(p.attach_floor_plan!==false?customFloor.count:0):(attach?recipients.filter(r=>r.inside).length:0)})} where id=${event.id}`;
+   await audit(tx,u,'setup instructions email',{event_id:event.id,vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,floor_plan_attached:attach||!!customFloor,area_count:customFloor?.area_count||0});
   });
   await flushMail();
   const delivery=vendorOutboxIds.length?(await sql`select count(*) filter(where sent_at is not null)::int sent,count(*) filter(where error is not null)::int failed from market.outbox where id=any(${vendorOutboxIds}::uuid[])`)[0]:{sent:0,failed:0};
-  return json({ok:true,count:recipients.length,vendors:rows.length,inside:inside.length,outside:rows.length-inside.length,attachment_count:attach?recipients.filter(r=>r.inside).length:0,sent_count:delivery?.sent||0,failed_count:delivery?.failed||0});
+  return json({ok:true,count:recipients.length,vendors:rows.length,inside:inside.length,outside:rows.length-inside.length,attachment_count:customFloor?(p.attach_floor_plan!==false?customFloor.count:0):(attach?recipients.filter(r=>r.inside).length:0),sent_count:delivery?.sent||0,failed_count:delivery?.failed||0});
  }
  if(action==='floor-plan-save'){
   if(!u.admin)return json({error:'Organizer access only'},403);
@@ -1179,4 +1180,34 @@ async function saveAreaPlans(sql,p,u){
   await audit(tx,u,'event floor areas saved',{event_id:p.event_id,areas:areas.map(a=>({key:a.key,capacity:a.capacity,assigned:Object.values(a.assignments).filter(v=>v.vendor_id).length,image:!!a.image}))});
  });
  return json({ok:true,area_count:areas.length});
+}
+
+
+async function eventAreaMailPackages(sql,eventId,rows){
+ const areas=await sql`select area_key,title,prefix,capacity,space_type,image_data_url,assignments from market.floor_plan_areas where event_id=${eventId} order by sort_order,area_key`;
+ if(!areas.length)return null;
+ const valid=new Map(rows.map(r=>[String(r.id),r])),byEmail=new Map();let count=0;
+ for(const area of areas){
+  const rowsForArea=new Map();
+  for(const [spot,assignment] of Object.entries(area.assignments||{})){
+   const vendor=valid.get(String(assignment?.vendor_id||''));
+   if(!vendor)continue;
+   const email=setupEmail(vendor.email);
+   if(!email)continue;
+   const list=rowsForArea.get(email)||[];
+   list.push(spot);rowsForArea.set(email,list);
+  }
+  for(const [email,spots] of rowsForArea){
+   let pkg=byEmail.get(email);if(!pkg){pkg={attachments:[],notes:[]};byEmail.set(email,pkg);}
+   pkg.notes.push(area.title+': '+spots.join(', '));
+   if(area.image_data_url){
+    const m=String(area.image_data_url).match(/^data:image\/(png|jpeg|webp);base64,(.*)$/s);
+    if(m){
+     const filename=String(area.title).replace(/[^a-z0-9]+/gi,'-')+'-Floor-Plan.'+(m[1]==='jpeg'?'jpg':m[1]);
+     pkg.attachments.push({filename,content:m[2]});count++;
+    }
+   }
+  }
+ }
+ return {byEmail,count,area_count:areas.length,area_names:areas.map(x=>x.title)};
 }
