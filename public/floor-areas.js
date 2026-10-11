@@ -77,6 +77,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     '<p class="muted">Choose an area, review the floor plan, then assign vendors by booth number. These plans belong only to the selected event.</p>'+
     '<div class="actions" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">'+
       '<label style="flex:1;min-width:165px">Floor plan area<select id="fam-area"></select></label>'+
+      '<button type="button" id="fam-print" class="secondary" style="flex:0 0 auto">Print booth list</button>'+ 
       '<button type="button" id="fam-save" style="flex:0 0 auto">Save changes</button>'+
     '</div>'+
     '<p id="fam-status" class="muted" role="status"></p>'+
@@ -209,6 +210,68 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     };
     renderMap();
   }
+  function printAssignments(){
+    const event=events.find(e=>e.id===state.eventId);
+    const venue=locations.find(l=>l.id===event?.location_id);
+    if(!event||!state.areas.length){
+      notice('Select an event with floor plan areas before printing.');return;
+    }
+    // Organizer-only printout; never transmitted through vendor mail.
+    const vendorById=new Map(state.vendors.map(v=>[String(v.id),v]));
+    const assigned=new Set();
+    const blocks=state.areas.map(area=>{
+      const boothRows=Array.from({length:area.capacity},(_,i)=>{
+        const id=spot(area,i),vendorId=String(area.assignments[id]?.vendor_id||'');
+        const vendor=vendorById.get(vendorId);
+        if(vendor)assigned.add(vendorId);
+        return {id,name:vendor?String(vendor.business||vendor.name||'Unnamed vendor'):'— Open —'};
+      });
+      return {title:String(area.title),space:String(area.space_type),capacity:area.capacity,filled:boothRows.filter(r=>r.name!=='— Open —').length,rows:boothRows};
+    });
+    const unassigned=state.vendors.filter(v=>!assigned.has(String(v.id))).sort((a,b)=>String(a.business||a.name||'').localeCompare(String(b.business||b.name||'')));
+    const total=blocks.reduce((n,b)=>n+b.capacity,0),filled=blocks.reduce((n,b)=>n+b.filled,0);
+    const eventDate=new Date(String(event.date).slice(0,10)+'T12:00:00');
+    const dateText=Number.isNaN(eventDate.getTime())?String(event.date||''):eventDate.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    const title=String(venue?.market_name||event.title||'Market')+' — Booth Assignments';
+    const sections=blocks.map(area=>'<section class="area"><div class="area-heading"><h2>'+safe(area.title)+'</h2><span>'+area.filled+' / '+area.capacity+' assigned · '+safe(area.space)+'</span></div>'+
+      '<table><thead><tr><th class="booth">Booth</th><th>Vendor / Business</th><th class="check">Checked in</th></tr></thead><tbody>'+
+      area.rows.map(r=>'<tr><td class="booth">'+safe(r.id)+'</td><td'+(r.name==='— Open —'?' class="open"':'')+'>'+safe(r.name)+'</td><td class="check"><span class="tick"></span></td></tr>').join('')+
+      '</tbody></table></section>').join('');
+    const pending=unassigned.length?'<section class="area"><div class="area-heading"><h2>Unassigned / Overflow</h2><span>'+unassigned.length+' vendor(s)</span></div>'+
+      '<table><thead><tr><th>Vendor / Business</th><th class="booth">Booking</th><th>Placement notes</th></tr></thead><tbody>'+
+      unassigned.map(v=>'<tr><td>'+safe(v.business||v.name||'Unnamed vendor')+'</td><td>'+safe(v.space||'')+'</td><td>&nbsp;</td></tr>').join('')+
+      '</tbody></table></section>':'';
+    const stylesheet='@page{size:letter portrait;margin:.48in .5in}'+
+      '*{box-sizing:border-box}html,body{margin:0;padding:0;color:#172821;background:white;font:11pt Arial,Helvetica,sans-serif}'+
+      'header{border-bottom:2px solid #174d40;padding-bottom:10px;margin-bottom:15px}h1{font:700 19pt Georgia,serif;color:#174d40;margin:0 0 5px}'+
+      'header p{margin:3px 0;color:#34443d;font-size:10pt}.summary{font-weight:700;margin:12px 0;font-size:10pt}.private{font-size:8pt;letter-spacing:.7px;text-transform:uppercase;font-weight:700}'+
+      '.draft{font-weight:700;color:#a13d18;margin-top:5px}.area{break-inside:avoid-page;page-break-inside:avoid;margin:12px 0 16px}'+
+      '.area-heading{display:flex;justify-content:space-between;gap:12px;align-items:baseline;border-bottom:1px solid #b9cec4;margin-bottom:5px}'+
+      '.area-heading h2{margin:0;padding:3px 0 5px;font-size:13pt;color:#16483c}.area-heading span{font-size:9pt;color:#56675e}'+
+      'table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}'+
+      'th{background:#e8f1eb;color:#173d33;text-align:left;font-size:9pt;padding:6px;border:1px solid #d3dfd7}'+
+      'td{padding:6px 8px;border:1px solid #d3dfd7;overflow-wrap:anywhere;font-size:10pt;line-height:1.15;height:25px}'+
+      '.booth{width:21%;font-weight:700}.check{width:16%;text-align:center}.tick{display:inline-block;width:14px;height:14px;border:1.3px solid #65796c;border-radius:2px}'+
+      '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px}'+
+      'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}'+
+      '@media print{.button-row{display:none!important}}';
+    const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(title)+'</title><style>'+stylesheet+'</style></head><body>'+
+      '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button></div>'+
+      '<header><h1>'+safe(title)+'</h1><p><strong>'+safe(dateText)+'</strong> · '+safe(venue?.name||event.title||'')+'</p>'+
+      (venue?.address?'<p>'+safe(venue.address)+'</p>':'')+
+      '<p class="private">Private organizer copy — do not distribute to vendors</p>'+
+      (state.dirty?'<p class="draft">UNSAVED CHANGES — this printout includes edits not yet saved online.</p>':'')+
+      '</header><p class="summary">'+filled+' of '+total+' booths assigned · '+(total-filled)+' open · '+unassigned.length+' vendors awaiting a booth</p>'+
+      sections+pending+'</body></html>';
+    // Open directly in this click handler, before browser popup protections apply.
+    const popup=window.open('','_blank');
+    if(!popup){notice('Your browser blocked the print preview. Allow pop-ups for this site and try again.');return;}
+    popup.document.open();
+    popup.document.write(doc);
+    popup.document.close();
+    popup.focus();
+    status('Printable booth list opened in a new tab. Select Print / Save as PDF.');
+  }
   function copyDefaults(source){
     return source.map(a=>standardize({...a,assignments:{}}));
   }
@@ -231,6 +294,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       render();
     }catch(e){status('Could not load area plans: '+e.message);}
   }
+  q('fam-print').onclick=printAssignments;
   q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.selectedSpot=null;state.placing=null;state.showNames=true;render();};
   q('fam-place').onclick=()=>{
     const a=current(),id=state.selectedSpot;
