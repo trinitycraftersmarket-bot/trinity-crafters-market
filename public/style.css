@@ -92,3 +92,6 @@
 .vendor-chat-history{margin-top:20px;border-top:1px solid #dbe5e1;padding-top:14px}
 .vendor-chat-history details{margin:9px 0}.vendor-chat-thread{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 @media(max-width:600px){#live-chat-root{right:10px;bottom:88px}.live-chat-panel{right:0;max-height:calc(100vh - 180px)}#live-chat-body{max-height:calc(100vh - 250px)}.chat-attachment-img{max-width:100%;max-height:220px}#live-chat-send{grid-template-columns:1fr}.chat-send-tools{flex-direction:row;justify-content:space-between}.live-chat-admin-head{align-items:stretch;flex-direction:column}.chat-history-heading{flex-direction:column}.chat-history-heading button{width:100%}.chat-history-search>div{flex-direction:column}.chat-history-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.live-chat-history-row{grid-template-columns:1fr}.chat-history-meta{align-items:flex-start;min-width:0}.chat-history-pager{justify-content:space-between}.live-chat-row{grid-template-columns:1fr}.live-chat-row>span:nth-child(2){text-align:left}}
+
+/* On the organizer floor-plan editor the public visitor chat bubble obscures controls. */
+body:has(#floor-area-manager) #live-chat-root{display:none!important}
