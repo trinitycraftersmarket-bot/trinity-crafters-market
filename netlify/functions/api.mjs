@@ -343,7 +343,7 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
  const spaceFull=(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0))>=event[d.space+'_capacity'];
  const areaClosed=d.space==='indoor'?event.indoor_open===false:event.outdoor_open===false;
  const waitlist=event.sold_out||areaClosed||categoryFull||spaceFull;
- if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,cat.vendor_limit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
+ if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,effectiveCategoryLimit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
  const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','waitlist','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
  const importedDuplicate=await tx`select id from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and (lower(trim(both ' ,' from email))=lower(${u.email}) or (${normalizePhone(phone)}<>'' and regexp_replace(phone,'[^0-9]','','g')=${normalizePhone(phone)})) limit 1`;if(importedDuplicate.length)throw Error('You already have a vendor record for this date. Contact the organizer if it needs to be changed.');
  await tx`insert into market.bookings(application_id,event_id,space,price,status) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},${waitlist?'waitlist':'pending'})`;}
