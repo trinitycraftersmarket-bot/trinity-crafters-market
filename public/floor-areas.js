@@ -46,7 +46,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     '<label>Area<select id="fam-area"></select></label>'+
     '<button id="fam-reuse" class="secondary" type="button">Reuse prior venue layouts</button>'+
     '<button id="fam-save" type="button">Save all event areas</button>'+
-    '</div><p id="fam-area-info" class="muted"></p>'+
+    '</div><p id="fam-area-info" class="muted"></p><div id="fam-overflow" style="padding:10px;margin:10px 0;background:#fff8e8;border:1px solid #d6c59b;border-radius:8px"></div>'+
     '<div class="actions" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">'+
     '<label>Upload this area image (PNG, JPG or WebP)<input id="fam-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>'+
     '<button id="fam-clear" type="button" class="secondary">Clear this image</button>'+
@@ -97,8 +97,13 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   }
   function render(){
     const a=current();if(!a)return;
+    const occupied=new Set(state.areas.flatMap(area=>Object.values(area.assignments||{}).map(x=>String(x.vendor_id||'')).filter(Boolean)));
+    const overflow=state.vendors.filter(v=>!occupied.has(String(v.id)));
+    const interior=overflow.filter(v=>!['outside','outdoor'].includes(String(v.space||'').toLowerCase()));
+    const outside=overflow.filter(v=>['outside','outdoor'].includes(String(v.space||'').toLowerCase()));
     q('fam-area').innerHTML=state.areas.map((v,i)=>'<option value="'+i+'"'+(i===state.active?' selected':'')+'>'+safe(v.title)+' ('+v.capacity+')</option>').join('');
     q('fam-area-info').textContent=a.title+' • '+a.capacity+' spots • '+a.space_type+' • '+Object.values(a.assignments).filter(x=>x.vendor_id).length+' assigned';
+    q('fam-overflow').innerHTML='<strong>'+state.vendors.length+' active vendors</strong> · '+occupied.size+' assigned · <strong>'+overflow.length+' not assigned a physical booth</strong>'+(overflow.length?'<p><strong>Unassigned / overflow:</strong> '+overflow.map(v=>safe(v.business||v.name||'Vendor')+' ('+safe(v.space||'')+')').join(' · ')+'</p><p class="muted">Keep these vendors on the event record, but do not promise booth numbers until a space is confirmed. Unassigned indoor: '+interior.length+'; outside: '+outside.length+'.</p>':'<p>Every active vendor has a booth assignment.</p>');
     q('fam-reuse').disabled=!state.template.length;
     q('fam-download').disabled=!imageAllowed(a.image_data_url);
     q('fam-slots').innerHTML='<h3>Assign vendor booths</h3><div class="floor-slot-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:8px">'+
