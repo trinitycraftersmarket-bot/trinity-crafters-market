@@ -1,5 +1,7 @@
 const ACTION_PERMISSION={
  'floor-attendees':'attendees',
+ 'floor-area-plans':'floor_plans',
+ 'floor-area-plans-save':'floor_plans',
  booking:'applications',
  photo:'applications',
  'rsvp-list':'shopper_rsvps',
