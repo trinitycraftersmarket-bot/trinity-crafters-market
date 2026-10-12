@@ -102,33 +102,75 @@ function drawDates(){
  const venue=String(locationFilter.value||'');
  const wrapper=$('#date-choices');
  if(!venue){
-   wrapper.innerHTML='<p class="muted">Select your market location to see its event dates.</p>';
+   wrapper.innerHTML='<p class="muted">Choose your location above to see market dates.</p>';
    showCategories();update();return;
  }
- const dates=data.events.filter(e=>String(e.location_id)===venue);
- wrapper.innerHTML=dates.length?dates.map(e=>{
-   const id=String(e.id),selected=chosenDates.has(id),isClosed=!e.open&&config.ready;
-   const full=e.sold_out||((e.indoor_open===false||slots(e,'indoor')===0)&&(e.outdoor_open===false||slots(e,'outdoor')===0));
-   const space=chosenSpaces.get(id)||'';
-   return '<div class="apply-date"><label class="check"><input type="checkbox" name="date" value="'+esc(id)+'"'+(selected?' checked':'')+(isClosed?' disabled':'')+'>'+
-     nice(e.date)+'<br><small>'+esc(e.location)+'</small><br><span class="tag '+(full?'full':'')+'">'+(isClosed?'Applications closed':full?'Booths may be waitlist-only':clock(e.start_time)+'–'+clock(e.end_time))+'</span></label>'+
-     '<label>Space<select data-event="'+esc(id)+'" aria-label="Space for '+nice(e.date)+'"'+(selected?'':' disabled')+'>'+
-     '<option value="">Choose a space</option>'+
-     ['indoor','outdoor'].map(kind=>'<option value="'+kind+'"'+(space===kind?' selected':'')+'>'+ (kind==='indoor'?'Indoor':'Outdoor')+
-       ' — '+money(e[kind+'_price'])+(config.ready?' · '+(e[kind+'_open']===false?'Waitlist':(slots(e,kind)||'Waitlist')+(slots(e,kind)?' available':'')):'')+'</option>').join('')+
-     '</select></label></div>';
- }).join(''):'<p class="muted">There are no scheduled market dates at this location.</p>';
- wrapper.querySelectorAll('[name="date"]').forEach(box=>box.addEventListener('change',()=>{
-   if(box.checked)chosenDates.add(box.value);
-   else{chosenDates.delete(box.value);chosenSpaces.delete(box.value);}
-   const space=wrapper.querySelector('[data-event="'+box.value+'"]');
-   if(space){space.disabled=!box.checked;if(!box.checked)space.value='';}
-   showCategories();update();scheduleCategoryScan();
- }));
- wrapper.querySelectorAll('select[data-event]').forEach(select=>select.addEventListener('change',()=>{
+ const dates=data.events.filter(e=>String(e.location_id)===venue)
+   .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+ const selectable=dates.filter(e=>!chosenDates.has(String(e.id))&&(!config.ready||e.open));
+ let month='',options='';
+ for(const event of selectable){
+   const label=date(event.date).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+   if(label!==month){
+     if(month)options+='</optgroup>';
+     options+='<optgroup label="'+esc(label)+'">';
+     month=label;
+   }
+   const full=event.sold_out||((event.indoor_open===false||slots(event,'indoor')===0)&&(event.outdoor_open===false||slots(event,'outdoor')===0));
+   options+='<option value="'+esc(event.id)+'">'+nice(event.date)+(full?' · Waitlist possible':'')+'</option>';
+ }
+ if(month)options+='</optgroup>';
+ const chosen=selectedEvents();
+ const cards=chosen.map(event=>{
+   const id=String(event.id),space=chosenSpaces.get(id)||'';
+   const full=event.sold_out||((event.indoor_open===false||slots(event,'indoor')===0)&&(event.outdoor_open===false||slots(event,'outdoor')===0));
+   return '<div class="market-picked-date">'+
+     '<div class="market-picked-date-top"><div><strong>'+nice(event.date)+'</strong>'+
+       '<div class="muted" style="font-size:13px;margin-top:4px">'+clock(event.start_time)+'–'+clock(event.end_time)+'</div></div>'+
+       '<button type="button" class="secondary market-date-remove" data-remove-date="'+esc(id)+'" aria-label="Remove '+nice(event.date)+'">Remove</button></div>'+
+     (full?'<p class="market-date-warning">Booth space may be waitlist-only</p>':'')+
+     // Keep the same checked date inputs that the existing submission, application
+     // draft, and category-review workflows already use.
+     '<input type="checkbox" name="date" value="'+esc(id)+'" checked aria-hidden="true" tabindex="-1" style="display:none!important">'+
+     '<label class="market-space-label">Choose a space for this date'+
+     '<select data-event="'+esc(id)+'" aria-label="Space for '+nice(event.date)+'" required>'+
+     '<option value="">Choose indoor or outdoor</option>'+
+     ['indoor','outdoor'].map(kind=>{
+       const left=slots(event,kind),closed=event[kind+'_open']===false;
+       const availability=closed||left<=0?'Waitlist only':left+' available';
+       return '<option value="'+kind+'"'+(space===kind?' selected':'')+'>'+ (kind==='indoor'?'Indoor':'Outdoor')+
+         ' — '+money(event[kind+'_price'])+' · '+availability+'</option>';
+     }).join('')+'</select></label></div>';
+ }).join('');
+ wrapper.innerHTML='<div class="market-date-picker">'+
+   '<label for="market-date-to-add">Available market dates</label>'+
+   '<div class="market-date-picker-row"><select id="market-date-to-add"'+(selectable.length?'':' disabled')+'>'+
+   '<option value="">'+(selectable.length?'Choose a date to add':'No more available dates')+'</option>'+options+'</select>'+
+   '<button id="market-add-date" type="button" disabled>Add date</button></div>'+
+   '<p class="muted" style="font-size:13px;margin:8px 0 0">You can add more than one date without scrolling through the full calendar.</p>'+
+   '</div>'+
+   '<div class="market-picked-head"><strong>Selected dates ('+chosen.length+')</strong></div>'+
+   (cards||'<p class="muted" style="margin:8px 0">No dates selected yet. Choose one above to get started.</p>');
+ const picker=wrapper.querySelector('#market-date-to-add'),add=wrapper.querySelector('#market-add-date');
+ picker.onchange=()=>{add.disabled=!picker.value;};
+ add.onclick=()=>{
+   if(!picker.value)return;
+   const id=picker.value;
+   chosenDates.add(id);
+   drawDates();
+   scheduleCategoryScan();
+ };
+ wrapper.querySelectorAll('[data-remove-date]').forEach(button=>button.onclick=()=>{
+   const id=button.dataset.removeDate;
+   chosenDates.delete(id);
+   chosenSpaces.delete(id);
+   drawDates();
+   scheduleCategoryScan();
+ });
+ wrapper.querySelectorAll('select[data-event]').forEach(select=>select.onchange=()=>{
    chosenSpaces.set(select.dataset.event,select.value);
    update();
- }));
+ });
  showCategories();update();
 }
 function update(){
