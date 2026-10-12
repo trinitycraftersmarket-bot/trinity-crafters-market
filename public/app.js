@@ -75,27 +75,45 @@ function showCategories(){
  if(!locationFilter.value||!chosen.length){
   categorySelect.innerHTML='<option value="">Choose a location and date first</option>';
   categorySelect.disabled=true;
-  $('#category-availability').textContent='Choose a location and at least one market date above to view available categories.';
+  $('#category-availability').textContent='Choose a location and at least one market date above to view booked and available categories.';
   showSmartCategoryScan(null);
   return;
  }
- // For multiple dates, a product category must have an opening on EVERY selected date.
+ // Show every active category, including those already sold out.
+ // Database booked counts include active online bookings AND imported vendor reservations.
  const all=(data.categories||[]).filter(c=>c.active!==false).slice().sort((x,y)=>String(x.name).localeCompare(String(y.name)));
- const available=all.filter(c=>chosen.every(e=>remainingSlots(e,c)>0));
- const closed=all.length-available.length;
- categorySelect.innerHTML='<option value="">Choose an available category</option>'+
-   available.map(c=>{
-     const minOpen=Math.min(...chosen.map(e=>remainingSlots(e,c)));
-     return '<option value="'+esc(c.id)+'">'+esc(c.name)+' — '+minOpen+' available</option>';
-   }).join('');
+ const stats=all.map(c=>{
+   const perDate=chosen.map(e=>{
+     const limit=effectiveCategoryLimit(e.id,c);
+     const booked=Number((data.counts||[]).find(x=>String(x.event_id)===String(e.id)&&String(x.category_id)===String(c.id))?.used||0);
+     return {event:e,limit,booked,open:Math.max(0,limit-booked)};
+   });
+   const available=perDate.every(x=>x.open>0);
+   const minOpen=Math.min(...perDate.map(x=>x.open));
+   const unavailable=perDate.filter(x=>x.open===0);
+   return {category:c,perDate,available,minOpen,unavailable};
+ });
+ const available=stats.filter(x=>x.available),closed=stats.filter(x=>!x.available);
+ const availabilityLabel=stat=>{
+   if(stat.available)return stat.minOpen+' spot'+(stat.minOpen===1?'':'s')+' available per selected date';
+   if(stat.unavailable.some(x=>x.limit===0))return 'SOLD OUT (closed by organizer)';
+   return 'FULLY BOOKED ('+stat.unavailable.map(x=>x.booked+'/'+x.limit+' booked'+(chosen.length>1?' '+nice(x.event.date):'')).join(', ')+')';
+ };
+ const option=stat=>'<option value="'+esc(stat.category.id)+'"'+(!stat.available?' disabled':'')+'>'+
+   esc(stat.category.name)+' — '+availabilityLabel(stat)+'</option>';
+ categorySelect.innerHTML='<option value="">Select an available category</option>'+
+   (available.length?'<optgroup label="AVAILABLE — '+available.length+' categories">'+available.map(option).join('')+'</optgroup>':'')+
+   (closed.length?'<optgroup label="SOLD OUT / FULLY BOOKED — '+closed.length+' categories">'+closed.map(option).join('')+'</optgroup>':'');
  categorySelect.disabled=available.length===0;
- if(available.some(c=>String(c.id)===String(previous)))categorySelect.value=previous;
+ if(available.some(x=>String(x.category.id)===String(previous)))categorySelect.value=previous;
  else categorySelect.value='';
  const dateNames=chosen.map(e=>nice(e.date)).join(' and ');
  const waiting=chosen.some(e=>e.sold_out||((e.indoor_open===false||slots(e,'indoor')===0)&&(e.outdoor_open===false||slots(e,'outdoor')===0)));
- $('#category-availability').textContent=available.length
-   ?available.length+' categories with vendor openings for '+dateNames+'. '+closed+' categories are sold out or unavailable.'+(waiting?' Booth space may be waitlist-only on a selected date.':'')
-   :'No vendor categories are currently available for '+dateNames+'. Please choose another date or contact the organizer.';
+ $('#category-availability').innerHTML='<strong>'+available.length+' categories with openings</strong> and '+
+   '<strong>'+closed.length+' sold out or fully booked</strong> for '+esc(dateNames)+'. '+
+   'Sold-out categories are listed but cannot be selected. Spaces reflect both online bookings and existing vendor reservations.'+
+   (waiting?' <strong>Some booth spaces may be waitlist-only.</strong>':'')+
+   (!available.length?' Contact the organizer if you need an exception.':'');
  if(categorySelect.value!==previous)showSmartCategoryScan(null);
 }
 function drawDates(){
