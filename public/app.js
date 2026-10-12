@@ -96,7 +96,7 @@ function showCategories(){
  const available=stats.filter(x=>x.available),closed=stats.filter(x=>!x.available);
  const availabilityLabel=stat=>{
    if(stat.available)return stat.minOpen+' spot'+(stat.minOpen===1?'':'s')+' available per selected date';
-   if(stat.unavailable.some(x=>x.limit===0))return 'SOLD OUT (closed by organizer)';
+   if(stat.unavailable.some(x=>x.limit===0)){const booked=stat.perDate.filter(x=>x.limit===0&&x.booked>0);return 'SOLD OUT — category closed'+(booked.length?' · '+booked.map(x=>x.booked+' booked'+(chosen.length>1?' '+nice(x.event.date):'')).join(', '):'');}
    return 'FULLY BOOKED ('+stat.unavailable.map(x=>x.booked+'/'+x.limit+' booked'+(chosen.length>1?' '+nice(x.event.date):'')).join(', ')+')';
  };
  const option=stat=>'<option value="'+esc(stat.category.id)+'"'+(!stat.available?' disabled':'')+'>'+
