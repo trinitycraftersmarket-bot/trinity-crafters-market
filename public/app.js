@@ -55,10 +55,102 @@ const saveApplicationAttempt=async(status='draft',step='form',errorMessage='',ap
 const queueApplicationAttempt=()=>{if(!user)return;clearTimeout(applicationAttemptTimer);applicationAttemptTimer=setTimeout(()=>saveApplicationAttempt('draft','form'),1500);};
 form.addEventListener('input',queueApplicationAttempt);form.addEventListener('change',queueApplicationAttempt);
 form.addEventListener('invalid',ev=>{const now=Date.now();if(now-lastAttemptValidationAt<1500)return;lastAttemptValidationAt=now;const label=ev.target?.name||ev.target?.getAttribute?.('aria-label')||'field',msg='Application incomplete. First item needing attention: '+label+'. '+(ev.target?.validationMessage||'Required information is missing.');lastAttemptValidation=msg;saveApplicationAttempt('failed','validation',msg);},true);
-const effectiveCategoryLimit=(eventId,category)=>{const override=(data.categoryLimits||[]).find(x=>String(x.event_id)===String(eventId)&&String(x.category_id)===String(category?.id));return Number(override?.vendor_limit??category?.vendor_limit??1);};
-function draw(){const cat=form.elements.namedItem('category').value;$('#date-choices').innerHTML=data.events.filter(e=>!$('#market-location-filter').value||e.location_id===$('#market-location-filter').value).map(e=>{const selectedCategory=data.categories.find(c=>c.id===cat),effectiveLimit=effectiveCategoryLimit(e.id,selectedCategory),categoryClosed=!!cat&&effectiveLimit===0;const full=categoryClosed||!!cat&&(data.counts.find(c=>c.event_id===e.id&&c.category_id===cat)?.used||0)>=effectiveLimit;const sold=(e.indoor_open===false||slots(e,'indoor')===0)&&(e.outdoor_open===false||slots(e,'outdoor')===0);const wait=e.sold_out||full||sold;return `<div class="apply-date"><label class="check"><input type="checkbox" name="date" value="${esc(e.id)}" ${preselect===String(e.id)?'checked ':''}${(!e.open||categoryClosed)&&config.ready?'disabled':''}>${nice(e.date)}<br><small>${esc(e.location)}</small><br><span class="tag ${wait?'full':''}">${!e.open&&config.ready?'Applications closed':categoryClosed?'Category filled':wait?'Wait list available':`${clock(e.start_time)}–${clock(e.end_time)}`}</span></label><label>Space<select data-event="${esc(e.id)}" aria-label="Space for ${nice(e.date)}"><option value="">Choose a space</option>${['indoor','outdoor'].map(s=>`<option value="${s}" ${!e.open&&config.ready?'disabled':''}>${s==='indoor'?'Indoor':'Outdoor'} — ${money(e[s+'_price'])}${config.ready?' · '+(categoryClosed||full?'Category filled':(slots(e,s)||'Wait list')+(slots(e,s)?' available':'')):''}</option>`).join('')}</select></label></div>`;}).join('');update();}
- function update(){let total=0;form.querySelectorAll('[name=date]:checked').forEach(c=>{const space=form.querySelector(`[data-event="${c.value}"]`).value;const e=data.events.find(x=>x.id===c.value);if(space)total+=e[space+'_price'];});const count=form.querySelectorAll('[name=date]:checked').length;$('#total').textContent=(count?count+' market date'+(count===1?'':'s')+' selected':'Select at least one market date')+' · Estimated invoice total: '+money(total);}
- form.elements.namedItem('category').onchange=()=>{draw();runSmartCategoryScan(false);};$('#market-location-filter').onchange=draw;form.onchange=()=>{update();scheduleCategoryScan();};draw();scheduleCategoryScan();
+const effectiveCategoryLimit=(eventId,category)=>{
+ const override=(data.categoryLimits||[]).find(x=>String(x.event_id)===String(eventId)&&String(x.category_id)===String(category?.id));
+ return Number(override?.vendor_limit??category?.vendor_limit??1);
+};
+const locationFilter=$('#market-location-filter'),categorySelect=form.elements.namedItem('category');
+const requestedEvent=data.events.find(e=>String(e.id)===String(preselect||''));
+const chosenDates=new Set(requestedEvent?[String(requestedEvent.id)]:[]);
+const chosenSpaces=new Map();
+if(requestedEvent)locationFilter.value=String(requestedEvent.location_id);
+const selectedEvents=()=>data.events.filter(e=>chosenDates.has(String(e.id))&&String(e.location_id)===String(locationFilter.value));
+const remainingSlots=(event,category)=>{
+ const limit=effectiveCategoryLimit(event.id,category);
+ const used=Number((data.counts||[]).find(c=>String(c.event_id)===String(event.id)&&String(c.category_id)===String(category.id))?.used||0);
+ return Math.max(0,limit-used);
+};
+function showCategories(){
+ const chosen=selectedEvents(),previous=categorySelect.value;
+ if(!locationFilter.value||!chosen.length){
+  categorySelect.innerHTML='<option value="">Choose a location and date first</option>';
+  categorySelect.disabled=true;
+  $('#category-availability').textContent='Choose a location and at least one market date above to view available categories.';
+  showSmartCategoryScan(null);
+  return;
+ }
+ // For multiple dates, a product category must have an opening on EVERY selected date.
+ const all=(data.categories||[]).filter(c=>c.active!==false).slice().sort((x,y)=>String(x.name).localeCompare(String(y.name)));
+ const available=all.filter(c=>chosen.every(e=>remainingSlots(e,c)>0));
+ const closed=all.length-available.length;
+ categorySelect.innerHTML='<option value="">Choose an available category</option>'+
+   available.map(c=>{
+     const minOpen=Math.min(...chosen.map(e=>remainingSlots(e,c)));
+     return '<option value="'+esc(c.id)+'">'+esc(c.name)+' — '+minOpen+' available</option>';
+   }).join('');
+ categorySelect.disabled=available.length===0;
+ if(available.some(c=>String(c.id)===String(previous)))categorySelect.value=previous;
+ else categorySelect.value='';
+ const dateNames=chosen.map(e=>nice(e.date)).join(' and ');
+ const waiting=chosen.some(e=>e.sold_out||((e.indoor_open===false||slots(e,'indoor')===0)&&(e.outdoor_open===false||slots(e,'outdoor')===0)));
+ $('#category-availability').textContent=available.length
+   ?available.length+' categories with vendor openings for '+dateNames+'. '+closed+' categories are sold out or unavailable.'+(waiting?' Booth space may be waitlist-only on a selected date.':'')
+   :'No vendor categories are currently available for '+dateNames+'. Please choose another date or contact the organizer.';
+ if(categorySelect.value!==previous)showSmartCategoryScan(null);
+}
+function drawDates(){
+ const venue=String(locationFilter.value||'');
+ const wrapper=$('#date-choices');
+ if(!venue){
+   wrapper.innerHTML='<p class="muted">Select your market location to see its event dates.</p>';
+   showCategories();update();return;
+ }
+ const dates=data.events.filter(e=>String(e.location_id)===venue);
+ wrapper.innerHTML=dates.length?dates.map(e=>{
+   const id=String(e.id),selected=chosenDates.has(id),isClosed=!e.open&&config.ready;
+   const full=e.sold_out||((e.indoor_open===false||slots(e,'indoor')===0)&&(e.outdoor_open===false||slots(e,'outdoor')===0));
+   const space=chosenSpaces.get(id)||'';
+   return '<div class="apply-date"><label class="check"><input type="checkbox" name="date" value="'+esc(id)+'"'+(selected?' checked':'')+(isClosed?' disabled':'')+'>'+
+     nice(e.date)+'<br><small>'+esc(e.location)+'</small><br><span class="tag '+(full?'full':'')+'">'+(isClosed?'Applications closed':full?'Booths may be waitlist-only':clock(e.start_time)+'–'+clock(e.end_time))+'</span></label>'+
+     '<label>Space<select data-event="'+esc(id)+'" aria-label="Space for '+nice(e.date)+'"'+(selected?'':' disabled')+'>'+
+     '<option value="">Choose a space</option>'+
+     ['indoor','outdoor'].map(kind=>'<option value="'+kind+'"'+(space===kind?' selected':'')+'>'+ (kind==='indoor'?'Indoor':'Outdoor')+
+       ' — '+money(e[kind+'_price'])+(config.ready?' · '+(e[kind+'_open']===false?'Waitlist':(slots(e,kind)||'Waitlist')+(slots(e,kind)?' available':'')):'')+'</option>').join('')+
+     '</select></label></div>';
+ }).join(''):'<p class="muted">There are no scheduled market dates at this location.</p>';
+ wrapper.querySelectorAll('[name="date"]').forEach(box=>box.addEventListener('change',()=>{
+   if(box.checked)chosenDates.add(box.value);
+   else{chosenDates.delete(box.value);chosenSpaces.delete(box.value);}
+   const space=wrapper.querySelector('[data-event="'+box.value+'"]');
+   if(space){space.disabled=!box.checked;if(!box.checked)space.value='';}
+   showCategories();update();scheduleCategoryScan();
+ }));
+ wrapper.querySelectorAll('select[data-event]').forEach(select=>select.addEventListener('change',()=>{
+   chosenSpaces.set(select.dataset.event,select.value);
+   update();
+ }));
+ showCategories();update();
+}
+function update(){
+ let total=0;
+ form.querySelectorAll('[name="date"]:checked').forEach(box=>{
+   const e=data.events.find(x=>String(x.id)===String(box.value));
+   const space=form.querySelector('[data-event="'+box.value+'"]')?.value;
+   if(e&&space)total+=Number(e[space+'_price']||0);
+ });
+ const count=selectedEvents().length;
+ $('#total').textContent=(count?count+' market date'+(count===1?'':'s')+' selected':'Choose at least one market date')+
+   ' · Estimated invoice total: '+money(total);
+}
+locationFilter.onchange=()=>{
+ chosenDates.clear();chosenSpaces.clear();
+ categorySelect.value='';
+ drawDates();
+ scheduleCategoryScan();
+};
+categorySelect.onchange=()=>{runSmartCategoryScan(false);};
+form.onchange=()=>{update();scheduleCategoryScan();};
+drawDates();scheduleCategoryScan();
  form.onsubmit=async e=>{e.preventDefault();await run(async()=>{
   await runSmartCategoryScan(false);
   const f=new FormData(form),files=[...form.elements.namedItem('photos').files];applicationAttemptStep='validation';await saveApplicationAttempt('submitting','validation');
