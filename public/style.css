@@ -95,3 +95,26 @@
 
 /* On the organizer floor-plan editor the public visitor chat bubble obscures controls. */
 body:has(#floor-area-manager) #live-chat-root{display:none!important}
+
+/* Compact, mobile-first market date selection for vendor applications. */
+#application .market-date-picker{padding:14px;border:1px solid var(--line);border-radius:10px;background:#f8faf8;margin-top:12px}
+#application .market-date-picker>label{margin-bottom:7px}
+#application .market-date-picker-row{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+#application .market-date-picker-row select{flex:1 1 220px;min-width:0;margin:0}
+#application .market-date-picker-row button{flex:0 0 auto;margin:0;min-height:46px;white-space:nowrap;padding:10px 16px}
+#application .market-date-picker-row button:disabled{opacity:.45;cursor:not-allowed}
+#application .market-picked-head{margin:18px 0 10px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+#application .market-picked-date{border:1px solid #c8d9cb;border-radius:10px;background:#fff;padding:14px;margin:10px 0}
+#application .market-picked-date-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#application .market-picked-date-top strong{font-size:16px}
+#application .market-picked-date-top button{flex:0 0 auto;padding:8px 12px;font-size:13px;border:1px solid #b4c7be;border-radius:7px;background:#f7faf8;color:#185347}
+#application .market-space-label{margin:14px 0 0}
+#application .market-space-label select{margin-top:7px}
+#application .market-date-warning{font-size:13px;font-weight:600;color:#9b3429;margin:10px 0 0}
+@media(max-width:480px){
+ #application .market-date-picker-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+ #application .market-date-picker-row select{width:100%;min-width:0}
+ #application .market-date-picker-row button{font-size:13px;padding:10px 12px}
+ #application .market-picked-date{padding:12px}
+ #application .market-picked-date-top strong{font-size:15px}
+}
