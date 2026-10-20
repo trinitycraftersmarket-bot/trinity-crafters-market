@@ -50,6 +50,24 @@
       return {...r,market:event.title?(location.market_name||event.title):'General / Not assigned',
         quantity:tumbler?Number(r.tumbler_quantity||0):0};
     });
+    // A distinct, one-click printable report, not just a general expense filter.
+    const tumblerRows=all.filter(isTumbler).sort((a,b)=>dateKey(a.event_date||a.expense_date).localeCompare(dateKey(b.event_date||b.expense_date)));
+    const tumblerTotal=tumblerRows.reduce((n,r)=>n+Number(r.amount||0),0);
+    const tumblerCount=tumblerRows.reduce((n,r)=>n+Number(r.quantity||0),0);
+    const tumblerSection=document.createElement('section');
+    tumblerSection.id='tumbler-credit-report';
+    tumblerSection.className='card section';
+    tumblerSection.innerHTML='<h2>Tumbler Credit Report — Ashley / Salty Luna Co</h2>'+
+      '<p>Dedicated reconciliation of merchandise credits toward Salty Luna Co vendor invoices. Each tumbler is credited at $20. Vendor cancellation credits are excluded.</p>'+
+      '<div class="stats"><div class="card"><span>Total tumbler credits</span><strong>'+esc(money(tumblerTotal))+'</strong></div><div class="card"><span>Total tumblers</span><strong>'+tumblerCount+'</strong></div><div class="card"><span>Market dates</span><strong>'+tumblerRows.length+'</strong></div></div>'+
+      '<div class="actions"><button type="button" id="print-tumbler-credits">Print Tumbler Credit Report</button></div>'+
+      '<div class="table-wrap"><table><thead><tr><th>Market date</th><th>Market</th><th>Tumblers</th><th>Invoice credit</th><th>Notes</th></tr></thead><tbody>'+
+      (tumblerRows.map(r=>'<tr><td>'+esc(nice(r.event_date))+'</td><td>'+esc(r.market)+'</td><td>'+r.quantity+'</td><td><strong>'+esc(money(r.amount))+'</strong></td><td>'+esc(r.notes||'')+'</td></tr>').join('')||'<tr><td colspan="5">No tumbler credits have been recorded.</td></tr>')+
+      '</tbody></table></div><p class="muted">This report shows recorded credits. Verify that the same amounts are deducted from the corresponding invoices before marking them reconciled.</p>';
+    panel.prepend(tumblerSection);
+    const tumblerPrint=tumblerSection.querySelector('#print-tumbler-credits');
+    tumblerPrint.disabled=!tumblerRows.length;
+    tumblerPrint.onclick=()=>printReport(tumblerRows,'Ashley / Salty Luna Co — tumbler merchandise credits');
     const section=document.createElement('section');section.className='card section';section.id='itemized-expense-report';
     section.innerHTML='<h2>Itemized Expense Report</h2><p>Print all expenses or a separate reconciliation for Ashley / Salty Luna Co. Cancellation credits are not included.</p>'+
       '<div class="grid2"><label>Report type<select id="expense-rpt-kind"><option value="all">All expenses</option><option value="tumbler">Tumbler Credits — Ashley</option><option value="other">Other expenses</option></select></label>'+
