@@ -79,7 +79,7 @@
     if(mode==='expenses') {
       const h=[...panel.querySelectorAll('h2')].find(x=>x.textContent.trim()==='Expense log');
       if(h) panel.insertBefore(section,h); else panel.append(section);
-    } else panel.prepend(section);
+    } else tumblerSection.insertAdjacentElement('afterend',section);
 
     const $=id=>section.querySelector('#'+id);
     const rows=()=>{
