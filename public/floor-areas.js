@@ -1,8 +1,44 @@
 // Event-specific multi-area floor plan management, separate from the legacy editor.
+
+// Pure helpers shared by the area manager below and the read-only saved-plan
+// renderer used in the admin Attendees view (end of this file).
+const imageAllowed=url=>typeof url==='string'&&/^data:image\/(png|jpeg|webp);base64,/.test(url);
+const standardize=area=>({...area,assignments:area.assignments&&typeof area.assignments==='object'?area.assignments:{},image_data_url:area.image_data_url||''});
+const spot=(area,i)=>String(area.prefix||area.area_key.toUpperCase())+'-'+String(i+1).padStart(2,'0');
+const positions=(a,i)=>{
+  const rows=Math.ceil(a.capacity/2),col=i<rows?0:1,row=col?i-rows:i;
+  return {x:col?76:24,y:12+Math.max(0,row)*76/Math.max(1,rows-1)};
+};
+
+// Positions are percentages of the full uploaded floor plan graphic, including its
+// heading/borders, so names appear next to the pre-printed booth numbers.
+// Any manually placed x/y in this event takes priority over these defaults.
+const mainRoomLabels={
+  1:[85,62],2:[86,49.5],3:[86,37.5],4:[86,24.5],
+  5:[65,16],6:[32,21],7:[56,31],8:[51,49],
+  9:[55,65],10:[59,85.5],11:[68,86.5],12:[28,86.5],
+  13:[44,76.3],14:[46,66],15:[46,49.5],16:[43,30.2],
+  17:[12,33.5],18:[12,46],19:[12,58],20:[12,69],21:[12,82]
+};
+const autoLabelPosition=(area,index)=>{
+  if(area.prefix==='MR'&&area.capacity===21){
+    const p=mainRoomLabels[index+1];if(p)return {x:p[0],y:p[1]};
+  }
+  // Hilton foyer graphic shows 23-27, rising from bottom to top.
+  if(area.prefix==='H1'&&area.capacity===5)
+    return {x:55,y:[89,74,59,42,27][index]};
+  // Hilton side room graphic shows 28-30 rising from bottom to top.
+  if(area.prefix==='H2'&&area.capacity===3)
+    return {x:43,y:[84,56,29][index]};
+  if(area.prefix==='HI'&&area.capacity===9){
+    const p=[[50,22],[28,38],[74,38],[27,53],[74,53],[27,68],[74,68],[24,89],[58,89]][index];
+    if(p)return {x:p[0],y:p[1]};
+  }
+  return positions(area,index);
+};
 export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc,notice}) {
   const state={eventId:'',areas:[],vendors:[],template:[],active:0,selectedSpot:null,showNames:true,placing:null,dirty:false,request:0,revision:0,baseAreas:[]};
   const safe=s=>esc(String(s==null?'':s));
-  const imageAllowed=url=>typeof url==='string'&&/^data:image\/(png|jpeg|webp);base64,/.test(url);
   const venueDefaults=event=>{
     const location=locations.find(x=>x.id===event?.location_id);
     const name=String((location?.name||'')+' '+(location?.market_name||'')+' '+(event?.title||'')).toLowerCase();
@@ -44,39 +80,6 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       return areas;
     }
     return [...areas,hamptonHallwayArea()];
-  };
-  const standardize=area=>({...area,assignments:area.assignments&&typeof area.assignments==='object'?area.assignments:{},image_data_url:area.image_data_url||''});
-  const spot=(area,i)=>String(area.prefix||area.area_key.toUpperCase())+'-'+String(i+1).padStart(2,'0');
-  const positions=(a,i)=>{
-    const rows=Math.ceil(a.capacity/2),col=i<rows?0:1,row=col?i-rows:i;
-    return {x:col?76:24,y:12+Math.max(0,row)*76/Math.max(1,rows-1)};
-  };
-
-  // Positions are percentages of the full uploaded floor plan graphic, including its
-  // heading/borders, so names appear next to the pre-printed booth numbers.
-  // Any manually placed x/y in this event takes priority over these defaults.
-  const mainRoomLabels={
-    1:[85,62],2:[86,49.5],3:[86,37.5],4:[86,24.5],
-    5:[65,16],6:[32,21],7:[56,31],8:[51,49],
-    9:[55,65],10:[59,85.5],11:[68,86.5],12:[28,86.5],
-    13:[44,76.3],14:[46,66],15:[46,49.5],16:[43,30.2],
-    17:[12,33.5],18:[12,46],19:[12,58],20:[12,69],21:[12,82]
-  };
-  const autoLabelPosition=(area,index)=>{
-    if(area.prefix==='MR'&&area.capacity===21){
-      const p=mainRoomLabels[index+1];if(p)return {x:p[0],y:p[1]};
-    }
-    // Hilton foyer graphic shows 23-27, rising from bottom to top.
-    if(area.prefix==='H1'&&area.capacity===5)
-      return {x:55,y:[89,74,59,42,27][index]};
-    // Hilton side room graphic shows 28-30 rising from bottom to top.
-    if(area.prefix==='H2'&&area.capacity===3)
-      return {x:43,y:[84,56,29][index]};
-    if(area.prefix==='HI'&&area.capacity===9){
-      const p=[[50,22],[28,38],[74,38],[27,53],[74,53],[27,68],[74,68],[24,89],[58,89]][index];
-      if(p)return {x:p[0],y:p[1]};
-    }
-    return positions(area,index);
   };
   // Selling information is only a selection aid for staff. The map and
   // printable booth roster continue to show the vendor's name, never products.
@@ -710,4 +713,85 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     }
   };
   return {load};
+}
+
+// Read-only saved floor plan for the admin Attendees view. Renders the
+// event's SAVED areas (uploaded layout image with assigned vendors' name
+// cards at their saved positions) exactly as the area manager saved them.
+// No editing affordances; name cards are pointer-events:none so they can
+// never intercept the attendee list's interactions.
+function fitSavedPlanPins(host){
+  host.querySelectorAll('.fp-map').forEach(map=>{
+    const mw=map.clientWidth,mh=map.clientHeight;
+    if(!mw||!mh)return;
+    map.querySelectorAll('.fp-pin').forEach(pin=>{
+      const pw=pin.offsetWidth,ph=pin.offsetHeight;
+      if(!pw||!ph)return;
+      // Same fit pass as the editor's renderPins: pull the label's center
+      // back so the whole card sits inside the plan, whatever was stored.
+      const hw=pw/mw*50,hh=ph/mh*50;
+      const x=parseFloat(pin.style.left),y=parseFloat(pin.style.top);
+      if(Number.isFinite(x))pin.style.left=Math.max(hw,Math.min(100-hw,x))+'%';
+      if(Number.isFinite(y))pin.style.top=Math.max(hh,Math.min(100-hh,y))+'%';
+    });
+  });
+}
+
+export async function showSavedFloorPlans({host,eventId,api,esc}){
+  if(!host||!eventId)return;
+  const safe=s=>esc(String(s==null?'':s));
+  const serial=(host._fpSerial=(host._fpSerial||0)+1);
+  const stale=()=>host._fpSerial!==serial;
+  host.innerHTML='<section class="card"><h2>Floor plan</h2><p class="muted">Loading saved floor plan…</p></section>';
+  try{
+    const [result,rows]=await Promise.all([
+      api('floor-area-plans&event_id='+encodeURIComponent(eventId)),
+      api('floor-attendees&event_id='+encodeURIComponent(eventId))
+    ]);
+    if(stale())return;
+    const vendors=rows||[];
+    const vendorName=id=>{
+      const v=vendors.find(x=>String(x.id)===String(id));
+      return v?String(v.business||v.name||'Vendor'):null;
+    };
+    const areas=(result.areas||[]).map(standardize).filter(area=>{
+      const assigned=Object.values(area.assignments||{}).some(e=>e&&e.vendor_id);
+      return imageAllowed(area.image_data_url)||assigned;
+    });
+    if(!areas.length){
+      host.innerHTML='<section class="card"><h2>Floor plan</h2><p class="muted">No floor plan saved for this market yet.</p></section>';
+      return;
+    }
+    const clampPct=(v,f)=>{const n=Number(v);return v!=null&&Number.isFinite(n)?Math.max(0,Math.min(100,n)):f;};
+    host.innerHTML='<section class="card"><h2>Floor plan</h2>'+areas.map(area=>{
+      const ids=Array.from({length:area.capacity},(_,i)=>spot(area,i));
+      const filled=ids.filter(id=>!!area.assignments[id]?.vendor_id).length;
+      const head='<h3>'+safe(area.title)+' <span class="tag">'+filled+' of '+area.capacity+' assigned</span></h3>';
+      if(imageAllowed(area.image_data_url)){
+        const pins=ids.map((id,i)=>{
+          const entry=area.assignments[id]||{};
+          if(!entry.vendor_id)return '';
+          const label=vendorName(entry.vendor_id);
+          if(!label)return '';
+          const fallback=autoLabelPosition(area,i);
+          const x=clampPct(entry.x,fallback.x),y=clampPct(entry.y,fallback.y);
+          return '<span class="fp-pin" style="position:absolute;z-index:2;left:'+x+'%;top:'+y+'%;transform:translate(-50%,-50%);background:rgba(255,255,255,.97);color:#103e35;border:1px solid #16594a;border-radius:6px;font-size:clamp(9px,1.3vw,12px);line-height:1.15;font-weight:700;padding:5px 7px;max-width:26%;text-align:center;overflow-wrap:anywhere;pointer-events:none">'+safe(label)+'</span>';
+        }).join('');
+        return head+'<div class="fp-map" style="position:relative;width:100%;max-width:640px;margin:12px auto 18px;background:#f7f3e7;border:1px solid #c8d6ce;border-radius:10px;overflow:hidden;min-height:160px"><img class="fp-img" alt="Saved floor plan for '+safe(area.title)+'" src="'+area.image_data_url+'" style="display:block;width:100%;height:auto;object-fit:contain">'+pins+'</div>';
+      }
+      const boothRows=ids.map(id=>{
+        const entry=area.assignments[id]||{};
+        const label=entry.vendor_id?vendorName(entry.vendor_id):null;
+        return '<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 10px;border:1px solid #dde5df;border-radius:6px;margin:3px 0;font-size:13px"><strong>'+safe(id)+'</strong><span>'+(label?safe(label):'<span class="muted">Open</span>')+'</span></div>';
+      }).join('');
+      return head+'<div style="max-width:640px;margin:12px auto 18px">'+boothRows+'</div>';
+    }).join('')+'</section>';
+    fitSavedPlanPins(host);
+    host.querySelectorAll('img.fp-img').forEach(img=>{
+      if(!img.complete)img.addEventListener('load',()=>{if(!stale())fitSavedPlanPins(host);});
+    });
+  }catch(e){
+    if(stale())return;
+    host.innerHTML='<section class="card"><h2>Floor plan</h2><p class="muted">Floor plan could not be loaded.</p></section>';
+  }
 }
