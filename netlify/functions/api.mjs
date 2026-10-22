@@ -1190,9 +1190,12 @@ async function saveAreaPlans(sql,p,u){
  const baseline=new Map(p.base_areas.map(a=>[String(a.area_key||''),a]));
  const normalized=(item)=>{
   const v=item&&typeof item==='object'?item:{},vendor_id=String(v.vendor_id||'');
-  const coords=Number.isFinite(Number(v.x))&&v.x!=null&&Number(v.x)>=0&&Number(v.x)<=100&&
-   Number.isFinite(Number(v.y))&&v.y!=null&&Number(v.y)>=0&&Number(v.y)<=100;
-  return {vendor_id,...(coords?{x:Number(v.x),y:Number(v.y)}:{})};
+  // Clamp finite coordinates into the plan instead of dropping them: dropping
+  // an out-of-range value silently teleported the vendor's name label back to
+  // its default spot, which read as "the plan doesn't keep my cards".
+  const cx=Number(v.x),cy=Number(v.y);
+  const coords=v.x!=null&&v.y!=null&&Number.isFinite(cx)&&Number.isFinite(cy);
+  return {vendor_id,...(coords?{x:Math.max(0,Math.min(100,cx)),y:Math.max(0,Math.min(100,cy))}:{})};
  };
  const same=(a,b)=>JSON.stringify(normalized(a))===JSON.stringify(normalized(b));
  const stamp=v=>v?new Date(v).getTime():null;
