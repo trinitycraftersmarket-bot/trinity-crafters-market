@@ -6,6 +6,7 @@ import {syncInspection} from '../../server/twins.mjs';
 import {acceptOffer,declineOffer,ensureWaitlistSchema,offerAnyway,resolveOffers,scanWaitlist} from '../../server/waitlist.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
+import {claimImported,ensureProfileSchema,upsertProfileFromApplication} from '../../server/profiles.mjs';
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
 async function paypalToken(){
  if(!process.env.PAYPAL_CLIENT_ID||!process.env.PAYPAL_CLIENT_SECRET)throw Error('PayPal invoicing is not connected yet.');
@@ -308,6 +309,10 @@ ${description}`;
  if(action==='mine'){
   const regular=await sql`select b.*,e.date,e.start_time,e.end_time,l.name location,a.business,a.name,a.email,'booking' source from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where a.user_id=${u.id}`;
   const imported=await sql`select i.id,null::uuid application_id,i.event_id,lower(i.space) space,coalesce(i.invoice_amount,0) price,case when i.cancelled then 'cancelled' when i.payment_status='paid' then 'paid' else 'approved' end status,false category_exception,null::timestamptz hold_until,null::text invoice_reference,null::text payment_reference,null::text decision_reason,null::timestamptz paid_at,(i.attendance_state='checked_in') checked_in,(i.attendance_state='no_show') no_show,null::timestamptz waitlist_offered_at,'Imported' payment_method,i.inspection_status,i.inspection_notes,i.inspected_at,i.inspected_by,i.approved_products,i.declined_products,i.setup_arrival_time,i.setup_checkin_at,e.date,e.start_time,e.end_time,l.name location,coalesce(nullif(i.business,''),i.name) business,i.name,i.email,'imported' source from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where lower(trim(both ' ,' from i.email))=lower(${u.email})`;
+  // §13.5 claiming: imported rows matched by the verified account email
+  // attach to the vendor's profile (link recorded in vendor_profiles);
+  // the rows themselves stay imported — counts/twins are unaffected.
+  if(imported.length){const claim=await claimImported(sql,u);if(claim.matched)for(const r of imported)r.profile_linked=true;}
   return json([...regular,...imported].sort((a,b)=>String(a.date).localeCompare(String(b.date))));
  }
  if(action==='vendor-setup-checkin'&&req.method==='POST'){
@@ -355,12 +360,14 @@ ${description}`;
  const smartScan=await smartVendorCategoryScan(sql,{description:p.description,categoryId:p.category,dateIds:p.dates.map(d=>d.id)});
  p.agreements={...p.agreements,category_scan:smartScan};
  const result=await sql.begin(async tx=>{
- await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);await ensureWaitlistSchema(tx);if(await banned(tx,u,phone))throw Error('Your vendor access is restricted. Contact the organizer.');
+ await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);await ensureWaitlistSchema(tx);await ensureProfileSchema(tx);if(await banned(tx,u,phone))throw Error('Your vendor access is restricted. Contact the organizer.');
  const recent=await tx`select count(*)::int n from market.applications where user_id=${u.id} and created_at>now()-interval '1 day'`;if(recent[0].n>=10)throw Error('Daily application limit reached.');
  const [cat]=await tx`select * from market.categories where id=${p.category} and active`;if(!cat)throw Error('Choose an active category.');if(cat.vendor_limit===0)throw Error('This vendor category is currently filled and is not accepting applications.');
  const banMatches=await tx`select name,email,phone from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${phone})`;const banReason=banMatches.map(b=>b.email===u.email?'email match':b.phone===phone?'phone match':'account match').join(', ');
  const masters=await tx`select id from market.vendors where lower(trim(email))=lower(${u.email}) or regexp_replace(phone,'[^0-9]','','g')=${phone} limit 2`;let vendorId=masters.length===1?masters[0].id:null;if(masters.length===0){const [nv]=await tx`insert into market.vendors(name,business,email,phone,billing_address,description,category_id) values(${p.name.trim()},${p.business.trim()},${u.email},${phone},${String(p.billing_address||'').trim()},${p.description.trim()},${cat.id}) returning id`;vendorId=nv.id;}else if(vendorId){await tx`update market.vendors set name=${p.name.trim()},business=${p.business.trim()},email=${u.email},phone=${phone},billing_address=${String(p.billing_address||'').trim()},description=${p.description.trim()},category_id=${cat.id},updated_at=now() where id=${vendorId}`;}
  const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,ban_flagged,ban_match_reason,photos,agreements,vendor_id) values(${u.id},${p.name.trim()},${u.email},${phone},${String(p.billing_address||'').trim()},${p.business.trim()},${p.description.trim()},${cat.id},${String(p.exception||'').slice(0,2000)},${String(p.referral_source).slice(0,200)},${String(p.referral_group||'').slice(0,200)},${banMatches.length>0},${banReason},${tx.json(p.photos)},${tx.json(p.agreements)},${vendorId}) returning id`;
+ // §13.7: submitting refreshes the vendor's profile with the values used.
+ await upsertProfileFromApplication(tx,{user:u,vendorId,fields:{name:p.name,business:p.business,phone,description:p.description,category_id:cat.id}});
  for(const d of p.dates){if(!['indoor','outdoor'].includes(d.space))throw Error('Choose indoor or outdoor for every date.');
  const [event]=await tx`select * from market.events where id=${d.id} and open and (date + coalesce(end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('A selected date is no longer accepting applications.');
  // All availability numbers come from the single counting function
@@ -471,7 +478,8 @@ ${description}`;
 
  if(action==='vendor-list'){
   if(!u.admin)return json({error:'Organizer access only'},403);
-  return json(await sql`select a.id,a.user_id,a.name,a.email,a.phone,a.business,a.billing_address,a.description,a.referral_source,a.referral_group,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,a.created_at,c.name category,'application' source,
+  await ensureProfileSchema(sql);
+  return json(await sql`select a.id,a.user_id,a.name,a.email,a.phone,a.business,a.billing_address,a.description,a.referral_source,a.referral_group,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,a.created_at,c.name category,'application' source,(select json_build_object('business',p.business,'name',p.name,'category_id',p.category_id,'description',p.description,'phone',p.phone,'space_preference',p.space_preference,'website',p.website,'social_links',p.social_links) from market.vendor_profiles p where p.email=lower(trim(a.email))) profile,
   coalesce((select count(*) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int shows,
   coalesce((select sum(b.price) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int booking_spend,
   coalesce((select sum(vp.amount) from market.vendor_payments vp where vp.application_id=a.id),0)::int recorded_payments,
@@ -480,7 +488,7 @@ ${description}`;
   from market.applications a left join market.categories c on c.id=a.category_id
   where a.id in (select distinct on (lower(email)) id from market.applications order by lower(email),created_at desc)
   union all
-  select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,false regular_vendor,null::integer monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,
+  select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,false regular_vendor,null::integer monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,(select json_build_object('business',p.business,'name',p.name,'category_id',p.category_id,'description',p.description,'phone',p.phone,'space_preference',p.space_preference,'website',p.website,'social_links',p.social_links) from market.vendor_profiles p where p.email=lower(trim(both ' ,' from i.email))) profile,
   count(*) over(partition by lower(coalesce(nullif(i.email,''),i.name)))::int shows,
   0::int booking_spend,
   coalesce((select sum(vp.amount)::int from market.vendor_payments vp where (i.vendor_id is not null and vp.vendor_id=i.vendor_id) or vp.imported_attendee_id in (select i2.id from market.imported_attendees i2 where lower(coalesce(nullif(i2.email,''),i2.name))=lower(coalesce(nullif(i.email,''),i.name)))),0)::int recorded_payments,
