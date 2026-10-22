@@ -2,24 +2,29 @@
 // the one shared bottom sheet. Stage 1 wired Market Day (home + Event Day);
 // Stage 2 adds Attendees management and the Vendors + Money screens
 // (Applications, Wait List, Move Requests, Vendor Directory, Payment Log,
-// Invoice Center). Sections not yet rebuilt open a "next stage" placeholder
-// and keep working in the current app.
+// Invoice Center); Stage 3a adds the unified floor-plan editor and the
+// whole Setup group (Dates & Locations, Categories, Managers, Connections
+// & Status with the bug-report inbox, Surveys, Archived Events, Organizer
+// Tools). Sections not yet rebuilt open a "next stage" placeholder and
+// keep working in the current app.
 //
 // Navigation is defined in exactly one place (SECTIONS below) — the legacy
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-2';
-import { VERSION, STAGE } from './version.js?v=20261022-2';
-import { renderHome } from './home.js?v=20261022-2';
-import { renderEventDay } from './eventday.js?v=20261022-2';
-import { renderAttendees } from './attendees.js?v=20261022-2';
-import { renderApplications } from './applications.js?v=20261022-2';
-import { renderWaitlist } from './waitlist.js?v=20261022-2';
-import { renderMoves } from './moves.js?v=20261022-2';
-import { renderVendors } from './vendors.js?v=20261022-2';
-import { renderPayments } from './payments.js?v=20261022-2';
-import { renderInvoices } from './invoices.js?v=20261022-2';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-3';
+import { VERSION, STAGE } from './version.js?v=20261022-3';
+import { renderHome } from './home.js?v=20261022-3';
+import { renderEventDay } from './eventday.js?v=20261022-3';
+import { renderAttendees } from './attendees.js?v=20261022-3';
+import { renderApplications } from './applications.js?v=20261022-3';
+import { renderWaitlist } from './waitlist.js?v=20261022-3';
+import { renderMoves } from './moves.js?v=20261022-3';
+import { renderVendors } from './vendors.js?v=20261022-3';
+import { renderPayments } from './payments.js?v=20261022-3';
+import { renderInvoices } from './invoices.js?v=20261022-3';
+import { renderFloorEditor } from './flooredit.js?v=20261022-3';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261022-3';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -35,7 +40,7 @@ export const SECTIONS = [
   { key: 'event-day', group: 'market-day', label: 'Event Day', icon: '🎪', desc: 'Run the day — check-ins, inspections, live status', live: 'event-day' },
   { key: 'attendees', group: 'market-day', label: 'Attendees', icon: '👥', desc: "Who's booked for the selected date — spaces, payments, cancellations", live: 'attendees' },
   { key: 'online-check-in', group: 'market-day', label: 'Online Check-In', icon: '📱', desc: 'Vendor setup arrival times and completion status' },
-  { key: 'setup-floor-plan', group: 'market-day', label: 'Setup & Floor Plan', icon: '🗺️', desc: 'Booth layout, space assignments, setup list', live: 'event-day', focus: 'floorplan' },
+  { key: 'setup-floor-plan', group: 'market-day', label: 'Setup & Floor Plan', icon: '🗺️', desc: 'Booth layout, space assignments and the setup email — the one floor-plan editor', live: 'flooredit' },
   { key: 'shopper-rsvps', group: 'market-day', label: 'Shopper RSVPs', icon: '🎟️', desc: 'Shopper headcount for each market date' },
   // Vendors
   { key: 'applications', group: 'vendors', label: 'Applications', icon: '📝', desc: 'Review and approve new vendor applications', live: 'applications' },
@@ -58,13 +63,13 @@ export const SECTIONS = [
   { key: 'live-chat', group: 'messages', label: 'Live Chat', icon: '💬', desc: 'Real-time chat with vendors and shoppers' },
   { key: 'social-media', group: 'messages', label: 'Social Media', icon: '📣', desc: 'Posts and promotion for the market' },
   // Setup
-  { key: 'dates-locations', group: 'setup', label: 'Dates & Locations', icon: '📍', desc: 'Market calendar, venues, capacities and prices' },
-  { key: 'categories', group: 'setup', label: 'Categories', icon: '🏷️', desc: 'Vendor categories and per-category limits' },
-  { key: 'managers', group: 'setup', label: 'Managers', icon: '🔑', desc: 'Who else can help run the market' },
-  { key: 'connections', group: 'setup', label: 'Connections & Status', icon: '✓', desc: 'Email, calendar and integration status readouts' },
-  { key: 'surveys', group: 'setup', label: 'Surveys', icon: '⭐', desc: 'Vendor survey results' },
-  { key: 'archived-events', group: 'setup', label: 'Archived Events', icon: '🗄️', desc: 'Past market dates' },
-  { key: 'organizer-tools', group: 'setup', label: 'Organizer Tools', icon: '🛠️', desc: 'Audit log and maintenance tools' }
+  { key: 'dates-locations', group: 'setup', label: 'Dates & Locations', icon: '📍', desc: 'Market calendar, venues, capacities and prices', live: 'dates' },
+  { key: 'categories', group: 'setup', label: 'Categories', icon: '🏷️', desc: 'Vendor categories and per-category limits', live: 'categories' },
+  { key: 'managers', group: 'setup', label: 'Managers', icon: '🔑', desc: 'Who else can help run the market', live: 'managers' },
+  { key: 'connections', group: 'setup', label: 'Connections & Status', icon: '✓', desc: 'Email, calendar and integration status readouts', live: 'connections' },
+  { key: 'surveys', group: 'setup', label: 'Surveys', icon: '⭐', desc: 'Vendor survey results', live: 'surveys' },
+  { key: 'archived-events', group: 'setup', label: 'Archived Events', icon: '🗄️', desc: 'Past market dates', live: 'archive' },
+  { key: 'organizer-tools', group: 'setup', label: 'Organizer Tools', icon: '🛠️', desc: 'Audit log and maintenance tools', live: 'tools' }
 ];
 const sectionByKey = k => SECTIONS.find(s => s.key === k);
 const groupOf = k => GROUPS.find(g => g.key === k);
@@ -104,7 +109,7 @@ function parseHash() {
   const [path, qs] = raw.split('?');
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
   if (path.startsWith('section/')) return { name: 'section', section: path.slice(8) };
-  if (['event-day', 'attendees', 'applications', 'waitlist', 'directory', 'moves', 'payments', 'invoices', 'vendors', 'money', 'messages', 'more'].includes(path)) return { name: path, ...params };
+  if (['event-day', 'attendees', 'applications', 'waitlist', 'directory', 'moves', 'payments', 'invoices', 'flooredit', 'dates', 'categories', 'managers', 'connections', 'surveys', 'archive', 'tools', 'vendors', 'money', 'messages', 'more'].includes(path)) return { name: path, ...params };
   return { name: 'home', ...params };
 }
 function bindGo(scope) {
@@ -146,7 +151,7 @@ function renderChrome() {
     { name: 'more', label: 'More', icon: '☰' }
   ];
   // Stage-2 screens are their own routes; map them back to their group tab.
-  const routeTab = { attendees: 'home', applications: 'vendors', waitlist: 'vendors', directory: 'vendors', moves: 'vendors', payments: 'money', invoices: 'money' };
+  const routeTab = { attendees: 'home', flooredit: 'home', applications: 'vendors', waitlist: 'vendors', directory: 'vendors', moves: 'vendors', payments: 'money', invoices: 'money', dates: 'more', categories: 'more', managers: 'more', connections: 'more', surveys: 'more', archive: 'more', tools: 'more' };
   const activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name || (state.route.name === 'section' && sectionByKey(state.route.section)?.group === t.name) || routeTab[state.route.name] === t.name;
   const navHtml = tabs.map(t => `<button class="nav-item ${activeFor(t) ? 'active' : ''}" data-nav="${t.name}"><span class="ti">${t.icon}</span><span class="nav-label">${t.label}</span>${t.badge ? `<span class="tab-badge">${t.badge}</span>` : ''}</button>`).join('');
   $('#tabbar').innerHTML = `<div class="tabbar-inner">${navHtml}</div>`;
@@ -177,7 +182,7 @@ function moreScreen(root) {
   root.innerHTML = `
     <p class="eyebrow">All tools</p>
     <h2 class="display">Menu</h2>
-    <p class="lede">27 loose buttons become 5 groups. Market Day, Vendors and Money are live in the new app; Messages and Setup arrive in the next stage and keep working in the current app meanwhile.</p>
+    <p class="lede">27 loose buttons become 5 groups. Market Day, Vendors, Money and Setup are live in the new app; Messages arrives in the next stage and keeps working in the current app meanwhile.</p>
     ${GROUPS.map(g => `<div class="group"><h3>${esc(g.label)}</h3><div class="card group-card">${SECTIONS.filter(s => s.group === g.key).map(s => menuItem(s)).join('')}</div></div>`).join('')}
     <div class="card account-card">
       <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">${state.user.admin ? 'Organizer' : 'Manager'} · the new app and the current app share this sign-in.</span></p>
@@ -303,6 +308,14 @@ async function route() {
     else if (r.name === 'directory') { await refreshAdmin(); renderChrome(); renderVendors(ctx, root); }
     else if (r.name === 'payments') { await refreshAdmin(); renderChrome(); renderPayments(ctx, root); }
     else if (r.name === 'invoices') { await refreshAdmin(); renderChrome(); renderInvoices(ctx, root); }
+    else if (r.name === 'flooredit') { await refreshAdmin(); renderChrome(); renderFloorEditor(ctx, root, r); }
+    else if (r.name === 'dates') { await refreshAdmin(); renderChrome(); renderDates(ctx, root); }
+    else if (r.name === 'categories') { await refreshAdmin(); renderChrome(); renderCategories(ctx, root); }
+    else if (r.name === 'managers') { renderManagers(ctx, root); }
+    else if (r.name === 'connections') { await refreshAdmin(); renderChrome(); renderConnections(ctx, root); }
+    else if (r.name === 'surveys') { renderSurveys(ctx, root); }
+    else if (r.name === 'archive') { await refreshAdmin(); renderChrome(); renderArchive(ctx, root); }
+    else if (r.name === 'tools') { renderTools(ctx, root); }
     else if (['vendors', 'money', 'messages'].includes(r.name)) groupScreen(root, r.name);
     else if (r.name === 'more') moreScreen(root);
     else if (r.name === 'section') sectionScreen(root, r.section);

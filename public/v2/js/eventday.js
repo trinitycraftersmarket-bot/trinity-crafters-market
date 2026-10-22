@@ -5,9 +5,9 @@
 // that fresh data. This screen never edits a local copy of a row, so what
 // it shows is always what the server has — and it survives a reload,
 // because a reload does the same fetch.
-import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261022-2';
-import { attendeeRows, eventStats } from './data.js?v=20261022-2';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261022-2';
+import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261022-3';
+import { attendeeRows, eventStats } from './data.js?v=20261022-3';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261022-3';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_CLASS = { not_inspected: 'warn', approved: 'ok', needs_correction: 'bad', refused: 'bad' };
@@ -89,7 +89,11 @@ export function renderEventDay(ctx, root, params = {}) {
     <div class="vendor-list" id="v2-vendor-list"></div>
     <h3 class="section-title" id="v2-floorplan-title">Floor plan</h3>
     <section class="card fp-card"><div id="v2-floorplan"></div></section>
-    <p class="note">Floor plan editing stays in Setup &amp; floor plan for this stage — this is the saved plan, exactly as arranged there.</p>`;
+    <div class="vendor-actions">
+      <button class="btn small" id="v2-open-editor">Open the floor plan editor</button>
+    </div>
+    <p class="note">This is the saved plan, exactly as arranged in the editor — same data, same positions.</p>`;
+  root.querySelector('#v2-open-editor').onclick = () => ctx.navigate('flooredit', { event: String(event.id) });
 
   const draw = () => {
     const fresh = ctx.state.admin;

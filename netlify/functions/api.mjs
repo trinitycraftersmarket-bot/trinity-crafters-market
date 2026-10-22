@@ -298,6 +298,18 @@ ${description}`;
   });
   await flushMail();return json({ok:true});
  }
+ if(action==='bug-report-list'){
+  // Organizer inbox for problem reports (audit §13.8: in the rebuild the
+  // Setup screen is the inbox, not just the organizer's email). Read-only
+  // and additive — reporting above is unchanged.
+  if(req.method!=='POST')return json({error:'Method not allowed'},405);
+  const who=await identity(req).catch(()=>null);
+  if(!who?.admin)return json({error:'Organizer access only'},403);
+  const sql=db();
+  await sql`create table if not exists market.bug_reports(id uuid primary key default gen_random_uuid(),reporter text,description text not null,page text,app_version text,user_agent text,created_at timestamptz not null default now())`;
+  const reports=await sql`select id,reporter,description,page,app_version,user_agent,created_at from market.bug_reports order by created_at desc limit 100`;
+  return json({reports});
+ }
  const u=await identity(req),sql=db();
  if(action==='me')return json(u);
  if(req.method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin)return json({error:'Invalid request origin'},403);
