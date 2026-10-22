@@ -268,6 +268,32 @@ Testimonial permission: ${testimonial?'Yes':'No'}`;
   });
   await flushMail();return json({ok:true});
  }
+ if(action==='bug-report'){
+  if(req.method!=='POST')return json({error:'Method not allowed'},405);
+  const p=await req.json().catch(()=>({}));
+  const description=String(p.description||'').trim().slice(0,2000);
+  if(description.length<10)throw Error('Please describe the problem in a sentence or two so we can find it.');
+  const page=String(p.page||'').slice(0,300),appVersion=String(p.app_version||'').slice(0,20),contact=String(p.contact_email||'').trim().slice(0,120);
+  let reporter=contact||'anonymous';
+  try{const who=await identity(req);reporter=who.email;}catch(e){/* not signed in — contact email or anonymous is fine */}
+  const ua=String(req.headers.get('user-agent')||'').slice(0,300);
+  await db().begin(async tx=>{
+   await tx`create table if not exists market.bug_reports(id uuid primary key default gen_random_uuid(),reporter text,description text not null,page text,app_version text,user_agent text,created_at timestamptz not null default now())`;
+   await tx`insert into market.bug_reports(reporter,description,page,app_version,user_agent) values(${reporter},${description},${page},${appVersion},${ua})`;
+   const body=`A problem was reported from the market site/app.
+
+From: ${reporter}
+Page: ${page||'not provided'}
+App version: ${appVersion||'website'}
+Device/browser: ${ua||'not provided'}
+
+What they said:
+${description}`;
+   await queue(tx,'trinitycraftersmarket@gmail.com','Bug report — '+(page||'market app'),body);
+   await audit(tx,'bug-report','problem reported',{reporter,page});
+  });
+  await flushMail();return json({ok:true});
+ }
  const u=await identity(req),sql=db();
  if(action==='me')return json(u);
  if(req.method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin)return json({error:'Invalid request origin'},403);
