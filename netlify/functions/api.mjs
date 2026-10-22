@@ -1,6 +1,8 @@
 import {staffActionAllowed,hasStaffPermission} from '../../server/permissions.mjs';
-import {ready,db,supa,identity,banned,expire,audit,queue,publicData,flushMail} from '../../server/core.mjs';
-import {checkCapacity,normalizePhone,active as activeBooking} from '../../server/rules.mjs';
+import {ready,db,supa,identity,banned,expire,audit,queue,publicData,flushMail,isUserError} from '../../server/core.mjs';
+import {normalizePhone} from '../../server/rules.mjs';
+import {eventInventory,categoryUsed,assertCapacity,vendorIdentityKey} from '../../server/counts.mjs';
+import {syncInspection} from '../../server/twins.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
@@ -200,9 +202,9 @@ async function categoryScanConflicts(sql,matchedCategories,dateIds=[]){
    const [event]=await sql`select id,date from market.events where id=${eventId}`;if(!event)continue;
    const [override]=await sql`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;
    const limit=Number(override?.vendor_limit??cat.vendor_limit??1);
-   const [online]=await sql`select count(*)::int n from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.category_id=${cat.id} and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now()))`;
-   const [imported]=await sql`select count(*)::int n from market.imported_attendees where event_id=${event.id} and category_id=${cat.id} and not coalesce(cancelled,false)`;
-   const used=Number(online?.n||0)+Number(imported?.n||0);
+   // Advisory AI scan; the used count comes from the single counting
+   // function (server/counts.mjs) like every other capacity number.
+   const used=await categoryUsed(sql,event.id,cat.id);
    if(limit===0||used>=limit)conflicts.push({event_id:event.id,category:cat.name,used,limit,reason:limit===0?'Category is currently filled':'Category limit is already reached'});
   }
  }
@@ -360,16 +362,14 @@ ${description}`;
  const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,ban_flagged,ban_match_reason,photos,agreements,vendor_id) values(${u.id},${p.name.trim()},${u.email},${phone},${String(p.billing_address||'').trim()},${p.business.trim()},${p.description.trim()},${cat.id},${String(p.exception||'').slice(0,2000)},${String(p.referral_source).slice(0,200)},${String(p.referral_group||'').slice(0,200)},${banMatches.length>0},${banReason},${tx.json(p.photos)},${tx.json(p.agreements)},${vendorId}) returning id`;
  for(const d of p.dates){if(!['indoor','outdoor'].includes(d.space))throw Error('Choose indoor or outdoor for every date.');
  const [event]=await tx`select * from market.events where id=${d.id} and open and (date + coalesce(end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('A selected date is no longer accepting applications.');
- const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;
-  const [imported]=await tx`select count(*)::int as category_used,
-    count(*) filter (where lower(trim(space)) in (${d.space==='indoor'?'inside':'outside'},${d.space}))::int as space_used
-    from market.imported_attendees where event_id=${event.id} and category_id=${cat.id} and not coalesce(cancelled,false)`;
-  const [importedSpace]=await tx`select count(*)::int as used from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and lower(trim(space)) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;
- const [override]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`; const effectiveCategoryLimit=override?.vendor_limit??cat.vendor_limit; const categoryFull=!p.exception?.trim()&&(existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length+Number(imported.category_used||0))>=effectiveCategoryLimit;
- const spaceFull=(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0))>=event[d.space+'_capacity'];
+ // All availability numbers come from the single counting function
+ // (server/counts.mjs): pending does not reserve, twins count once.
+ const inv=await eventInventory(tx,event.id);
+ const [override]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`; const effectiveCategoryLimit=override?.vendor_limit??cat.vendor_limit; const categoryFull=!p.exception?.trim()&&(inv.categories.get(String(cat.id))||0)>=effectiveCategoryLimit;
+ const spaceFull=(inv[d.space]||0)>=event[d.space+'_capacity'];
  const areaClosed=d.space==='indoor'?event.indoor_open===false:event.outdoor_open===false;
  const waitlist=event.sold_out||areaClosed||categoryFull||spaceFull;
- if(!waitlist)try{checkCapacity(event,existing,d.space,cat.id,effectiveCategoryLimit,!!p.exception?.trim());}catch(e){throw Error(event.date+': '+e.message);}
+ if(!waitlist)try{await assertCapacity(tx,event,{space:d.space,categoryId:cat.id,limit:effectiveCategoryLimit,exception:!!p.exception?.trim(),selfKey:vendorIdentityKey({vendor_id:vendorId,email:u.email,phone,business:p.business,name:p.name})});}catch(e){throw Error(event.date+': '+e.message);}
  const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','waitlist','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
  const importedDuplicate=await tx`select id from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and (lower(trim(both ' ,' from email))=lower(${u.email}) or (${normalizePhone(phone)}<>'' and regexp_replace(phone,'[^0-9]','','g')=${normalizePhone(phone)})) limit 1`;if(importedDuplicate.length)throw Error('You already have a vendor record for this date. Contact the organizer if it needs to be changed.');
  await tx`insert into market.bookings(application_id,event_id,space,price,status) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},${waitlist?'waitlist':'pending'})`;}
@@ -613,9 +613,12 @@ trinitycraftersmarket@gmail.com`;
    const masters=await tx`select id from market.vendors where lower(trim(email))=lower(${attempt.email}) or regexp_replace(phone,'[^0-9]','','g')=${phone} limit 2`;let vendorId=masters.length===1?masters[0].id:null;if(masters.length===0){const [nv]=await tx`insert into market.vendors(name,business,email,phone,billing_address,description,category_id) values(${name},${business},${attempt.email},${phone},${merged.billing_address},${description},${cat.id}) returning id`;vendorId=nv.id;}else if(vendorId)await tx`update market.vendors set name=${name},business=${business},email=${attempt.email},phone=${phone},billing_address=${merged.billing_address},description=${description},category_id=${cat.id},updated_at=now() where id=${vendorId}`;
    const photos=merged.photos.filter(path=>path.startsWith(String(attempt.user_id)+'/')&&!path.includes('..'));const agreements={...merged.agreements,signature:merged.signature||name,admin_recovery_override:true,admin_recovery_by:u.email};const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,photos,agreements,vendor_id,review_notes) values(${attempt.user_id},${name},${attempt.email},${phone},${merged.billing_address},${business},${description},${cat.id},${merged.exception},${merged.referral_source||'Recovered application'},${merged.referral_group},${tx.json(photos)},${tx.json(agreements)},${vendorId},${'Recovered from failed/abandoned application '+attempt.id}) returning id`;
    const created=[];for(const d of merged.dates){const [event]=await tx`select e.*,l.name location,l.address,l.market_name,l.name title from market.events e join market.locations l on l.id=e.location_id where e.id=${d.id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('One selected market date is no longer available.');if(event.sold_out)throw Error(marketDateLabel(event.date)+': the market is marked sold out.');if(d.space==='indoor'&&event.indoor_open===false)throw Error(marketDateLabel(event.date)+': indoor vendor space is closed.');if(d.space==='outdoor'&&event.outdoor_open===false)throw Error(marketDateLabel(event.date)+': outdoor vendor space is closed.');
-    const existing=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id}`;const [importedSpace]=await tx`select count(*)::int used from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and lower(trim(space)) in (${d.space==='indoor'?'inside':'outside'},${d.space})`;if(existing.filter(b=>activeBooking(b)&&b.space===d.space).length+Number(importedSpace.used||0)>=event[d.space+'_capacity'])throw Error(marketDateLabel(event.date)+': '+d.space+' space is sold out.');
+    // Availability from the single counting function (server/counts.mjs):
+    // pending does not reserve, twins count once. The duplicate check below
+    // still includes pending — it guards double submission, not capacity.
+    const inv=await eventInventory(tx,event.id);if((inv[d.space]||0)>=event[d.space+'_capacity'])throw Error(marketDateLabel(event.date)+': '+d.space+' space is sold out.');
     const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('pending','waitlist','approved','held','paid') and (a.user_id=${attempt.user_id} or lower(a.email)=lower(${attempt.email}) or regexp_replace(a.phone,'[^0-9]','','g')=${phone}) limit 1`;if(duplicate.length)throw Error(marketDateLabel(event.date)+': this vendor already has an application or booking.');
-    const categoryUsed=existing.filter(b=>activeBooking(b)&&b.category_id===cat.id).length;const [impCat]=await tx`select count(*)::int used from market.imported_attendees where event_id=${event.id} and category_id=${cat.id} and not coalesce(cancelled,false)`;const [limitOverride]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;const categoryLimit=limitOverride?.vendor_limit??cat.vendor_limit,categoryException=categoryUsed+Number(impCat.used||0)>=categoryLimit;
+    const [limitOverride]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;const categoryLimit=limitOverride?.vendor_limit??cat.vendor_limit,categoryException=(inv.categories.get(String(cat.id))||0)>=categoryLimit;
     const [booking]=await tx`insert into market.bookings(application_id,event_id,space,price,status,category_exception) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},'approved',${categoryException}) returning *`;created.push({...booking,date:event.date,location:event.location,address:event.address,title:event.title});
     const mail=decisionEmail({...booking,name,email:attempt.email,business,status:'approved'},event,'');await queue(tx,attempt.email,mail.subject,mail.body);
    }
@@ -822,13 +825,16 @@ trinitycraftersmarket@gmail.com`;
   const who=u.email||'Staff',at=p.status==='not_inspected'?null:new Date().toISOString(),by=p.status==='not_inspected'?null:who;
   // A vendor can exist as both a booking and an imported attendee for the same
   // event; keep both records in sync so every view shows the same label.
+  // Twin matching is the shared invariant in server/twins.mjs (identity keys:
+  // vendor_id, else email, else phone, else name — broader than the email-only
+  // match this endpoint used before).
   let updated=0;
   if(p.imported){
-   const [row]=await sql`update market.imported_attendees set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} where id=${p.id} returning event_id,email`;
-   if(row){updated++;const sib=await sql`update market.bookings b set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} from market.applications a where b.application_id=a.id and b.event_id=${row.event_id} and lower(a.email)=lower(${row.email}) returning b.id`;updated+=sib.length;}
+   const [row]=await sql`update market.imported_attendees set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} where id=${p.id} returning event_id,email,phone,business,name,vendor_id`;
+   if(row){updated++;updated+=await syncInspection(sql,{eventId:row.event_id,key:vendorIdentityKey({...row,id:p.id}),exclude:{source:'imported',id:p.id},status:p.status,notes:p.notes||null,at,by});}
   }else{
    const [row]=await sql`update market.bookings set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} where id=${p.id} returning event_id,application_id`;
-   if(row){updated++;const [app]=await sql`select email from market.applications where id=${row.application_id}`;if(app){const sib=await sql`update market.imported_attendees set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} where event_id=${row.event_id} and lower(email)=lower(${app.email}) returning id`;updated+=sib.length;}}
+   if(row){updated++;const [app]=await sql`select email,phone,business,name,vendor_id from market.applications where id=${row.application_id}`;if(app)updated+=await syncInspection(sql,{eventId:row.event_id,key:vendorIdentityKey({...app,id:p.id}),exclude:{source:'booking',id:p.id},status:p.status,notes:p.notes||null,at,by});}
   }
   if(!updated)throw Error('That vendor record was not found, so nothing was updated. Reload the list and try again.');
   await audit(sql,u,'vendor inspection',{id:p.id,imported:!!p.imported,status:p.status,notes:p.notes||null,updated});return json({ok:true,updated});
@@ -957,15 +963,13 @@ trinitycraftersmarket@gmail.com`;
        (${business}<>'' and lower(trim(coalesce(nullif(a.business,''),a.name)))=${business})
       ) limit 1`;
     if(duplicateImported.length||duplicateBooking.length)throw Error('This vendor already has an active record for that market date.');
-    const [spaceCounts]=await tx`select
-      (select count(*)::int from market.bookings b where b.event_id=${i.event_id} and lower(trim(b.space)) in (${space},${space==='indoor'?'inside':'outside'}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+
-      (select count(*)::int from market.imported_attendees x where x.event_id=${i.event_id} and x.id<>${i.id} and not coalesce(x.cancelled,false) and lower(trim(x.space)) in (${space},${space==='indoor'?'inside':'outside'})) used`;
-    if(Number(spaceCounts?.used||0)>=Number(i[space+'_capacity']||0))throw Error('That booth area is sold out, so this vendor cannot be reinstated yet.');
+    // Space/category availability from the single counting function
+    // (server/counts.mjs): pending does not reserve, twins count once. The
+    // record itself is cancelled, so it is not in the active set.
+    const inv=await eventInventory(tx,i.event_id);
+    if((inv[space]||0)>=Number(i[space+'_capacity']||0))throw Error('That booth area is sold out, so this vendor cannot be reinstated yet.');
     if(i.category_id&&Number(i.effective_category_limit||0)>0){
-     const [catCounts]=await tx`select
-       (select count(*)::int from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${i.event_id} and a.category_id=${i.category_id} and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+
-       (select count(*)::int from market.imported_attendees x where x.event_id=${i.event_id} and x.id<>${i.id} and x.category_id=${i.category_id} and not coalesce(x.cancelled,false)) used`;
-     if(Number(catCounts?.used||0)>=Number(i.effective_category_limit))throw Error('That vendor category is full for this market date.');
+     if((inv.categories.get(String(i.category_id))||0)>=Number(i.effective_category_limit))throw Error('That vendor category is full for this market date.');
     }
     await tx`update market.imported_attendees set cancelled=false,reinstated_at=now(),reinstated_by=${u.email} where id=${i.id}`;
     const day=marketDateLabel(i.date),paid=String(i.payment_status||'').toLowerCase()==='paid';
@@ -1002,15 +1006,14 @@ trinitycraftersmarket@gmail.com`;
        (${business}<>'' and lower(trim(coalesce(nullif(i.business,''),i.name)))=${business})
       ) limit 1`;
     if(duplicateBooking.length||duplicateImported.length)throw Error('This vendor already has an active record for that market date.');
-    const [spaceCounts]=await tx`select
-      (select count(*)::int from market.bookings x where x.event_id=${b.event_id} and x.id<>${b.id} and lower(trim(x.space)) in (${space},${space==='indoor'?'inside':'outside'}) and (x.status in ('pending','approved','paid') or (x.status='held' and x.hold_until>now())))+
-      (select count(*)::int from market.imported_attendees i where i.event_id=${b.event_id} and not coalesce(i.cancelled,false) and lower(trim(i.space)) in (${space},${space==='indoor'?'inside':'outside'})) used`;
-    if(Number(spaceCounts?.used||0)>=Number(b[space+'_capacity']||0))throw Error('That booth area is sold out, so this vendor cannot be reinstated yet.');
+    // Space/category availability from the single counting function
+    // (server/counts.mjs): pending does not reserve, twins count once. The
+    // booking itself is cancelled, so it is not in the active set.
+    const inv=await eventInventory(tx,b.event_id);
+    if((inv[space]||0)>=Number(b[space+'_capacity']||0))throw Error('That booth area is sold out, so this vendor cannot be reinstated yet.');
     if(b.category_id&&Number(b.effective_category_limit||0)>0&&!b.category_exception){
-     const [catCounts]=await tx`select
-       (select count(*)::int from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=${b.event_id} and x.id<>${b.id} and a.category_id=${b.category_id} and (x.status in ('pending','approved','paid') or (x.status='held' and x.hold_until>now())))+
-       (select count(*)::int from market.imported_attendees i where i.event_id=${b.event_id} and i.category_id=${b.category_id} and not coalesce(i.cancelled,false)) used`;
-     if(Number(catCounts?.used||0)>=Number(b.effective_category_limit))throw Error('That vendor category is full for this market date.');
+     const catUsed=inv.categories.get(String(b.category_id))||0;
+     if(catUsed>=Number(b.effective_category_limit))throw Error('That vendor category is full for this market date.');
     }
     const [payment]=await tx`select id from market.vendor_payments where booking_id=${b.id} limit 1`;
     const wasPaid=!!b.paid_at||!!payment;
@@ -1033,8 +1036,10 @@ trinitycraftersmarket@gmail.com`;
    if(!['cancelled','expired'].includes(b.status))throw Error('Only cancelled or expired bookings can be reinstated.');
    if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before reinstating.');
    const [e]=await tx`select * from market.events where id=${b.event_id}`;
-   const others=await tx`select x.*,a.category_id from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=${b.event_id} and x.id<>${b.id}`;
-   checkCapacity(e,others,b.space,b.category_id,b.vendor_limit,b.category_exception);
+   // Capacity from the single counting function (server/counts.mjs), incl.
+   // imported attendees and twin dedupe. The booking itself is cancelled or
+   // expired, so it does not contribute to the active counts.
+   await assertCapacity(tx,e,{space:b.space,categoryId:b.category_id,limit:b.vendor_limit,exception:b.category_exception,selfKey:vendorIdentityKey({email:b.email,phone:b.phone,business:b.business,name:b.name,id:b.id})});
    await tx`update market.bookings set status='paid',hold_until=null,payment_reference=${p.reference.trim()},payment_method=${p.payment_method.trim().slice(0,100)},paid_at=now() where id=${b.id}`;
    const day=marketDateLabel(b.date);
    const body=`Hi ${b.name},\n\nYour vendor booking has been reinstated and your payment has been received. Your market date is approved and confirmed.\n\n${day}\n10 AM–3 PM Eastern\n${b.location}\n${b.address}\n${b.space==='indoor'?'Indoor':'Outdoor'} space — ${(b.price/100).toFixed(2)}\n\nPayment status: PAID\n\nYour space and category are confirmed for this market date. We look forward to seeing you!\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
@@ -1060,8 +1065,11 @@ trinitycraftersmarket@gmail.com`;
  if(p.status==='approved'){
  if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before approving or confirming.');
  const [e]=await tx`select * from market.events where id=${b.event_id}`;
- const others=await tx`select b.*,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${b.event_id} and b.id<>${b.id}`;
- checkCapacity(e,others,b.space,b.category_id,b.vendor_limit,p.exception===true||b.category_exception);
+ // Capacity from the single counting function (server/counts.mjs), incl.
+ // imported attendees and twin dedupe. selfKey: the booking being approved
+ // was pending, so it is not yet counted — its identity only matters if an
+ // imported twin already holds the spot.
+ await assertCapacity(tx,e,{space:b.space,categoryId:b.category_id,limit:b.vendor_limit,exception:p.exception===true||b.category_exception,selfKey:vendorIdentityKey({email:b.email,phone:b.phone,business:b.business,name:b.name,id:b.id})});
  } else if(['held','paid'].includes(p.status)){
  if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before confirming.');
  }
@@ -1149,7 +1157,7 @@ trinitycraftersmarket@gmail.com`;
  }
  if(action==='event'){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(p.date))throw Error('Choose a date.');for(const k of ['indoor_capacity','outdoor_capacity','indoor_price','outdoor_price'])if(!Number.isInteger(p[k])||p[k]<0)throw Error('Check spaces and prices.');
- await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;if(p.id){const used=await tx`select space,sum(n)::int n from (select case when lower(trim(space)) in ('indoor','inside') then 'indoor' else 'outdoor' end space,count(*)::int n from market.bookings where event_id=${p.id} and (status in ('pending','approved','paid') or(status='held' and hold_until>now())) group by 1 union all select case when lower(trim(space)) in ('indoor','inside') then 'indoor' else 'outdoor' end space,count(*)::int n from market.imported_attendees where event_id=${p.id} and not coalesce(cancelled,false) and lower(trim(space)) in ('indoor','inside','outdoor','outside') group by 1) q group by space`;const [cur]=await tx`select indoor_capacity,outdoor_capacity from market.events where id=${p.id}`;for(const x of used)if(p[x.space+'_capacity']<(cur?cur[x.space+'_capacity']:0)&&p[x.space+'_capacity']<x.n)throw Error('Total capacity cannot be lower than the active vendor count ('+x.n+' '+x.space+'). Enter the venue total, not the number of spaces remaining.');await tx`update market.events set date=${p.date},location_id=${p.location_id},title=${p.title||'Trinity Crafters Market'},start_time=${p.start_time||'10:00'},end_time=${p.end_time||'15:00'},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},open=${p.open===true},sold_out=${p.sold_out===true},indoor_open=${p.indoor_open!==false},outdoor_open=${p.outdoor_open!==false},sync_alert=null where id=${p.id}`;}else await tx`insert into market.events(date,location_id,title,start_time,end_time,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,open,sold_out,indoor_open,outdoor_open) values(${p.date},${p.location_id},${p.title||'Trinity Crafters Market'},${p.start_time||'10:00'},${p.end_time||'15:00'},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${p.open===true},${p.sold_out===true},${p.indoor_open!==false},${p.outdoor_open!==false})`;await audit(tx,u,'event',p);});return json({ok:true});
+ await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;if(p.id){const inv=await eventInventory(tx,p.id);const used=[{space:'indoor',n:inv.indoor},{space:'outdoor',n:inv.outdoor}].filter(x=>x.n>0);const [cur]=await tx`select indoor_capacity,outdoor_capacity from market.events where id=${p.id}`;for(const x of used)if(p[x.space+'_capacity']<(cur?cur[x.space+'_capacity']:0)&&p[x.space+'_capacity']<x.n)throw Error('Total capacity cannot be lower than the active vendor count ('+x.n+' '+x.space+'). Enter the venue total, not the number of spaces remaining.');await tx`update market.events set date=${p.date},location_id=${p.location_id},title=${p.title||'Trinity Crafters Market'},start_time=${p.start_time||'10:00'},end_time=${p.end_time||'15:00'},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},open=${p.open===true},sold_out=${p.sold_out===true},indoor_open=${p.indoor_open!==false},outdoor_open=${p.outdoor_open!==false},sync_alert=null where id=${p.id}`;}else await tx`insert into market.events(date,location_id,title,start_time,end_time,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,open,sold_out,indoor_open,outdoor_open) values(${p.date},${p.location_id},${p.title||'Trinity Crafters Market'},${p.start_time||'10:00'},${p.end_time||'15:00'},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${p.open===true},${p.sold_out===true},${p.indoor_open!==false},${p.outdoor_open!==false})`;await audit(tx,u,'event',p);});return json({ok:true});
  }
  if(action==='category'){required(p.name,'category');if(!Number.isInteger(p.vendor_limit)||p.vendor_limit<0)throw Error('Limit cannot be below 0.');if(p.id)await sql`update market.categories set name=${p.name},vendor_limit=${p.vendor_limit},active=${p.active===true} where id=${p.id}`;else await sql`insert into market.categories(name,vendor_limit) values(${p.name},${p.vendor_limit})`;await audit(sql,u,'category',p);return json({ok:true});}
  if(action==='post'){
@@ -1162,7 +1170,15 @@ trinitycraftersmarket@gmail.com`;
  }
 
  return json({error:'Unknown action'},404);
- } catch(e){console.error('Market request failed',e.code||e.name);return json({error:e.message||'The request could not be saved.'},400);}
+ } catch(e){
+  // Known user-facing validation errors (plain thrown Errors, see
+  // server/core.mjs isUserError) keep their friendly 400. Everything else
+  // is a server fault: log it fully and answer a generic 500 instead of
+  // masking it as a bad request (audit §7.4.3).
+  if(isUserError(e))return json({error:e.message},400);
+  console.error('Market request failed',e);
+  return json({error:'The request could not be saved.'},500);
+ }
 };
 
 
