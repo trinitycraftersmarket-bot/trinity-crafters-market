@@ -3,7 +3,54 @@ async function attendanceHotfixApi(action, payload) {
   const token=sessionStorage.getItem('market-token'); const response=await fetch('/.netlify/functions/api?action='+encodeURIComponent(action),{method:'POST',headers:{...(token?{Authorization:'Bearer '+token}:{}),'Content-Type':'application/json'},body:JSON.stringify(payload)}); const value=await response.json().catch(()=>({})); if(!response.ok)throw new Error(value.error||'Please try again.'); return value;
 }
 async function moveSpaceHotfix(payload){const token=sessionStorage.getItem('market-token');const r=await fetch('/.netlify/functions/move-space',{method:'POST',headers:{...(token?{Authorization:'Bearer '+token}:{}),'Content-Type':'application/json'},body:JSON.stringify(payload)});const v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Could not move vendor.');return v;}
-function addAttendanceControls(){document.querySelectorAll('.inspection-row .report-actions').forEach(actions=>{const attendanceButton=actions.querySelector('[data-attendance-id]');if(!attendanceButton)return;const id=attendanceButton.dataset.attendanceId, imported=attendanceButton.dataset.imported||'0',row=actions.closest('.inspection-row'),txt=(row?.querySelector('p')?.textContent||'').toLowerCase(),current=txt.includes('outside')||txt.includes('outdoor')?'outdoor':'indoor';if(row&&!row.querySelector('[data-space-badge]')){const h=row.querySelector('h3');if(h){const badge=document.createElement('span');badge.className='tag';badge.dataset.spaceBadge='1';badge.textContent=current==='indoor'?'INSIDE':'OUTSIDE';badge.style.marginLeft='10px';badge.style.fontWeight='800';h.insertAdjacentElement('afterend',badge);}}if(!actions.querySelector('[data-move-attendee]')){const b=document.createElement('button');b.type='button';b.className='secondary';b.textContent=current==='indoor'?'Move Outside':'Move Inside';b.dataset.moveAttendee=id;b.dataset.imported=imported;b.dataset.space=current==='indoor'?'outdoor':'indoor';actions.appendChild(b);}});}
+function attendanceSpace(row){
+  const raw=String(row?.dataset.vendorSpace||'').trim().toLowerCase();
+  if(['inside','indoor'].includes(raw))return 'indoor';
+  if(['outside','outdoor'].includes(raw))return 'outdoor';
+  // Fall back to the attendee detail paragraph for older cached versions of the main app.
+  const detail=[...(row?.querySelectorAll('p')||[])].map(p=>String(p.textContent||'').trim())
+    .find(text=>/\s·\s(?:inside|indoor|outside|outdoor)\s*$/i.test(text));
+  const space=String(detail?.split('·').pop()||'').trim().toLowerCase();
+  if(['inside','indoor'].includes(space))return 'indoor';
+  if(['outside','outdoor'].includes(space))return 'outdoor';
+  return null;
+}
+function addAttendanceControls(){
+  document.querySelectorAll('.inspection-row .report-actions').forEach(actions=>{
+    const attendanceButton=actions.querySelector('[data-attendance-id]');
+    if(!attendanceButton)return;
+    const id=attendanceButton.dataset.attendanceId,imported=attendanceButton.dataset.imported||'0';
+    const row=actions.closest('.inspection-row'),current=attendanceSpace(row);
+    if(!row||!current)return; // Never show an assumed space or an unsafe Move button.
+    const label=current==='indoor'?'INSIDE':'OUTSIDE';
+    let badge=row.querySelector('[data-space-badge]');
+    if(!badge){
+      const h=row.querySelector('h3');
+      if(h){
+        badge=document.createElement('span');
+        badge.className='tag';
+        badge.dataset.spaceBadge='1';
+        badge.style.marginLeft='10px';
+        badge.style.fontWeight='800';
+        h.insertAdjacentElement('afterend',badge);
+      }
+    }
+    if(badge&&badge.textContent!==label)badge.textContent=label;
+    let button=actions.querySelector('[data-move-attendee]');
+    if(!button){
+      button=document.createElement('button');
+      button.type='button';
+      button.className='secondary';
+      button.dataset.moveAttendee=id;
+      button.dataset.imported=imported;
+      actions.appendChild(button);
+    }
+    const target=current==='indoor'?'outdoor':'indoor';
+    if(button.dataset.space!==target)button.dataset.space=target;
+    const buttonLabel=target==='outdoor'?'Move Outside':'Move Inside';
+    if(button.textContent!==buttonLabel&&button.textContent!=='Moving…')button.textContent=buttonLabel;
+  });
+}
 const observer=new MutationObserver(addAttendanceControls);observer.observe(document.documentElement,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',addAttendanceControls);addAttendanceControls();
 function cleanText(el){return(el?.textContent||'').replace(/\s+/g,' ').trim();}function escapeReport(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));}
 function rowInspectionStatus(row){if(row.classList.contains('needs_correction'))return 'Needs correction';if(row.classList.contains('refused'))return 'Refused';if(row.classList.contains('approved'))return 'Approved';const tag=cleanText(row.querySelector('.rowhead .tag')).toLowerCase().replace(/\s+/g,'_');if(tag==='needs_correction')return 'Needs correction';if(tag==='refused')return 'Refused';if(tag==='approved')return 'Approved';return 'Pending inspection';}
