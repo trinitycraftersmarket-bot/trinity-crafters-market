@@ -305,3 +305,49 @@ button.stat-btn:active{transform:scale(.99)}
 .screen-enter{animation:fade .22s ease}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion: reduce){ .screen-enter{animation:none} }
+
+/* --- Stage 3b: Messages, vendor side, manager views ------------------- */
+/* Message threads (Vendor Messages + chat share the bubble language) */
+.msg-thread{display:grid;gap:10px;margin:12px 0}
+.msg{max-width:88%;padding:10px 12px;border-radius:14px;background:var(--card);border:1px solid var(--border)}
+.msg small{display:block;color:var(--muted);font-size:11.5px;margin-bottom:4px}
+.msg p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14.5px}
+.msg.mine{justify-self:end;background:#e7efe6;border-color:#bfd3c2}
+.msg.theirs{justify-self:start}
+.chat-thread{max-height:52dvh;overflow-y:auto;padding:4px}
+.chat-attachment{margin-top:8px}
+.chat-attachment-img{display:block;max-width:240px;width:100%;height:auto;border-radius:10px;border:1px solid var(--border)}
+.chat-file-link{display:inline-block;margin-top:4px;font-size:13px;font-weight:700;color:var(--green)}
+.chat-row{align-items:flex-start}
+.chat-meta{text-align:right;font-size:12px;color:var(--muted);white-space:nowrap}
+.chat-preview{display:block;color:var(--muted);margin-top:2px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Vendor Communications */
+.comm-recipients{margin:10px 0;padding-left:20px;font-size:13.5px;color:var(--muted);line-height:1.55;max-height:180px;overflow-y:auto}
+
+/* Social Media (Buffer) — disconnected channels stay visible, greyed */
+.channel-row.off{opacity:.55}
+.channel-row.off input{accent-color:#999}
+.social-preview-img{display:block;max-width:280px;width:100%;height:auto;border-radius:12px;border:1px solid var(--border);margin:6px 0}
+
+/* Vendor side: offers, check-in, floor plan highlight, apply */
+.offer-box{display:grid;gap:6px;background:#fdf6e0;border:1px solid #e4cf8f;border-radius:12px;padding:12px;margin:12px 0;font-size:14px}
+.checkin-box{display:grid;gap:4px;background:#eef4ee;border:1px solid var(--border);border-radius:12px;padding:12px;margin:12px 0;font-size:14px}
+.checkin-form{margin:12px 0}
+.fp-pin.mine{background:#f7c948;color:#3d2e00;border-color:#a97e00;box-shadow:0 0 0 3px rgba(247,201,72,.55),0 1px 3px rgba(18,63,56,.25);z-index:3}
+.fp-booth.mine{background:#fdf6e0;border-color:#e4cf8f;font-weight:700}
+.fp-mine-note{background:#fdf6e0;border:1px solid #e4cf8f;border-radius:12px;padding:10px 12px;font-size:14px;margin:0 0 10px}
+.fp-area-chips{margin:10px 0}
+.apply-date{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--border)}
+.apply-date:first-child{border-top:none}
+.apply-date .sheet-field{margin:0;min-width:170px}
+.photo-thumbs{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+.thumb{position:relative;display:inline-block}
+.thumb img{width:84px;height:84px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block}
+.thumb button{position:absolute;top:-8px;right:-8px;width:26px;height:26px;border-radius:50%;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:15px;line-height:1;cursor:pointer}
+.contract{margin:10px 0}
+.contract summary{cursor:pointer;font-weight:700;font-size:14px;padding:8px 0}
+.contract pre{white-space:pre-wrap;font:inherit;font-size:13px;line-height:1.55;background:var(--cream,#f6f3ec);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:300px;overflow-y:auto}
+.next-card h3{font-family:Georgia,serif;font-size:22px;margin:2px 0 6px}
+.search input{width:100%;padding:13px 12px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:15px;min-height:48px;margin:0 0 12px}
+.inspection-form{border-top:1px solid var(--border);margin-top:12px;padding-top:12px}

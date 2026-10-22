@@ -130,7 +130,7 @@ test('stage-3a modules exist and app.js routes to them', () => {
     assert.ok(app.includes(renderer), `app.js must dispatch to ${renderer}`);
   }
   const version = readFileSync(join(v2, 'js', 'version.js'), 'utf8');
-  assert.ok(version.includes("STAGE = 'Stage 3a'"), 'version.js must name Stage 3a');
+  assert.ok(version.includes("STAGE = 'Stage 3b'"), 'version.js must name the current stage (3b supersedes the 3a stamp)');
 });
 
 test('one floor-plan implementation: shared pin math lives only in floorplan.js', () => {
@@ -211,4 +211,95 @@ test('stage-3a components are styled', () => {
     assert.ok(css.includes(cls), `app.css must style ${cls} (stage-3a components)`);
   // Editor pins must be interactive where read-only pins are not.
   assert.ok(css.includes('.fe-pin{pointer-events:auto'), 'editor pins must re-enable pointer events');
+});
+
+test('stage-3b modules exist and app.js routes every role to them', () => {
+  for (const m of ['comms', 'threads', 'chat', 'social', 'rsvps', 'vendor', 'manager']) {
+    assert.ok(existsSync(join(v2, 'js', m + '.js')), `missing stage-3b module ${m}.js`);
+  }
+  const app = readFileSync(join(v2, 'js', 'app.js'), 'utf8');
+  for (const live of ['rsvps', 'comms', 'threads', 'chat', 'social']) {
+    assert.ok(app.includes(`live: '${live}'`), `section registry must wire live: '${live}'`);
+    assert.ok(app.includes(`'${live}'`), `router must accept the ${live} route`);
+  }
+  for (const renderer of ['renderComms', 'renderThreads', 'renderChatAdmin', 'renderChatVendor', 'renderSocial', 'renderRsvps',
+    'renderVendorHome', 'renderVendorBookings', 'renderVendorApply', 'renderVendorProfile',
+    'renderManagerHome', 'renderManagerEventDay', 'renderManagerApplications', 'renderManagerFloor']) {
+    assert.ok(app.includes(renderer), `app.js must dispatch to ${renderer}`);
+  }
+  // The role notice is gone: managers and vendors land in real shells,
+  // and every role's payload refresh goes through one dispatcher.
+  assert.ok(!app.includes('roleNotice'), 'stage 3b replaces the role notice with real manager/vendor shells');
+  assert.ok(app.includes("api('manager')"), 'the manager shell must load the manager payload');
+  assert.ok(app.includes("api('mine')"), 'the vendor shell must load the mine payload');
+  assert.ok(app.includes('refreshData'), 'app.js must expose the role-aware refreshData');
+  const moves = readFileSync(join(v2, 'js', 'moves.js'), 'utf8');
+  assert.ok(moves.includes('refreshData'), 'the shared move inbox must refresh through refreshData so managers can use it');
+});
+
+test('stage-3b messages screens use the legacy endpoints', () => {
+  const read = m => readFileSync(join(v2, 'js', m), 'utf8');
+  const comms = read('comms.js');
+  for (const s of ["fnq('communications', 'events')", "fnq('communications', 'history')", "fnq('communications', 'preview'", "fnq('communications', 'send'", '{{name}}', 'Use again as a template'])
+    assert.ok(comms.includes(s), `comms.js must include ${s}`);
+  const threads = read('threads.js');
+  assert.ok(threads.includes("api('messages')"), 'threads.js must use the messages action');
+  const chat = read('chat.js');
+  for (const s of ["'admin-dashboard'", "'admin-search'", "'admin-messages'", "'admin-reply'", "'admin-close'", "'admin-reopen'", "'admin-toggle'", "'admin-create-upload'", "'status'", "'start'", "'messages'", "'send'", "'create-upload'", 'uploadChatFile'])
+    assert.ok(chat.includes(s), `chat.js must use the live-chat action ${s}`);
+  const social = read('social.js');
+  for (const s of ["'buffer-social'", 'saveFacebookEvent', 'Disconnected', 'reconnect this channel in Buffer'])
+    assert.ok(social.includes(s), `social.js must include ${s}`);
+  // Disconnected channels are rendered greyed, never filtered away:
+  // the channel list filters by service only, and off channels get the
+  // 'off' treatment in the row markup.
+  assert.ok(social.includes("off ? 'off' : ''"), 'social.js must grey disconnected/locked channels instead of hiding them');
+  assert.ok(social.includes('.filter(c => /^(facebook|instagram)$/i.test(c.service'), 'the channel list must filter by service only, not by connection state');
+  const rsvps = read('rsvps.js');
+  assert.ok(rsvps.includes("'rsvp-list'"), 'rsvps.js must use the rsvp-list action');
+});
+
+test('stage-3b vendor side: bookings, apply and profile use the legacy contracts', () => {
+  const v = readFileSync(join(v2, 'js', 'vendor.js'), 'utf8');
+  for (const s of ["'vendor-setup-checkin'", "'waitlist-accept'", "'waitlist-decline'", "'vendor-credit'", "'move-requests'",
+    "'vendor-profile'", "'application-attempt'", "'upload-ticket'", "'upload-complete'", "'category-scan'", "'apply'",
+    'billing_address', 'renderVendorFloorPlan'])
+    assert.ok(v.includes(s), `vendor.js must use ${s}`);
+  // The apply payload keys are the server's: category + exception, and
+  // the signature rides inside agreements (the handler rejects without).
+  assert.ok(v.includes('category: categoryId'), 'apply must send the category id as `category`');
+  assert.ok(v.includes('exception: FV'), 'apply must send the exception text as `exception`');
+  assert.ok(v.includes('...agreements, signature'), 'apply must put the signature inside agreements');
+  // Profile address (owner requirement, Oct 22 eve): the field exists,
+  // is saved, and pre-fills the application's billing address.
+  assert.ok(v.includes('name="address"'), 'the profile form must include the address field');
+  assert.ok(v.includes("'address'"), 'the profile save must send address');
+  assert.ok(v.includes("F('billing_address').value = p.address"), 'apply must pre-fill billing address from the profile address');
+  assert.ok(v.includes('12 hours'), 'the waitlist offer must state the 12-hour window plainly');
+});
+
+test('stage-3b manager views are permission-scoped and payload-limited', () => {
+  const m = readFileSync(join(v2, 'js', 'manager.js'), 'utf8');
+  for (const s of ['managerAttendeeRows', 'renderSavedFloorPlan', "'imported-attendance'", "'inspection'", "'booking'", "'waitlist-offer'", "'checkin-reminder'", 'moves:approve'])
+    assert.ok(m.includes(s), `manager.js must include ${s}`);
+  // Booking-row inspections are not rendered: the manager payload does
+  // not carry them (managerAttendeeRows leaves inspection_status
+  // undefined for bookings and the screen keys off that).
+  const d = readFileSync(join(v2, 'js', 'data.js'), 'utf8');
+  assert.ok(d.includes('managerAttendeeRows'), 'data.js must build manager attendee rows');
+  assert.ok(d.includes('inspection_status: undefined'), 'manager booking rows must not invent inspection fields');
+});
+
+test('stage-3b vendor floor plan: multi-area, original image, own booth highlighted', () => {
+  const fp = readFileSync(join(v2, 'js', 'floorplan.js'), 'utf8');
+  assert.ok(fp.includes('export async function renderVendorFloorPlan'), 'floorplan.js must export the vendor renderer');
+  assert.ok(fp.includes('export function findVendorSpot'), 'floorplan.js must export the spot finder');
+  // All areas are iterated and switchable; the original uploaded image
+  // renders (image_data_url), never a drawn schematic.
+  assert.ok(fp.includes('data-fp-area'), 'the vendor plan must offer the other area plans as a switcher');
+  assert.ok(fp.includes('image_data_url'), 'the vendor plan must render the original uploaded layout image');
+  assert.ok(fp.includes("' mine'"), 'the vendor renderer must highlight the vendor\'s own pin/booth');
+  const css = readFileSync(join(v2, 'css', 'app.css'), 'utf8');
+  for (const cls of ['.fp-pin.mine', '.fp-booth.mine', '.fp-mine-note', '.msg-thread', '.msg.mine', '.offer-box', '.checkin-box', '.comm-recipients', '.channel-row.off', '.apply-date', '.photo-thumbs', '.social-preview-img', '.chat-attachment-img'])
+    assert.ok(css.includes(cls), `app.css must style ${cls} (stage-3b components)`);
 });
