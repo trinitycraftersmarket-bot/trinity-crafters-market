@@ -105,6 +105,7 @@ export function renderVendors(ctx, root) {
         <label class="sheet-field">Business<input name="business" value="${esc(p.business || v.business || '')}"></label>
         <label class="sheet-field">Contact name<input name="name" value="${esc(p.name || v.name || '')}"></label>
         <label class="sheet-field">Phone<input name="phone" value="${esc(p.phone || v.phone || '')}"></label>
+        <label class="sheet-field">Address<textarea name="address" rows="2">${esc(p.address || v.billing_address || '')}</textarea></label>
         <label class="sheet-field">Category<select name="category_id"><option value="">No category</option>${cats.map(c => `<option value="${esc(c.id)}" ${String(p.category_id || '') === String(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
         <label class="sheet-field">Space preference<select name="space_preference">
           <option value="" ${!p.space_preference ? 'selected' : ''}>Not set</option>
@@ -121,7 +122,7 @@ export function renderVendors(ctx, root) {
       e.preventDefault();
       const fd = new FormData(e.target);
       const body = { action: 'organizer-save', email: v.email };
-      for (const k of ['name', 'business', 'phone', 'description', 'website', 'social_links', 'space_preference', 'category_id']) {
+      for (const k of ['name', 'business', 'phone', 'address', 'description', 'website', 'social_links', 'space_preference', 'category_id']) {
         const val = fd.get(k);
         if (val !== null) body[k] = val;
       }

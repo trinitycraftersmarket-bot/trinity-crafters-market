@@ -22,7 +22,7 @@ export const emailKey = e => String(e || '').trim().toLowerCase().replace(/,+$/,
 
 // The fields that make a profile "complete" (§13.7): everything the apply
 // form asks for that a profile can answer, plus the profile-only extras.
-export const COMPLETENESS_FIELDS = ['business', 'name', 'category_id', 'description', 'phone', 'space_preference', 'website', 'social_links'];
+export const COMPLETENESS_FIELDS = ['business', 'name', 'category_id', 'description', 'phone', 'address', 'space_preference', 'website', 'social_links'];
 
 export const SPACE_PREFERENCES = ['', 'indoor', 'outdoor', 'none'];
 
@@ -37,6 +37,7 @@ export async function ensureProfileSchema(sql) {
     category_id uuid references market.categories(id),
     description text not null default '',
     phone text not null default '',
+    address text not null default '',
     space_preference text not null default '' check (space_preference in ('', 'indoor', 'outdoor', 'none')),
     website text not null default '',
     social_links text not null default '',
@@ -44,6 +45,8 @@ export async function ensureProfileSchema(sql) {
     claimed_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now())`;
+  // Address shipped after the table first did — add it to existing tables.
+  await sql`alter table market.vendor_profiles add column if not exists address text not null default ''`;
   await sql`create index if not exists vendor_profiles_user_idx on market.vendor_profiles(user_id)`;
 }
 
@@ -61,7 +64,7 @@ export function presentProfile(row) {
   return {
     id: row.id, user_id: row.user_id || null, email: row.email, vendor_id: row.vendor_id || null,
     name: row.name || '', business: row.business || '', category_id: row.category_id || null,
-    description: row.description || '', phone: row.phone || '',
+    description: row.description || '', phone: row.phone || '', address: row.address || '',
     space_preference: row.space_preference || '', website: row.website || '', social_links: row.social_links || '',
     linked_imported_ids: Array.isArray(row.linked_imported_ids) ? row.linked_imported_ids : [],
     claimed_at: row.claimed_at || null, updated_at: row.updated_at || null,
@@ -72,7 +75,7 @@ export function presentProfile(row) {
 // The subset the application form pre-fills (§13.7).
 export function applyPrefill(row) {
   if (!row) return null;
-  return {name: row.name || '', business: row.business || '', phone: row.phone || '', description: row.description || '', category_id: row.category_id || null, space_preference: row.space_preference || ''};
+  return {name: row.name || '', business: row.business || '', phone: row.phone || '', address: row.address || '', description: row.description || '', category_id: row.category_id || null, space_preference: row.space_preference || ''};
 }
 
 const cleanText = (v, max) => v == null ? undefined : String(v).trim().slice(0, max);
@@ -95,6 +98,7 @@ export function cleanProfileFields(p = {}) {
   if ('name' in p) out.name = cleanText(p.name, 200) ?? '';
   if ('business' in p) out.business = cleanText(p.business, 200) ?? '';
   if ('description' in p) out.description = cleanText(p.description, 5000) ?? '';
+  if ('address' in p) out.address = cleanText(p.address, 500) ?? '';
   if ('website' in p) out.website = cleanText(p.website, 500) ?? '';
   if ('social_links' in p) out.social_links = cleanText(p.social_links, 1000) ?? '';
   if ('phone' in p) {
@@ -139,7 +143,7 @@ async function writeProfile(sql, existing, row) {
   if (existing) {
     const [saved] = await sql`update market.vendor_profiles set
       user_id = ${row.user_id}, email = ${row.email}, vendor_id = ${row.vendor_id}, name = ${row.name}, business = ${row.business},
-      category_id = ${row.category_id}, description = ${row.description}, phone = ${row.phone},
+      category_id = ${row.category_id}, description = ${row.description}, phone = ${row.phone}, address = ${row.address},
       space_preference = ${row.space_preference}, website = ${row.website}, social_links = ${row.social_links},
       linked_imported_ids = ${JSON.stringify(row.linked_imported_ids || [])}::jsonb,
       claimed_at = ${row.claimed_at}, updated_at = now()
@@ -147,13 +151,13 @@ async function writeProfile(sql, existing, row) {
     return saved;
   }
   const [saved] = await sql`insert into market.vendor_profiles
-    (user_id, email, vendor_id, name, business, category_id, description, phone, space_preference, website, social_links, linked_imported_ids, claimed_at)
-    values (${row.user_id}, ${row.email}, ${row.vendor_id}, ${row.name}, ${row.business}, ${row.category_id}, ${row.description}, ${row.phone}, ${row.space_preference}, ${row.website}, ${row.social_links}, ${JSON.stringify(row.linked_imported_ids || [])}::jsonb, ${row.claimed_at})
+    (user_id, email, vendor_id, name, business, category_id, description, phone, address, space_preference, website, social_links, linked_imported_ids, claimed_at)
+    values (${row.user_id}, ${row.email}, ${row.vendor_id}, ${row.name}, ${row.business}, ${row.category_id}, ${row.description}, ${row.phone}, ${row.address}, ${row.space_preference}, ${row.website}, ${row.social_links}, ${JSON.stringify(row.linked_imported_ids || [])}::jsonb, ${row.claimed_at})
     returning *`;
   return saved;
 }
 
-const blankRow = email => ({user_id: null, email, vendor_id: null, name: '', business: '', category_id: null, description: '', phone: '', space_preference: '', website: '', social_links: '', linked_imported_ids: [], claimed_at: null});
+const blankRow = email => ({user_id: null, email, vendor_id: null, name: '', business: '', category_id: null, description: '', phone: '', address: '', space_preference: '', website: '', social_links: '', linked_imported_ids: [], claimed_at: null});
 
 // Find the canonical profile for an account: the row keyed by the current
 // verified email wins; a row found only by user_id is the same vendor
@@ -166,7 +170,7 @@ export async function resolveProfile(sql, {userId = null, email = null} = {}) {
   const byUser = userId ? await getProfile(sql, {userId}) : null;
   if (byEmail && byUser && byEmail.id !== byUser.id) {
     const merged = {...byEmail};
-    for (const f of ['name', 'business', 'description', 'phone', 'space_preference', 'website', 'social_links']) if (!merged[f]) merged[f] = byUser[f] || '';
+    for (const f of ['name', 'business', 'description', 'phone', 'address', 'space_preference', 'website', 'social_links']) if (!merged[f]) merged[f] = byUser[f] || '';
     merged.category_id = byEmail.category_id || byUser.category_id || null;
     merged.vendor_id = byEmail.vendor_id || byUser.vendor_id || null;
     merged.linked_imported_ids = [...new Set([...(byEmail.linked_imported_ids || []), ...(byUser.linked_imported_ids || [])].map(String))];
@@ -196,10 +200,14 @@ export async function saveProfile(sql, user, fields = {}) {
 // Apply-flow upsert (§13.7): submitting an application refreshes the
 // profile with the values the vendor actually used. The five form fields
 // are all required by the form, so they overwrite; profile-only fields
-// (space preference, website, social links) are left alone.
+// (space preference, website, social links) are left alone. The form's
+// Billing address becomes the profile address when the application
+// provides one — a blank billing address never clears a saved address.
 export async function upsertProfileFromApplication(sql, {user, vendorId = null, fields = {}}) {
   await ensureProfileSchema(sql);
-  const clean = cleanProfileFields({name: fields.name, business: fields.business, phone: fields.phone, description: fields.description, category_id: fields.category_id});
+  const appFields = {name: fields.name, business: fields.business, phone: fields.phone, description: fields.description, category_id: fields.category_id};
+  if (typeof fields.billing_address === 'string' && fields.billing_address.trim()) appFields.address = fields.billing_address;
+  const clean = cleanProfileFields(appFields);
   const existing = await resolveProfile(sql, {userId: user.id, email: user.email});
   const row = {...blankRow(emailKey(user.email)), ...(existing || {}), ...clean, email: emailKey(user.email), user_id: user.id, vendor_id: vendorId || existing?.vendor_id || null};
   return writeProfile(sql, existing, row);

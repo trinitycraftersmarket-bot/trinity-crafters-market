@@ -58,11 +58,11 @@ test('profile: vendor self-save creates one row keyed by email, then updates it 
 });
 
 test('profile: completeness counts filled fields and names what is missing', async () => {
-  assert.deepEqual(profileCompleteness(null), {percent: 0, missing: ['business', 'name', 'category_id', 'description', 'phone', 'space_preference', 'website', 'social_links']});
-  assert.deepEqual(profileCompleteness({business: 'B', name: 'N', category_id: 'x', description: 'D', phone: '1', space_preference: 'indoor', website: 'w', social_links: 's'}), {percent: 100, missing: []});
+  assert.deepEqual(profileCompleteness(null), {percent: 0, missing: ['business', 'name', 'category_id', 'description', 'phone', 'address', 'space_preference', 'website', 'social_links']});
+  assert.deepEqual(profileCompleteness({business: 'B', name: 'N', category_id: 'x', description: 'D', phone: '1', address: 'A', space_preference: 'indoor', website: 'w', social_links: 's'}), {percent: 100, missing: []});
   const half = profileCompleteness({business: 'B', name: 'N', phone: '1', description: 'D'});
-  assert.equal(half.percent, 50);
-  assert.deepEqual(half.missing, ['category_id', 'space_preference', 'website', 'social_links']);
+  assert.equal(half.percent, 44); // 4 of 9
+  assert.deepEqual(half.missing, ['category_id', 'address', 'space_preference', 'website', 'social_links']);
 });
 
 test('profile: application submit creates the profile; a later submit refreshes it', async () => {
@@ -89,10 +89,48 @@ test('profile: application submit creates the profile; a later submit refreshes 
 test('profile: applyPrefill maps the stored profile to the application form fields', async () => {
   const {sql, cats} = await seededDb();
   const u = user('prefill@example.com');
-  const saved = await saveProfile(sql, u, {business: 'Prefill Co', name: 'Pat', category_id: cats.Candles, phone: '7275550100', description: 'Candles', space_preference: 'none', website: 'https://p.example'});
-  assert.deepEqual(applyPrefill(saved), {name: 'Pat', business: 'Prefill Co', phone: '7275550100', description: 'Candles', category_id: cats.Candles, space_preference: 'none'});
+  const saved = await saveProfile(sql, u, {business: 'Prefill Co', name: 'Pat', category_id: cats.Candles, phone: '7275550100', address: '12 Market St, Odessa, FL 33556', description: 'Candles', space_preference: 'none', website: 'https://p.example'});
+  assert.deepEqual(applyPrefill(saved), {name: 'Pat', business: 'Prefill Co', phone: '7275550100', address: '12 Market St, Odessa, FL 33556', description: 'Candles', category_id: cats.Candles, space_preference: 'none'});
   assert.equal(applyPrefill(null), null);
-  assert.equal(presentProfile(saved).completeness.percent, 88); // 7 of 8 (social links empty)
+  assert.equal(presentProfile(saved).completeness.percent, 89); // 8 of 9 (social links empty)
+});
+
+test('profile: address round-trips through self-save, organizer save, and partial saves', async () => {
+  const {sql} = await seededDb();
+  const u = user('addr@example.com');
+  const saved = await saveProfile(sql, u, {business: 'Addr Co', address: '  44 Pine Ave\nOdessa, FL 33556  '});
+  assert.equal(saved.address, '44 Pine Ave\nOdessa, FL 33556'); // trimmed, inner newline kept
+  assert.equal(presentProfile(saved).address, '44 Pine Ave\nOdessa, FL 33556');
+  // A partial save that omits address preserves it.
+  const partial = await saveProfile(sql, u, {phone: '7275550100'});
+  assert.equal(partial.address, '44 Pine Ave\nOdessa, FL 33556');
+  // The organizer edits the same row's address from the Vendors panel.
+  const org = await organizerSaveProfile(sql, {actor: {email: 'org@example.com'}, email: 'addr@example.com', fields: {address: '9 New Rd, Lutz, FL 33558'}});
+  assert.equal(org.id, saved.id);
+  assert.equal(org.address, '9 New Rd, Lutz, FL 33558');
+  const got = await getProfile(sql, {email: 'addr@example.com'});
+  assert.equal(got.address, '9 New Rd, Lutz, FL 33558');
+  // An explicit empty save clears it on purpose.
+  const cleared = await saveProfile(sql, u, {address: ''});
+  assert.equal(cleared.address, '');
+});
+
+test('profile: application submit captures billing_address; a blank one never clears it', async () => {
+  const {sql, cats} = await seededDb();
+  const u = user('billaddr@example.com');
+  const [master] = await sql`insert into market.vendors(name,business,email,phone) values('Bea','Bea Beads','billaddr@example.com','7275550100') returning id`;
+  await upsertProfileFromApplication(sql, {user: u, vendorId: master.id, fields: {name: 'Bea', business: 'Bea Beads', phone: '7275550100', description: 'Beads', category_id: cats.Bags, billing_address: '77 Gulf Blvd, Tampa, FL 33607'}});
+  let p = await getProfile(sql, {email: 'billaddr@example.com'});
+  assert.equal(p.address, '77 Gulf Blvd, Tampa, FL 33607');
+  assert.equal(applyPrefill(p).address, '77 Gulf Blvd, Tampa, FL 33607'); // pre-fills the next application's Billing address
+  // A later application with no billing address leaves the saved one alone.
+  await upsertProfileFromApplication(sql, {user: u, vendorId: master.id, fields: {name: 'Bea', business: 'Bea Beads', phone: '7275550100', description: 'Beads', category_id: cats.Bags, billing_address: '   '}});
+  p = await getProfile(sql, {email: 'billaddr@example.com'});
+  assert.equal(p.address, '77 Gulf Blvd, Tampa, FL 33607');
+  // A new billing address on a later application replaces it.
+  await upsertProfileFromApplication(sql, {user: u, vendorId: master.id, fields: {name: 'Bea', business: 'Bea Beads', phone: '7275550100', description: 'Beads', category_id: cats.Bags, billing_address: '1 Moved St, Odessa, FL 33556'}});
+  p = await getProfile(sql, {email: 'billaddr@example.com'});
+  assert.equal(p.address, '1 Moved St, Odessa, FL 33556');
 });
 
 test('imported match: verified email matches imported rows across events; a different email matches none', async () => {
@@ -181,9 +219,13 @@ test('wiring: api.mjs claims on mine and upserts on apply; vendor-profile functi
   const api = await readFile('netlify/functions/api.mjs', 'utf8');
   assert.ok(api.includes('claimImported(sql,u)'), 'mine payload records the imported claim');
   assert.ok(api.includes('upsertProfileFromApplication(tx,'), 'apply upserts the profile');
+  assert.ok(api.includes('billing_address:p.billing_address'), 'apply passes billing_address to the profile upsert');
+  assert.ok(api.includes("'address',p.address"), 'vendor-list profile payload carries address');
   assert.ok(api.includes('from market.vendor_profiles p where p.email='), 'vendor-list carries the profile');
   const fn = await readFile('netlify/functions/vendor-profile.mjs', 'utf8');
   for (const action of ["'get'", "'save'", "'organizer-get'", "'organizer-save'"]) assert.ok(fn.includes(`p.action === ${action}`), `vendor-profile handles ${action}`);
+  assert.ok(fn.includes("'address'"), 'vendor-profile forwards address in save payloads');
   const migration = await readFile('database/vendor-profiles.sql', 'utf8');
   assert.ok(migration.includes('create table if not exists market.vendor_profiles'));
+  assert.ok(migration.includes('address text not null'), 'migration carries the address column');
 });
