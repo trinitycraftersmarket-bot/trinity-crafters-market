@@ -19,7 +19,12 @@ test('Manager permissions are enforced by feature',()=>{
 test('API rejects direct Manager configuration and financial calls before SQL',async()=>{
  let source=await readFile('netlify/functions/api.mjs','utf8');
  source=source.replace(/^import .*;\n/gm,'');
- const mock=`const staffActionAllowed=${staffActionAllowed.toString()}; const hasStaffPermission=${hasStaffPermission.toString()}; const ready=()=>true; const identity=async()=>({admin:false,manager:true,permissions:['applications','attendees','waitlist','shopper_rsvps','vendor_messages'],email:'manager@example.test'}); const db=()=>()=>{throw Error('Unexpected database access');};\n`;
+ // Inline the REAL permissions module (audit 7.4.3): stringifying the two
+ // exported functions (the old harness) silently drops the module-scope
+ // ACTION_PERMISSION map, so staffActionAllowed threw ReferenceError inside
+ // the handler and the api catch-all masked it as 400 instead of 403.
+ const permissions=(await readFile('server/permissions.mjs','utf8')).replace(/^export /gm,'');
+ const mock=permissions+`const ready=()=>true; const identity=async()=>({admin:false,manager:true,permissions:['applications','attendees','waitlist','shopper_rsvps','vendor_messages'],email:'manager@example.test'}); const db=()=>()=>{throw Error('Unexpected database access');};\n`;
  const {default:handler}=await import('data:text/javascript;base64,'+Buffer.from(mock+source).toString('base64'));
  for(const action of ['admin','expense','staff-save','event','location','ban','sync']){
   const response=await handler(new Request('https://market.test/.netlify/functions/api?action='+action,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}));assert.equal(response.status,403,action);
