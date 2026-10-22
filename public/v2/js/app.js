@@ -9,17 +9,17 @@
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-2';
-import { VERSION, STAGE } from './version.js?v=20261022-2';
-import { renderHome } from './home.js?v=20261022-2';
-import { renderEventDay } from './eventday.js?v=20261022-2';
-import { renderAttendees } from './attendees.js?v=20261022-2';
-import { renderApplications } from './applications.js?v=20261022-2';
-import { renderWaitlist } from './waitlist.js?v=20261022-2';
-import { renderMoves } from './moves.js?v=20261022-2';
-import { renderVendors } from './vendors.js?v=20261022-2';
-import { renderPayments } from './payments.js?v=20261022-2';
-import { renderInvoices } from './invoices.js?v=20261022-2';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-3';
+import { VERSION, STAGE } from './version.js?v=20261022-3';
+import { renderHome } from './home.js?v=20261022-3';
+import { renderEventDay } from './eventday.js?v=20261022-3';
+import { renderAttendees } from './attendees.js?v=20261022-3';
+import { renderApplications } from './applications.js?v=20261022-3';
+import { renderWaitlist } from './waitlist.js?v=20261022-3';
+import { renderMoves } from './moves.js?v=20261022-3';
+import { renderVendors } from './vendors.js?v=20261022-3';
+import { renderPayments } from './payments.js?v=20261022-3';
+import { renderInvoices } from './invoices.js?v=20261022-3';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
