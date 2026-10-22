@@ -106,7 +106,8 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     '<p class="muted">Choose an area, review the floor plan, then assign vendors by booth number. These plans belong only to the selected event.</p>'+
     '<div class="actions" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">'+
       '<label style="flex:1;min-width:165px">Floor plan area<select id="fam-area"></select></label>'+
-      '<button type="button" id="fam-print" class="secondary" style="flex:0 0 auto">Print booth list</button>'+ 
+      '<button type="button" id="fam-print" class="secondary" style="flex:0 0 auto">Print booth list</button>'+
+      '<button type="button" id="fam-print-plan" class="secondary" style="flex:0 0 auto">Print floor plan</button>'+
       '<button type="button" id="fam-save" style="flex:0 0 auto">Save changes</button>'+
       '<button type="button" id="fam-refresh" class="secondary" style="flex:0 0 auto">Refresh shared plans</button>'+
     '</div>'+
@@ -248,8 +249,12 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       const vendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id));
       if(!vendor)continue;
       const fallback=autoLabelPosition(a,i);
-      const x=Number.isFinite(Number(entry.x))&&entry.x!=null?Number(entry.x):fallback.x;
-      const y=Number.isFinite(Number(entry.y))&&entry.y!=null?Number(entry.y):fallback.y;
+      // Stored positions may be stale or extreme (e.g. x=100 saved by an older
+      // build). Clamp them into the plan here; the fit pass after append pulls
+      // the label fully inside based on its measured size.
+      const clampPct=(v,f)=>{const n=Number(v);return v!=null&&Number.isFinite(n)?Math.max(0,Math.min(100,n)):f;};
+      let x=clampPct(entry.x,fallback.x);
+      let y=clampPct(entry.y,fallback.y);
       const pin=document.createElement('button');pin.type='button';pin.className='fam-pin';
       pin.style.cssText='position:absolute;z-index:2;left:'+x+'%;top:'+y+'%;transform:translate(-50%,-50%);background:rgba(255,255,255,.97);color:#103e35;border:1px solid #16594a;border-radius:6px;font-size:clamp(9px,1.3vw,12px);line-height:1.15;font-weight:700;padding:5px 7px;max-width:26%;box-shadow:0 1px 3px #777;cursor:grab;overflow-wrap:anywhere;text-align:center;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none';
       pin.textContent=String(vendor.business||vendor.name);
@@ -274,8 +279,11 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
         if(!bounds.width||!bounds.height)return;
         const shiftX=ev.clientX-drag.screenX,shiftY=ev.clientY-drag.screenY;
         if(Math.hypot(shiftX,shiftY)>3)drag.moved=true;
-        const halfWidth=pin.offsetWidth/bounds.width*50;
-        const halfHeight=pin.offsetHeight/bounds.height*50;
+        // If the label has not been measured yet (dragged before layout or
+        // before the plan image loaded), fall back to typical label extents
+        // so a drag can never save an extreme edge value such as 100%.
+        const halfWidth=pin.offsetWidth?pin.offsetWidth/bounds.width*50:13;
+        const halfHeight=pin.offsetHeight?pin.offsetHeight/bounds.height*50:3;
         const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
         const nextX=clamp(drag.x+shiftX/bounds.width*100,halfWidth,100-halfWidth);
         const nextY=clamp(drag.y+shiftY/bounds.height*100,halfHeight,100-halfHeight);
@@ -311,6 +319,14 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       });
       pin.addEventListener('click',ev=>ev.stopPropagation());
       map.appendChild(pin);
+      // Fit pass: measure the label and pull its center back so the whole
+      // label sits inside the plan. Without this, a label centered near an
+      // edge renders half off the plan — or, at left:100%, collapses into a
+      // one-character-wide vertical strip.
+      (()=>{const mw=map.clientWidth,mh=map.clientHeight,pw=pin.offsetWidth,ph=pin.offsetHeight;
+        if(mw&&mh&&pw&&ph){const hw=pw/mw*50,hh=ph/mh*50;
+          x=Math.max(hw,Math.min(100-hw,x));y=Math.max(hh,Math.min(100-hh,y));
+          pin.style.left=x+'%';pin.style.top=y+'%';}})();
     }
   }
   function render(){
@@ -430,7 +446,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}'+
       '@media print{.button-row{display:none!important}}';
     const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(title)+'</title><style>'+stylesheet+'</style></head><body>'+
-      '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button></div>'+
+      '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close()">✕ Close</button></div>'+
       '<header><h1>'+safe(title)+'</h1><p><strong>'+safe(dateText)+'</strong> · '+safe(venue?.name||event.title||'')+'</p>'+
       (venue?.address?'<p>'+safe(venue.address)+'</p>':'')+
       '<p class="private">Private organizer copy — do not distribute to vendors</p>'+
@@ -468,7 +484,53 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       render();
     }catch(e){status('Could not load area plans: '+e.message);}
   }
+  function printFloorPlan(){
+    const area=current();
+    if(!area){notice('Choose a floor plan area first.');return;}
+    const event=events.find(e=>e.id===state.eventId);
+    const pins=[];
+    for(let i=0;i<area.capacity;i++){
+      const id=spot(area,i),entry=area.assignments[id]||{};
+      if(!entry.vendor_id)continue;
+      const vendor=state.vendors.find(v=>String(v.id)===String(entry.vendor_id));
+      if(!vendor)continue;
+      const fallback=autoLabelPosition(area,i);
+      // Clamp into a safe envelope (labels are up to ~26% wide) so no name
+      // card is clipped at the printed page edges, whatever was stored.
+      const clampPin=(v,f,lo,hi)=>{const n=Number(v);return v!=null&&Number.isFinite(n)?Math.max(lo,Math.min(hi,n)):Math.max(lo,Math.min(hi,f));};
+      pins.push({label:String(vendor.business||vendor.name||'Vendor'),x:clampPin(entry.x,fallback.x,13,87),y:clampPin(entry.y,fallback.y,3,97)});
+    }
+    if(!pins.length){notice('No vendors are assigned in '+area.title+' yet. Assign vendors before printing the floor plan.');return;}
+    const hasImage=imageAllowed(area.image_data_url);
+    const pinHtml=pins.map(p=>'<div class="pin" style="left:'+p.x+'%;top:'+p.y+'%">'+safe(p.label)+'</div>').join('');
+    const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(String(event?.title||'Market')+' — '+area.title+' floor plan')+'</title><style>'+
+      '@page{size:letter portrait;margin:.3in}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;font-family:Arial,Helvetica,sans-serif}'+
+      '.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}'+
+      '.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}'+
+      '.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}'+
+      'h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.sub{margin:0 4px 10px;color:#44554c;font-size:10pt}'+
+      '.plan{position:relative;width:100%;max-width:7.9in;margin:0 auto;border:2px solid #174d40;background:#f7f3e7}'+
+      '.plan img{display:block;width:100%;height:auto}'+
+      '.plan .noimg{aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;color:#235044;padding:24px;text-align:center}'+
+      '.pin{position:absolute;transform:translate(-50%,-50%);background:rgba(255,255,255,.97);color:#103e35;border:1.5px solid #16594a;border-radius:6px;font-size:10.5pt;line-height:1.15;font-weight:700;padding:4px 7px;max-width:26%;text-align:center;overflow-wrap:anywhere}'+
+      '@media print{.tools{display:none!important}}'+
+      '</style></head><body>'+
+      '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close()">✕ Close</button></div>'+
+      '<h1>'+safe(area.title)+' — floor plan</h1><p class="sub">'+safe(event?String(event.date||''):'')+' · '+pins.length+' vendor'+(pins.length===1?'':'s')+' placed</p>'+
+      '<div class="plan">'+(hasImage?'<img alt="Venue floor plan" src="'+area.image_data_url+'">':'<div class="noimg">No floor plan image uploaded for '+safe(area.title)+'. Name positions are shown on a blank room outline.</div>')+pinHtml+'</div>'+
+      '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},250);});<\/script>'+
+      '</body></html>';
+    // Open directly in this click handler, before browser popup protections apply.
+    const popup=window.open('','_blank');
+    if(!popup){notice('Your browser blocked the print window. Allow pop-ups for this site and try again.');return;}
+    popup.document.open();
+    popup.document.write(doc);
+    popup.document.close();
+    popup.focus();
+    status('Printable floor plan opened in a new tab with '+pins.length+' vendor name(s). Use its ✕ Close button to come back.');
+  }
   q('fam-print').onclick=printAssignments;
+  q('fam-print-plan').onclick=printFloorPlan;
   q('fam-area').onchange=e=>{state.active=Number(e.target.value)||0;state.selectedSpot=null;state.placing=null;state.showNames=true;render();};
   q('fam-remove').onclick=()=>{
     const a=current(),id=state.selectedSpot,entry=a?.assignments?.[id];
