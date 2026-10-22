@@ -27,7 +27,9 @@ export default async req => {
     if (p.action === 'get') {
       // Opening My Profile is also the claiming moment (§13.5): any
       // imported records matching the verified email attach to the profile.
-      const claim = await claimImported(sql, u);
+      let claim = {matched: 0};
+      try { claim = await claimImported(sql, u); }
+      catch (e) { console.error('Profile claiming failed; profile load unaffected', e); }
       const row = await getProfile(sql, {userId: u.id, email: u.email});
       return json({ok: true, profile: presentProfile(row), prefill: applyPrefill(row), imported_matched: claim.matched});
     }

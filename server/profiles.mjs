@@ -252,6 +252,16 @@ export async function claimImported(sql, user) {
     vendor_id: existing?.vendor_id || (vendorIds.length === 1 ? vendorIds[0] : null),
     linked_imported_ids: linked,
     claimed_at: existing?.claimed_at || new Date()};
-  const saved = await writeProfile(sql, existing, row);
+  let saved;
+  try {
+    saved = await writeProfile(sql, existing, row);
+  } catch (e) {
+    // Live-data guard: an imported row can carry a vendor_id that no longer
+    // resolves in market.vendors (merged/deleted vendor records). The claim
+    // itself must not fail over a dangling link — retry unlinked.
+    if (row.vendor_id == null) throw e;
+    console.error('claimImported: write failed with vendor_id, retrying unlinked', e);
+    saved = await writeProfile(sql, existing, {...row, vendor_id: null});
+  }
   return {profile: presentProfile(saved), matched: matches.length, importedIds: ids};
 }
