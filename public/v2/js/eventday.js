@@ -89,7 +89,11 @@ export function renderEventDay(ctx, root, params = {}) {
     <div class="vendor-list" id="v2-vendor-list"></div>
     <h3 class="section-title" id="v2-floorplan-title">Floor plan</h3>
     <section class="card fp-card"><div id="v2-floorplan"></div></section>
-    <p class="note">Floor plan editing stays in Setup &amp; floor plan for this stage — this is the saved plan, exactly as arranged there.</p>`;
+    <div class="vendor-actions">
+      <button class="btn small" id="v2-open-editor">Open the floor plan editor</button>
+    </div>
+    <p class="note">This is the saved plan, exactly as arranged in the editor — same data, same positions.</p>`;
+  root.querySelector('#v2-open-editor').onclick = () => ctx.navigate('flooredit', { event: String(event.id) });
 
   const draw = () => {
     const fresh = ctx.state.admin;
