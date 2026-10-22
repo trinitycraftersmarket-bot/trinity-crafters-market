@@ -1,5 +1,6 @@
 import {ready,db,flushMail,queue,audit,supa} from '../../server/core.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
+import {scanAllFutureWaitlists,scanWaitlist,sweepWaitlist} from '../../server/waitlist.mjs';
 
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
 async function paypalToken(){
@@ -25,7 +26,7 @@ const displayDate=v=>{
 async function handleHeldPayments(){
  const sql=db(),token=await paypalToken();
  const held=await sql`
-  select b.id,b.invoice_reference,b.hold_until,b.price,b.space,a.name,a.business,a.email,e.date,l.name location,
+  select b.id,b.event_id,b.invoice_reference,b.hold_until,b.price,b.space,a.name,a.business,a.email,e.date,l.name location,
     coalesce((select max(x.created_at) from market.audit x where x.detail->>'id'=b.id::text and x.action in ('paypal invoice sent','booking held')),b.hold_until-interval '24 hours') as held_at
   from market.bookings b
   join market.applications a on a.id=b.application_id
@@ -55,7 +56,7 @@ async function handleHeldPayments(){
    const [current]=await sql`select status from market.bookings where id=${b.id}`;
    if(current?.status==='held'){
     const day=displayDate(b.date),body=`Hi ${b.name},\n\nYour Trinity Crafters Market reservation for ${day} has been automatically cancelled because payment was not received within 24 hours of the invoice being sent.\n\nThe space has now been released and may be booked by another vendor. If you would still like to attend this market, you will need to submit a new application, subject to current availability.\n\nMarket: ${b.location}\nSpace: ${b.space==='indoor'?'Indoor':'Outdoor'}\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
-    await sql.begin(async tx=>{await tx`update market.bookings set status='cancelled',hold_until=null where id=${b.id} and status='held'`;await queue(tx,b.email,`Reservation cancelled — ${day}`,body);await audit(tx,'system','payment hold auto-cancelled',{id:b.id,held_at:heldAt.toISOString(),cancel_at:cancelAt.toISOString()});});
+    await sql.begin(async tx=>{await tx`update market.bookings set status='cancelled',hold_until=null where id=${b.id} and status='held'`;await queue(tx,b.email,`Reservation cancelled — ${day}`,body);await audit(tx,'system','payment hold auto-cancelled',{id:b.id,held_at:heldAt.toISOString(),cancel_at:cancelAt.toISOString()});});await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await scanWaitlist(tx,b.event_id,{space:b.space,actor:'system'});});
    }
   }
  }
@@ -168,9 +169,14 @@ async function dailySystemBackup(){
  if(error){await audit(sql,'system','automatic system backup failed',{error:error.message});return;}
  await audit(sql,'system','automatic system backup created',{path,size:bytes.length});
 }
+async function handleWaitlistOffers(){
+ const sql=db();
+ await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await sweepWaitlist(tx,'system');await scanAllFutureWaitlists(tx,'system');});
+}
 export default async()=>{
  if(!ready())return;
  await handleHeldPayments();
+ await handleWaitlistOffers();
  await sendDayBeforeVendorReminders();
  await sendPostMarketSurveys();
  await applyMonthlyLateFees();
