@@ -208,6 +208,54 @@ button.stat-btn:active{transform:scale(.99)}
 .fp-booths{max-width:680px;margin:12px auto 18px}
 .fp-booth{display:flex;justify-content:space-between;gap:12px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;margin:4px 0;font-size:13.5px;background:var(--card-2)}
 
+/* Stage 2: filters, flags, payment log, directory details */
+.filter-card{padding:14px;margin-bottom:14px}
+.filter-card .search{margin-bottom:10px}
+.filter-card .filters{margin-bottom:0}
+.filter-row{display:grid;gap:10px;margin-bottom:14px}
+.filter-card .filter-row{margin-bottom:0}
+.filter-row .picker-label{margin-bottom:0}
+.filter-row .search{margin-bottom:0}
+@media (min-width:760px){ .filter-row{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));align-items:end} }
+.grow{flex:1;min-width:200px}
+.flag-note{background:var(--red-bg);border:1px solid var(--red-border);color:var(--red-text);border-radius:10px;padding:8px 10px}
+.flag-note strong{color:var(--red-text)}
+.checkline{display:flex;gap:10px;align-items:flex-start;font-size:14.5px;font-weight:600;margin:10px 0;line-height:1.45}
+.checkline input{width:22px;height:22px;flex-shrink:0;margin:1px 0 0;accent-color:var(--green)}
+.select-line{margin:0;align-items:center;font-size:13.5px}
+.sheet-photo{display:block;max-width:100%;border-radius:12px;margin-top:10px}
+.amount-due{font-size:19px;white-space:nowrap}
+.att-tools{margin-top:14px}
+.section-title.first{margin-top:0}
+.invite-card{padding:16px;margin-bottom:14px}
+.vdetails{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
+.vdetails summary{cursor:pointer;font-weight:700;color:var(--green-2);padding:8px 0;min-height:40px}
+@media (prefers-color-scheme: dark){ .vdetails summary{color:var(--gold)} }
+.mini-title{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+.mini-row{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin:4px 0;font-size:13px;background:var(--card-2)}
+.pay-group{margin-bottom:22px}
+.pay-group-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;margin:0 2px 8px}
+.pay-group-head h3{font-family:Georgia,serif;font-size:18px;margin:0;line-height:1.2}
+.pay-group-head span{font-size:12.5px;color:var(--muted);display:block;margin-top:2px}
+.pay-group-total{font-size:20px;font-weight:800;white-space:nowrap}
+.pay-card{overflow:hidden}
+.pay-row{display:grid;grid-template-columns:1fr auto;grid-template-areas:"who amt" "meta amt" "when amt";gap:3px 12px;padding:12px 16px;border-top:1px solid var(--border);align-items:center}
+.pay-row:first-child{border-top:none}
+.pay-who{grid-area:who;min-width:0}
+.pay-who strong{display:block;font-size:14.5px}
+.pay-who span{font-size:12.5px;color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis}
+.pay-meta{grid-area:meta;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pay-src{font-size:12px;color:var(--muted)}
+.pay-when{grid-area:when;font-size:12.5px;color:var(--muted)}
+.pay-when span{display:block}
+.pay-amt{grid-area:amt;font-size:16px;font-weight:800;text-align:right;white-space:nowrap}
+.pay-head{display:none}
+@media (min-width:900px){
+  .pay-row{grid-template-columns:1.4fr 1fr 1.3fr auto;grid-template-areas:"who meta when amt"}
+  .pay-head{display:grid;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--card-2)}
+  .pay-head .pay-when span{display:inline}
+}
+
 /* Sign-in + forms */
 .signin-card{padding:22px;margin-top:10px}
 .sheet-field{display:block;font-size:13px;font-weight:700;margin:0 0 14px}

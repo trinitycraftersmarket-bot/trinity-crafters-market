@@ -1,16 +1,25 @@
 // v2 app shell: header, 5-group navigation, hash router, sign-in, toast and
-// the one shared bottom sheet. Stage 1 wires Market Day (home + Event Day)
-// to live data; the other groups render their real section lists, with each
-// section opening a "next stage" placeholder until its stage is built.
+// the one shared bottom sheet. Stage 1 wired Market Day (home + Event Day);
+// Stage 2 adds Attendees management and the Vendors + Money screens
+// (Applications, Wait List, Move Requests, Vendor Directory, Payment Log,
+// Invoice Center). Sections not yet rebuilt open a "next stage" placeholder
+// and keep working in the current app.
 //
 // Navigation is defined in exactly one place (SECTIONS below) — the legacy
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-1';
-import { VERSION, STAGE } from './version.js?v=20261022-1';
-import { renderHome } from './home.js?v=20261022-1';
-import { renderEventDay } from './eventday.js?v=20261022-1';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-2';
+import { VERSION, STAGE } from './version.js?v=20261022-2';
+import { renderHome } from './home.js?v=20261022-2';
+import { renderEventDay } from './eventday.js?v=20261022-2';
+import { renderAttendees } from './attendees.js?v=20261022-2';
+import { renderApplications } from './applications.js?v=20261022-2';
+import { renderWaitlist } from './waitlist.js?v=20261022-2';
+import { renderMoves } from './moves.js?v=20261022-2';
+import { renderVendors } from './vendors.js?v=20261022-2';
+import { renderPayments } from './payments.js?v=20261022-2';
+import { renderInvoices } from './invoices.js?v=20261022-2';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -24,23 +33,23 @@ export const GROUPS = [
 export const SECTIONS = [
   // Market Day
   { key: 'event-day', group: 'market-day', label: 'Event Day', icon: '🎪', desc: 'Run the day — check-ins, inspections, live status', live: 'event-day' },
-  { key: 'attendees', group: 'market-day', label: 'Attendees', icon: '👥', desc: "Who's booked for the selected date", live: 'event-day' },
+  { key: 'attendees', group: 'market-day', label: 'Attendees', icon: '👥', desc: "Who's booked for the selected date — spaces, payments, cancellations", live: 'attendees' },
   { key: 'online-check-in', group: 'market-day', label: 'Online Check-In', icon: '📱', desc: 'Vendor setup arrival times and completion status' },
   { key: 'setup-floor-plan', group: 'market-day', label: 'Setup & Floor Plan', icon: '🗺️', desc: 'Booth layout, space assignments, setup list', live: 'event-day', focus: 'floorplan' },
   { key: 'shopper-rsvps', group: 'market-day', label: 'Shopper RSVPs', icon: '🎟️', desc: 'Shopper headcount for each market date' },
   // Vendors
-  { key: 'applications', group: 'vendors', label: 'Applications', icon: '📝', desc: 'Review and approve new vendor applications' },
+  { key: 'applications', group: 'vendors', label: 'Applications', icon: '📝', desc: 'Review and approve new vendor applications', live: 'applications' },
   { key: 'application-recovery', group: 'vendors', label: 'Application Recovery', icon: '🛟', desc: 'Failed or abandoned application attempts' },
-  { key: 'waitlist', group: 'vendors', label: 'Wait List', icon: '⏳', desc: 'Vendors waiting for a spot — offers go out automatically' },
-  { key: 'vendor-directory', group: 'vendors', label: 'Vendor Directory', icon: '📋', desc: 'Every vendor, credits, payments and history' },
-  { key: 'move-requests', group: 'vendors', label: 'Move Requests', icon: '⇄', desc: 'Date-change requests needing your approval', badge: 'moves' },
+  { key: 'waitlist', group: 'vendors', label: 'Wait List', icon: '⏳', desc: 'Vendors waiting for a spot — offers go out automatically', live: 'waitlist' },
+  { key: 'vendor-directory', group: 'vendors', label: 'Vendor Directory', icon: '📋', desc: 'Every vendor, credits, payments and history', live: 'directory' },
+  { key: 'move-requests', group: 'vendors', label: 'Move Requests', icon: '⇄', desc: 'Date-change requests needing your approval', badge: 'moves', live: 'moves' },
   { key: 'manual-booking', group: 'vendors', label: 'Manual Booking', icon: '✍️', desc: 'Add a vendor by hand (PDF and paper sign-ups)' },
   { key: 'cancelled-vendors', group: 'vendors', label: 'Cancelled Vendors', icon: '↩️', desc: 'Cancelled bookings and reinstatements' },
   { key: 'banned-vendors', group: 'vendors', label: 'Banned Vendors', icon: '🚫', desc: 'Vendors blocked from booking' },
   { key: 'food-trucks', group: 'vendors', label: 'Food Trucks', icon: '🚚', desc: 'Food truck applications and approvals' },
   // Money
-  { key: 'invoice-center', group: 'money', label: 'Invoice Center', icon: '🧾', desc: 'Invoices — send, track, resend' },
-  { key: 'payment-log', group: 'money', label: 'Payment Log', icon: '💵', desc: 'Every payment, grouped by day with totals' },
+  { key: 'invoice-center', group: 'money', label: 'Invoice Center', icon: '🧾', desc: 'Invoices — send, track, resend', live: 'invoices' },
+  { key: 'payment-log', group: 'money', label: 'Payment Log', icon: '💵', desc: 'Every payment, grouped by market date with totals', live: 'payments' },
   { key: 'monthly-billing', group: 'money', label: 'Monthly Billing', icon: '📅', desc: 'Recurring vendor billing at a glance' },
   { key: 'expenses', group: 'money', label: 'Expenses', icon: '🧮', desc: 'Market costs against what you collected' },
   { key: 'reports', group: 'money', label: 'Reports', icon: '📊', desc: 'Event reports, profit & loss, money owed' },
@@ -95,7 +104,7 @@ function parseHash() {
   const [path, qs] = raw.split('?');
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
   if (path.startsWith('section/')) return { name: 'section', section: path.slice(8) };
-  if (['event-day', 'vendors', 'money', 'messages', 'more'].includes(path)) return { name: path, ...params };
+  if (['event-day', 'attendees', 'applications', 'waitlist', 'directory', 'moves', 'payments', 'invoices', 'vendors', 'money', 'messages', 'more'].includes(path)) return { name: path, ...params };
   return { name: 'home', ...params };
 }
 function bindGo(scope) {
@@ -109,6 +118,7 @@ function openSection(key) {
   const s = sectionByKey(key);
   if (!s) return;
   if (s.live === 'event-day') navigate('event-day', { ...(s.focus ? { focus: s.focus } : {}) });
+  else if (s.live) navigate(s.live);
   else navigate('section/' + key);
 }
 
@@ -135,7 +145,9 @@ function renderChrome() {
     { name: 'messages', label: 'Messages', icon: '💬' },
     { name: 'more', label: 'More', icon: '☰' }
   ];
-  const activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name || (state.route.name === 'section' && sectionByKey(state.route.section)?.group === t.name);
+  // Stage-2 screens are their own routes; map them back to their group tab.
+  const routeTab = { attendees: 'home', applications: 'vendors', waitlist: 'vendors', directory: 'vendors', moves: 'vendors', payments: 'money', invoices: 'money' };
+  const activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name || (state.route.name === 'section' && sectionByKey(state.route.section)?.group === t.name) || routeTab[state.route.name] === t.name;
   const navHtml = tabs.map(t => `<button class="nav-item ${activeFor(t) ? 'active' : ''}" data-nav="${t.name}"><span class="ti">${t.icon}</span><span class="nav-label">${t.label}</span>${t.badge ? `<span class="tab-badge">${t.badge}</span>` : ''}</button>`).join('');
   $('#tabbar').innerHTML = `<div class="tabbar-inner">${navHtml}</div>`;
   $('#sidenav').innerHTML = `<div class="side-brand"><div class="brand-mark">T</div><div><strong>Trinity</strong><span>Crafters Market</span></div></div>${navHtml}<div class="side-foot">New organizer app · ${STAGE}<br>build ${VERSION}</div>`;
@@ -149,7 +161,7 @@ function groupScreen(root, groupKey) {
   root.innerHTML = `
     <p class="eyebrow">${esc(g.label)}</p>
     <h2 class="display">${esc(g.label)}</h2>
-    <p class="lede">${groupKey === 'market-day' ? 'The day-of tools live on the Market Day home and Event Day screens.' : 'These sections are being rebuilt one stage at a time — Market Day shipped first. Until a section lands here, it keeps working in the current app.'}</p>
+    <p class="lede">${groupKey === 'market-day' ? 'The day-of tools live on the Market Day home and Event Day screens.' : 'Sections open in the new app as their stage lands. Anything not rebuilt yet keeps working in the current app.'}</p>
     <div class="card group-card">${items.map(s => menuItem(s)).join('')}</div>`;
   bindGo(root);
   bindMenu(root);
@@ -165,7 +177,7 @@ function moreScreen(root) {
   root.innerHTML = `
     <p class="eyebrow">All tools</p>
     <h2 class="display">Menu</h2>
-    <p class="lede">27 loose buttons become 5 groups. Market Day is live in this stage; the rest arrive stage by stage and keep working in the current app meanwhile.</p>
+    <p class="lede">27 loose buttons become 5 groups. Market Day, Vendors and Money are live in the new app; Messages and Setup arrive in the next stage and keep working in the current app meanwhile.</p>
     ${GROUPS.map(g => `<div class="group"><h3>${esc(g.label)}</h3><div class="card group-card">${SECTIONS.filter(s => s.group === g.key).map(s => menuItem(s)).join('')}</div></div>`).join('')}
     <div class="card account-card">
       <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">${state.user.admin ? 'Organizer' : 'Manager'} · the new app and the current app share this sign-in.</span></p>
@@ -284,6 +296,13 @@ async function route() {
   try {
     if (r.name === 'home') { await refreshAdmin(); renderChrome(); renderHome(ctx, root); }
     else if (r.name === 'event-day') { await refreshAdmin(); renderChrome(); renderEventDay(ctx, root, r); }
+    else if (r.name === 'attendees') { await refreshAdmin(); renderChrome(); renderAttendees(ctx, root, r); }
+    else if (r.name === 'applications') { await refreshAdmin(); renderChrome(); renderApplications(ctx, root); }
+    else if (r.name === 'waitlist') { await refreshAdmin(); renderChrome(); renderWaitlist(ctx, root); }
+    else if (r.name === 'moves') { renderMoves(ctx, root); }
+    else if (r.name === 'directory') { await refreshAdmin(); renderChrome(); renderVendors(ctx, root); }
+    else if (r.name === 'payments') { await refreshAdmin(); renderChrome(); renderPayments(ctx, root); }
+    else if (r.name === 'invoices') { await refreshAdmin(); renderChrome(); renderInvoices(ctx, root); }
     else if (['vendors', 'money', 'messages'].includes(r.name)) groupScreen(root, r.name);
     else if (r.name === 'more') moreScreen(root);
     else if (r.name === 'section') sectionScreen(root, r.section);

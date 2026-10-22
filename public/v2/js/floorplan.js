@@ -9,7 +9,7 @@
 // fall back to their label tables, everything clamps onto the plan, and a
 // fit pass after layout pulls each whole label inside the image — the exact
 // rules whose absence in the old legacy editor made vendors vanish or clip.
-import { api, esc } from './api.js?v=20261022-1';
+import { api, esc } from './api.js?v=20261022-2';
 
 const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 const standardize = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
