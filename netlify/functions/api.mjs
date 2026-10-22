@@ -312,7 +312,7 @@ ${description}`;
   // §13.5 claiming: imported rows matched by the verified account email
   // attach to the vendor's profile (link recorded in vendor_profiles);
   // the rows themselves stay imported — counts/twins are unaffected.
-  if(imported.length){const claim=await claimImported(sql,u);if(claim.matched)for(const r of imported)r.profile_linked=true;}
+  if(imported.length){try{const claim=await claimImported(sql,u);if(claim.matched)for(const r of imported)r.profile_linked=true;}catch(e){console.error('Imported claiming failed; bookings load unaffected',e);}}
   return json([...regular,...imported].sort((a,b)=>String(a.date).localeCompare(String(b.date))));
  }
  if(action==='vendor-setup-checkin'&&req.method==='POST'){
