@@ -1,0 +1,64 @@
+name: Build Android APK
+
+# Builds the Trinity Crafters Market Android app (Capacitor wrapper around
+# https://trinitylutzmarkets.com) and attaches the APK to a GitHub Release
+# when run from a tag like app-v1.0. Can also be run manually from the
+# Actions tab (the APK is then saved as a run artifact).
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'app-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync the app into the Android project
+        run: npx cap sync android
+
+      - name: Build the APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Save the APK as a run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trinity-crafters-market-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Attach the APK to the release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          body: |
+            Trinity Crafters Market Android app.
+
+            To install: download app-debug.apk to your Android phone, open it,
+            and allow "Install unknown apps" for your browser or Files app
+            when prompted. The app needs an internet connection (it loads the
+            live market site).
