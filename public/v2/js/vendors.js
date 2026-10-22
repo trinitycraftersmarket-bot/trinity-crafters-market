@@ -1,0 +1,236 @@
+// Vendor Directory: every vendor with history, payments and receipts,
+// the Features B saved profile (view/edit), vendor information edits, and
+// the invite-back email. Data comes from the vendor-list action (the same
+// payload the legacy Vendors panel uses — it already embeds each vendor's
+// profile, market dates and recorded payments). Writes go through
+// vendor-profile organizer-save / vendor-save / vendor-payment /
+// vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
+import { api, fn, esc, money, nice } from './api.js?v=20261022-2';
+
+let rows = null;          // vendor-list payload for this screen session
+let view = { q: '', filter: 'all' };
+const selected = new Set();  // invite-back selections survive re-renders
+
+const RETURN_SUBJECT = 'We would love to have you back at Trinity Crafters Market';
+const RETURN_BODY = `Hi {{name}},
+
+We haven't seen you at Trinity Crafters Market in a while and wanted to check in. We'd love to have {{business}} join us again at an upcoming market.
+
+If you're interested in coming back, please visit our website to see the upcoming dates and availability, or reply to this email if you have any questions.
+
+We hope to see you again soon!
+
+Trinity Crafters Market
+trinitycraftersmarket@gmail.com`;
+
+export function renderVendors(ctx, root) {
+  const year = new Date().getFullYear();
+  root.innerHTML = `
+    <p class="eyebrow">Vendors</p>
+    <h2 class="display">Vendor Directory</h2>
+    <p class="lede">Search every vendor, review their history and payments, record cash payments, send receipts, and keep their saved profile current — it's what pre-fills their next application.</p>
+    <div class="filter-row">
+      <div class="search grow"><input id="v2-vendor-search" type="search" placeholder="Business, name, email, phone or category…" autocomplete="off" value="${esc(view.q)}"></div>
+      <label class="picker-label">Show<select id="v2-vendor-filter" class="picker">
+        <option value="all">All vendors</option><option value="regular">Regular vendors only</option>
+        <option value="inactive">Haven't attended recently</option><option value="pdf">PDF imported vendors</option>
+      </select></label>
+    </div>
+    <div class="card invite-card">
+      <h3 class="section-title first">Invite vendors back</h3>
+      <p class="note">Tick vendors in the list below, then send them a friendly invitation to return.</p>
+      <label class="sheet-field">Subject<input id="v2-return-subject" value="${esc(RETURN_SUBJECT)}"></label>
+      <label class="sheet-field">Message<textarea id="v2-return-body" rows="6">${esc(RETURN_BODY)}</textarea></label>
+      <div class="vendor-actions"><button class="btn primary small" id="v2-return-send">Email selected vendors</button><span class="note" id="v2-return-count"></span></div>
+    </div>
+    <div id="v2-vendor-list"><div class="card empty-card">Loading vendors…</div></div>`;
+
+  const findVendor = id => (rows || []).find(v => String(v.id) === String(id));
+  const refresh = async () => {
+    rows = await api('vendor-list');
+    draw();
+  };
+  const mutate = async (call, okMsg) => {
+    try {
+      await call();
+      await refresh();
+      if (okMsg) ctx.toast(okMsg);
+    } catch (e) { ctx.toast(e.message, true); }
+  };
+
+  function profileSummary(v) {
+    const p = v.profile;
+    if (!p) return '<p class="note"><strong>Saved profile:</strong> none yet — it starts the first time they apply or you save one here.</p>';
+    const pref = p.space_preference === 'indoor' ? 'Indoor' : p.space_preference === 'outdoor' ? 'Outdoor' : p.space_preference === 'none' ? 'No preference' : 'Not set';
+    return `<p class="note"><strong>Saved profile</strong> · Space preference: ${esc(pref)}<br>Website: ${esc(p.website || '—')} · Social: ${esc(p.social_links || '—')}<br>Pre-fills as: ${esc(p.business || v.business || '—')} · ${esc(p.phone || v.phone || '—')}${p.description ? '<br>' + esc(p.description) : ''}</p>`;
+  }
+  function cardHtml(v) {
+    const paid = (v.dates || []).filter(x => x.status === 'paid');
+    const email = String(v.email || '').replace(/,+\s*$/, '').trim();
+    return `<article class="card vendor">
+      <div class="vendor-top">
+        <div><h3>${esc(v.business || v.name || 'Vendor')}</h3>
+        <div class="contact">${esc(v.name || '')} · ${esc(email)}${v.phone ? ' · ' + esc(v.phone) : ''}</div></div>
+        <span class="status neutral">${v.source === 'pdf' ? 'PDF imported' : v.regular_vendor ? 'Regular vendor' : 'Vendor'}</span>
+      </div>
+      <p class="note"><strong>${v.shows || 0}</strong> paid shows · <strong>${money(v.booking_spend || 0)}</strong> recorded booking spend · <strong>${money(v.recorded_payments || 0)}</strong> in recorded payments${v.category ? `<br><strong>Category:</strong> ${esc(v.category)}` : ''}</p>
+      ${profileSummary(v)}
+      <details class="vdetails">
+        <summary>Full history — ${paid.length} paid date${paid.length === 1 ? '' : 's'}, ${(v.payments || []).length} recorded payment${(v.payments || []).length === 1 ? '' : 's'}</summary>
+        ${v.billing_address ? `<p class="note"><strong>Billing address:</strong> ${esc(v.billing_address)}</p>` : ''}
+        ${v.description ? `<p class="note"><strong>What they sell:</strong> ${esc(v.description)}</p>` : ''}
+        ${v.referral_source ? `<p class="note"><strong>Referral:</strong> ${esc(v.referral_source)}${v.referral_group ? ' — ' + esc(v.referral_group) : ''}</p>` : ''}
+        <h4 class="mini-title">Market dates</h4>
+        ${(v.dates || []).map(x => `<div class="mini-row"><span>${esc(nice(x.date))} · ${esc(x.space || '')}</span><span>${esc(x.status || '')} · ${money(x.price || 0)}${x.payment_method ? ' · ' + esc(x.payment_method) : ''}</span></div>`).join('') || '<p class="note">No market history.</p>'}
+        <h4 class="mini-title">Recorded payments / receipts</h4>
+        ${(v.payments || []).map(x => `<div class="mini-row"><span>${esc(new Date(x.paid_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' }))} · ${money(x.amount)} · ${esc(x.payment_method || '')}</span><span>${x.receipt_sent_at ? 'Receipt sent ' + esc(new Date(x.receipt_sent_at).toLocaleDateString('en-US')) + ' ' : ''}<button class="btn small" data-receipt="${esc(x.id)}">${x.receipt_sent_at ? 'Resend receipt' : 'Email receipt'}</button></span></div>`).join('') || '<p class="note">No separately recorded payments.</p>'}
+      </details>
+      <div class="vendor-actions">
+        ${email ? `<button class="btn small" data-act="profile" data-id="${esc(v.id)}">Vendor profile</button>` : ''}
+        <button class="btn small" data-act="edit" data-id="${esc(v.id)}">Edit information</button>
+        <button class="btn primary small" data-act="pay" data-id="${esc(v.id)}">Record payment</button>
+        ${v.source === 'application' ? `<button class="btn small ghost" data-act="statement" data-id="${esc(v.id)}">Email ${year} statement</button>` : ''}
+        <label class="checkline select-line"><input type="checkbox" data-select="${esc(v.id)}" ${selected.has(String(v.id)) ? 'checked' : ''}> Invite back</label>
+      </div>
+    </article>`;
+  }
+
+  function profileSheet(v) {
+    const p = v.profile || {};
+    const cats = ctx.state.admin.categories || [];
+    ctx.openSheet(`
+      <h3 class="sheet-title">Vendor profile</h3>
+      <p class="note">${esc(v.business || v.name || 'Vendor')} · pre-fills their applications (§13.7 profile — the same record the vendor edits in My Profile).</p>
+      <form id="v2-profile-form">
+        <label class="sheet-field">Business<input name="business" value="${esc(p.business || v.business || '')}"></label>
+        <label class="sheet-field">Contact name<input name="name" value="${esc(p.name || v.name || '')}"></label>
+        <label class="sheet-field">Phone<input name="phone" value="${esc(p.phone || v.phone || '')}"></label>
+        <label class="sheet-field">Category<select name="category_id"><option value="">No category</option>${cats.map(c => `<option value="${esc(c.id)}" ${String(p.category_id || '') === String(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <label class="sheet-field">Space preference<select name="space_preference">
+          <option value="" ${!p.space_preference ? 'selected' : ''}>Not set</option>
+          <option value="indoor" ${p.space_preference === 'indoor' ? 'selected' : ''}>Indoor</option>
+          <option value="outdoor" ${p.space_preference === 'outdoor' ? 'selected' : ''}>Outdoor</option>
+          <option value="none" ${p.space_preference === 'none' ? 'selected' : ''}>No preference</option>
+        </select></label>
+        <label class="sheet-field">Website<input name="website" value="${esc(p.website || '')}"></label>
+        <label class="sheet-field">Social links<input name="social_links" value="${esc(p.social_links || '')}"></label>
+        <label class="sheet-field">Products / description<textarea name="description" rows="3">${esc(p.description || v.description || '')}</textarea></label>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Save vendor profile</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-profile-form').onsubmit = e => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = { action: 'organizer-save', email: v.email };
+      for (const k of ['name', 'business', 'phone', 'description', 'website', 'social_links', 'space_preference', 'category_id']) {
+        const val = fd.get(k);
+        if (val !== null) body[k] = val;
+      }
+      ctx.closeSheet();
+      mutate(() => fn('vendor-profile', body), 'Vendor profile saved.');
+    };
+  }
+  function editSheet(v) {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Edit vendor information</h3>
+      <p><strong>${esc(v.business || v.name || 'Vendor')}</strong></p>
+      <form id="v2-vendor-edit-form">
+        <label class="sheet-field">Name<input name="name" value="${esc(v.name || '')}" required></label>
+        <label class="sheet-field">Business<input name="business" value="${esc(v.business || '')}" required></label>
+        <label class="sheet-field">Email<input name="email" type="email" value="${esc(String(v.email || '').replace(/,+\s*$/, '').trim())}" required></label>
+        <label class="sheet-field">Phone<input name="phone" value="${esc(v.phone || '')}"></label>
+        <label class="sheet-field">Category<input name="category" value="${esc(v.category || '')}" ${v.source === 'pdf' ? '' : 'readonly'}></label>
+        <label class="checkline"><input type="checkbox" name="regular_vendor" ${v.regular_vendor ? 'checked' : ''}> Regular Vendor</label>
+        <label class="sheet-field">Monthly billing amount ($)<input name="monthly_amount" type="number" min="0" step="0.01" value="${v.monthly_billing_amount == null ? '' : (v.monthly_billing_amount / 100).toFixed(2)}"></label>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Save vendor information</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-vendor-edit-form').onsubmit = e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const raw = String(f.get('monthly_amount') || '').trim();
+      ctx.closeSheet();
+      mutate(() => api('vendor-save', {
+        id: v.id, source: v.source,
+        name: String(f.get('name')).trim(), business: String(f.get('business')).trim(),
+        email: String(f.get('email')).trim(), phone: String(f.get('phone')).trim(),
+        category: String(f.get('category')).trim(),
+        regular_vendor: f.get('regular_vendor') === 'on',
+        monthly_billing_amount: raw === '' ? null : Math.round(Number(raw) * 100)
+      }), 'Vendor information saved.');
+    };
+  }
+  function paySheet(v) {
+    const dates = [...(v.dates || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    ctx.openSheet(`
+      <h3 class="sheet-title">Record payment</h3>
+      <p><strong>${esc(v.business || v.name || 'Vendor')}</strong></p>
+      <form id="v2-vendor-pay-form">
+        ${v.source === 'pdf' ? `<label class="sheet-field">Market date<select name="imported_attendee_id" required>${dates.map(x => `<option value="${esc(x.id)}">${esc(nice(x.date))} — ${esc(x.space || '')} — ${esc(x.status || '')}</option>`).join('')}</select></label>` : ''}
+        <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" required></label>
+        <label class="sheet-field">Method<select name="method"><option>cash</option><option>check</option><option>GoDaddy Payments</option><option>PayPal</option><option>other</option></select></label>
+        <label class="sheet-field">Note<input name="note" placeholder="Optional note"></label>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Record payment</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-vendor-pay-form').onsubmit = e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      ctx.closeSheet();
+      mutate(() => api('vendor-payment', {
+        application_id: v.id,
+        source: v.source,
+        imported_attendee_id: v.source === 'pdf' ? f.get('imported_attendee_id') : null,
+        amount: f.get('amount'),
+        payment_method: f.get('method'),
+        note: f.get('note')
+      }), 'Payment recorded. You can now email the receipt.');
+    };
+  }
+
+  function draw() {
+    const listEl = root.querySelector('#v2-vendor-list');
+    if (!rows) { listEl.innerHTML = '<div class="card empty-card">Loading vendors…</div>'; return; }
+    const q = view.q;
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 90);
+    const shown = rows.filter(v => {
+      const matchesSearch = !q || [v.business, v.name, v.email, v.phone, v.category].some(x => String(x || '').toLowerCase().includes(q));
+      if (!matchesSearch) return false;
+      if (view.filter === 'regular') return !!v.regular_vendor;
+      if (view.filter === 'pdf') return v.source === 'pdf';
+      if (view.filter === 'inactive') {
+        const last = (v.dates || []).map(x => new Date(String(x.date).slice(0, 10) + 'T12:00:00')).sort((a, b) => b - a)[0];
+        return !last || last < cutoff;
+      }
+      return true;
+    });
+    root.querySelector('#v2-return-count').textContent = selected.size ? selected.size + ' selected' : '';
+    listEl.innerHTML = `<p class="note">${shown.length} of ${rows.length} vendors shown.</p><div class="vendor-list">${shown.map(cardHtml).join('') || '<div class="card empty-card">No matching vendors.</div>'}</div>`;
+    listEl.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => {
+      const v = findVendor(btn.dataset.id);
+      if (!v) { ctx.toast('That vendor is no longer in the list — reloading.', true); refresh().catch(e => ctx.toast(e.message, true)); return; }
+      if (btn.dataset.act === 'profile') profileSheet(v);
+      else if (btn.dataset.act === 'edit') editSheet(v);
+      else if (btn.dataset.act === 'pay') paySheet(v);
+      else if (btn.dataset.act === 'statement') mutate(() => api('vendor-statement-email', { application_id: v.id, source: v.source, year }), year + ' statement emailed to vendor and organizer copy sent.');
+    });
+    listEl.querySelectorAll('[data-receipt]').forEach(btn => btn.onclick = () =>
+      mutate(() => api('vendor-receipt', { payment_id: btn.dataset.receipt }), 'Receipt emailed to vendor and organizer copy sent.'));
+    listEl.querySelectorAll('[data-select]').forEach(box => box.onchange = () => {
+      if (box.checked) selected.add(String(box.dataset.select)); else selected.delete(String(box.dataset.select));
+      root.querySelector('#v2-return-count').textContent = selected.size ? selected.size + ' selected' : '';
+    });
+  }
+
+  root.querySelector('#v2-vendor-filter').value = view.filter;
+  root.querySelector('#v2-vendor-search').oninput = e => { view.q = e.target.value.toLowerCase().trim(); draw(); };
+  root.querySelector('#v2-vendor-filter').onchange = e => { view.filter = e.target.value; draw(); };
+  root.querySelector('#v2-return-send').onclick = () => {
+    const ids = [...selected];
+    if (!ids.length) { ctx.toast('Select at least one vendor first.', true); return; }
+    mutate(() => api('vendor-reengage', { ids, subject: root.querySelector('#v2-return-subject').value, body: root.querySelector('#v2-return-body').value }),
+      'Return invitation emailed to the selected vendor(s).');
+  };
+
+  draw();
+  refresh().catch(e => {
+    root.querySelector('#v2-vendor-list').innerHTML = `<div class="card empty-card"><p><strong>Vendors couldn't load.</strong></p><p class="muted">${esc(e.message)}</p></div>`;
+  });
+}
