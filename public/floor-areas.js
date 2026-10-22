@@ -508,9 +508,10 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     popup.document.close();
     const dateLabel=(()=>{const raw=String(event?.date||'');const d=new Date(raw+'T12:00:00');return raw&&!Number.isNaN(d.getTime())?d.toLocaleDateString('en-US',{weekday:'short',month:'long',day:'numeric',year:'numeric'}):raw;})();
     function finish(dataUrl,aspect){
-      // One letter page: 7.9in x 10.3in printable at .3in margins. Fit the
-      // single composite image inside it so the plan never splits pages.
-      const fit=aspect>(10.3/7.9)?'height:10.3in;width:auto':'width:100%;height:auto';
+      // One letter page: 7.9in x 10.3in printable at .3in margins. The
+      // title lines above the image take ~0.75in, so the composite image
+      // gets 9.5in of height — otherwise it bumps onto page 2.
+      const fit=aspect>(9.5/7.9)?'height:9.5in;width:auto':'width:100%;height:auto';
       const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(String(event?.title||'Market')+' — '+area.title+' floor plan')+'</title><style>'+
         '@page{size:letter portrait;margin:.3in}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;font-family:Arial,Helvetica,sans-serif;text-align:center}'+
         '.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5;text-align:left}'+

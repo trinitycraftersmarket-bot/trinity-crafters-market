@@ -1,5 +1,5 @@
 import {analyzeCategoryFit,categoryReviewMessage} from './category-conflicts.js?v=20261003-smartcategory6';
-import {setupFloorAreaManager} from './floor-areas.js?v=20261022-floorfix2';
+import {setupFloorAreaManager} from './floor-areas.js?v=20261022-floorfix3';
 const $=s=>document.querySelector(s),app=$('#app'),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(n/100);
 const date=d=>new Date(String(d).slice(0,10)+'T12:00:00');const nice=d=>date(d).toLocaleDateString('en-US',{weekday:'short',month:'long',day:'numeric',year:'numeric'});const clock=t=>{const [h,m]=String(t||'10:00').slice(0,5).split(':').map(Number),d=new Date(2000,0,1,h,m);return d.toLocaleTimeString('en-US',{hour:'numeric',minute:m?'2-digit':undefined});};const marketName=e=>e?.market_name||e?.title||'Crafters Market';
