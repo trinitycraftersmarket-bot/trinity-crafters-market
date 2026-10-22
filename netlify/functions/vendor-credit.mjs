@@ -1,4 +1,6 @@
-import {db,identity,audit,queue,flushMail} from '../../server/core.mjs';
+import {db,identity,audit,queue,flushMail,isUserError} from '../../server/core.mjs';
+import {eventInventory,categoryUsed,vendorIdentityKey} from '../../server/counts.mjs';
+import {syncCancellation} from '../../server/twins.mjs';
 
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
@@ -16,9 +18,10 @@ async function sourceRecord(sql,id,imported){
 }
 
 async function categoryAndSpaceCounts(sql,eventId,categoryId,space){
- const alt=space==='indoor'?'inside':'outside';
- const [r]=await sql`select (select count(*)::int from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${eventId} and a.category_id=${categoryId} and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+(select count(*)::int from market.imported_attendees i where i.event_id=${eventId} and i.category_id=${categoryId} and not coalesce(i.cancelled,false)) as category_used,(select count(*)::int from market.bookings b where b.event_id=${eventId} and lower(trim(b.space)) in (${alt},${space}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+(select count(*)::int from market.imported_attendees i where i.event_id=${eventId} and lower(trim(i.space)) in (${alt},${space}) and not coalesce(i.cancelled,false)) as space_used`;
- return r||{category_used:0,space_used:0};
+ // Delegates to the single counting function (server/counts.mjs): owner
+ // semantics (pending does not reserve) + booking/imported twin dedupe.
+ const inv=await eventInventory(sql,eventId);
+ return {category_used:inv.categories.get(String(categoryId))||0,space_used:inv[space]||0};
 }
 
 async function eligibleEvents(sql,credit,u){
@@ -29,8 +32,7 @@ async function eligibleEvents(sql,credit,u){
  for(const e of events){
   const dup=await sql`select 1 from (select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${e.id} and lower(trim(a.email))=lower(${u.email}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())) union all select i.id from market.imported_attendees i where i.event_id=${e.id} and lower(trim(i.email))=lower(${u.email}) and not coalesce(i.cancelled,false)) q limit 1`;
   if(dup.length||e.sold_out)continue;
-  const [baseCounts]=await sql`select (select count(*)::int from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${e.id} and a.category_id=${credit.category_id} and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+(select count(*)::int from market.imported_attendees i where i.event_id=${e.id} and i.category_id=${credit.category_id} and not coalesce(i.cancelled,false)) as category_used`;
-  const limit=Number(e.override_limit??cat.vendor_limit);if(Number(baseCounts?.category_used||0)>=limit)continue;
+  const limit=Number(e.override_limit??cat.vendor_limit);if(await categoryUsed(sql,e.id,credit.category_id)>=limit)continue;
   const spaces=[];
   for(const space of ['indoor','outdoor']){
    if(space==='indoor'&&e.indoor_open===false)continue;if(space==='outdoor'&&e.outdoor_open===false)continue;
@@ -63,6 +65,9 @@ export default async req=>{
     let amount=Number(v.paid_amount||0);if(amount<=0&&p.amount!=null)amount=Number(p.amount);if(!Number.isInteger(amount)||amount<=0)throw Error('No paid amount is recorded for this booking. Enter the amount actually paid.');
     const [c]=await tx`insert into market.vendor_credits(vendor_id,email,category_id,source_type,source_id,source_event_id,original_amount,remaining_amount,issued_by,note) values(${v.vendor_id||null},${String(v.email||'').trim().toLowerCase()},${v.category_id},${v.imported?'imported':'booking'},${v.id},${v.event_id},${amount},${amount},${u.email},${clean(p.note,1000)}) returning *`;
     if(v.imported){await tx`update market.imported_attendees set cancelled=true where id=${v.id}`;await tx`delete from market.imported_category_reservations where imported_attendee_id=${v.id}`;}else await tx`update market.bookings set status='cancelled',hold_until=null where id=${v.id}`;
+    // Twin-sync invariant (server/twins.mjs): cancel the vendor's other
+    // record for this event too, so the twin doesn't keep holding inventory.
+    await syncCancellation(tx,{eventId:v.event_id,key:vendorIdentityKey({vendor_id:v.vendor_id,email:v.email,phone:v.phone,business:v.business,name:v.name,id:v.id}),exclude:{source:v.imported?'imported':'booking',id:v.id}});
     const link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';
     const body='Hi '+(v.name||'Vendor')+',\n\nA '+money(amount)+' credit has been issued for your cancelled '+fmtDate(v.event_date)+' market booking.\n\nChoose a different available market date online under My Bookings:\n'+link+'\n\nWhen you apply the credit, the new booking will be automatically approved and marked paid, and your category will be reserved for that date. If the new space costs less than your credit, the unused balance will remain available.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com';
     await queue(tx,v.email,'Vendor credit available — '+money(amount),body);await audit(tx,u,'vendor credit issued',{credit_id:c.id,source_type:c.source_type,source_id:c.source_id,amount,source_event_id:c.source_event_id});created=c;
@@ -94,5 +99,5 @@ export default async req=>{
    await flushMail();return json(result);
   }
   return json({error:'Unknown action'},400);
- }catch(e){console.error('Vendor credit failed',e);return json({error:e.message||'Could not process vendor credit.'},400);}
+ }catch(e){console.error('Vendor credit failed',e);if(isUserError(e))return json({error:e.message},400);return json({error:'Could not process vendor credit.'},500);}
 };
