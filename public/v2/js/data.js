@@ -76,6 +76,42 @@ export function attendeeRows(admin, eventId) {
     .sort((x, y) => String(x.business || x.name || '').localeCompare(String(y.business || y.name || ''), undefined, { sensitivity: 'base' }));
 }
 
+// The manager payload (api 'manager') is deliberately narrower than the
+// admin payload: its booking rows carry NO price/payment fields and NO
+// inspection fields. Rows are shaped with only what the payload actually
+// has — a field the payload lacks (a booking's inspection_status) stays
+// undefined and the manager screens simply don't render it. Imported rows
+// in the manager payload are full attendee records, so they keep the
+// fields they carry (inspection included).
+export function managerAttendeeRows(manager, eventId) {
+  const bookings = (manager?.applications || [])
+    .filter(b => String(b.event_id) === String(eventId) && b.status === 'approved')
+    .map(b => ({
+      id: b.id, application_id: b.application_id, imported: false,
+      business: b.business, name: b.name, email: b.email, phone: b.phone,
+      category: b.category, space: b.space,
+      attendance: b.checked_in ? 'checked_in' : b.no_show ? 'no_show' : 'not_marked',
+      setup_arrival_time: b.setup_arrival_time, setup_checkin_at: b.setup_checkin_at,
+      inspection_status: undefined,
+      disclosed: b.description || ''
+    }));
+  const imported = (manager?.imported || [])
+    .filter(i => String(i.event_id) === String(eventId) && !i.cancelled)
+    .map(i => ({
+      id: i.id, application_id: null, imported: true,
+      business: i.business || i.name, name: i.name, email: i.email, phone: i.phone,
+      category: i.category, space: i.space,
+      attendance: i.attendance_state || 'not_marked',
+      setup_arrival_time: i.setup_arrival_time, setup_checkin_at: i.setup_checkin_at,
+      inspection_status: i.inspection_status || 'not_inspected',
+      inspection_notes: i.inspection_notes || '',
+      disclosed: i.selling || i.category || ''
+    }));
+  return dedupeVendorRows([...bookings, ...imported])
+    .map(r => ({ ...r, spaceNorm: normalizeSpace(r.space) }))
+    .sort((x, y) => String(x.business || x.name || '').localeCompare(String(y.business || y.name || ''), undefined, { sensitivity: 'base' }));
+}
+
 // Spots left for a space, from the server's own used counts on the event
 // (publicData/counts.mjs). A closed space reports 0 regardless of capacity.
 export function spotsOpen(event, space) {

@@ -1,30 +1,42 @@
-// v2 app shell: header, 5-group navigation, hash router, sign-in, toast and
-// the one shared bottom sheet. Stage 1 wired Market Day (home + Event Day);
-// Stage 2 adds Attendees management and the Vendors + Money screens
+// v2 app shell: header, role-aware navigation, hash router, sign-in, toast
+// and the one shared bottom sheet. Stage 1 wired Market Day (home + Event
+// Day); Stage 2 adds Attendees management and the Vendors + Money screens
 // (Applications, Wait List, Move Requests, Vendor Directory, Payment Log,
 // Invoice Center); Stage 3a adds the unified floor-plan editor and the
 // whole Setup group (Dates & Locations, Categories, Managers, Connections
 // & Status with the bug-report inbox, Surveys, Archived Events, Organizer
-// Tools). Sections not yet rebuilt open a "next stage" placeholder and
-// keep working in the current app.
+// Tools). Stage 3b completes the rebuild: the Messages group (Vendor
+// Communications, Vendor Messages, Live Chat, Social Media), Shopper
+// RSVPs, the vendor side of the same shell (Home / My Bookings / Apply /
+// My Profile / Messages), and manager-scoped views that replace the old
+// role notice — staff see the organizer shell limited to their permitted
+// sections. Sections never rebuilt open a placeholder and keep working
+// in the current app.
 //
 // Navigation is defined in exactly one place (SECTIONS below) — the legacy
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-3';
-import { VERSION, STAGE } from './version.js?v=20261022-3';
-import { renderHome } from './home.js?v=20261022-3';
-import { renderEventDay } from './eventday.js?v=20261022-3';
-import { renderAttendees } from './attendees.js?v=20261022-3';
-import { renderApplications } from './applications.js?v=20261022-3';
-import { renderWaitlist } from './waitlist.js?v=20261022-3';
-import { renderMoves } from './moves.js?v=20261022-3';
-import { renderVendors } from './vendors.js?v=20261022-3';
-import { renderPayments } from './payments.js?v=20261022-3';
-import { renderInvoices } from './invoices.js?v=20261022-3';
-import { renderFloorEditor } from './flooredit.js?v=20261022-3';
-import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261022-3';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-4';
+import { VERSION, STAGE } from './version.js?v=20261022-4';
+import { renderHome } from './home.js?v=20261022-4';
+import { renderEventDay } from './eventday.js?v=20261022-4';
+import { renderAttendees } from './attendees.js?v=20261022-4';
+import { renderApplications } from './applications.js?v=20261022-4';
+import { renderWaitlist } from './waitlist.js?v=20261022-4';
+import { renderMoves } from './moves.js?v=20261022-4';
+import { renderVendors } from './vendors.js?v=20261022-4';
+import { renderPayments } from './payments.js?v=20261022-4';
+import { renderInvoices } from './invoices.js?v=20261022-4';
+import { renderFloorEditor } from './flooredit.js?v=20261022-4';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261022-4';
+import { renderComms } from './comms.js?v=20261022-4';
+import { renderThreads } from './threads.js?v=20261022-4';
+import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261022-4';
+import { renderSocial } from './social.js?v=20261022-4';
+import { renderRsvps } from './rsvps.js?v=20261022-4';
+import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261022-4';
+import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261022-4';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -41,7 +53,7 @@ export const SECTIONS = [
   { key: 'attendees', group: 'market-day', label: 'Attendees', icon: '👥', desc: "Who's booked for the selected date — spaces, payments, cancellations", live: 'attendees' },
   { key: 'online-check-in', group: 'market-day', label: 'Online Check-In', icon: '📱', desc: 'Vendor setup arrival times and completion status' },
   { key: 'setup-floor-plan', group: 'market-day', label: 'Setup & Floor Plan', icon: '🗺️', desc: 'Booth layout, space assignments and the setup email — the one floor-plan editor', live: 'flooredit' },
-  { key: 'shopper-rsvps', group: 'market-day', label: 'Shopper RSVPs', icon: '🎟️', desc: 'Shopper headcount for each market date' },
+  { key: 'shopper-rsvps', group: 'market-day', label: 'Shopper RSVPs', icon: '🎟️', desc: 'Shopper headcount for each market date', live: 'rsvps' },
   // Vendors
   { key: 'applications', group: 'vendors', label: 'Applications', icon: '📝', desc: 'Review and approve new vendor applications', live: 'applications' },
   { key: 'application-recovery', group: 'vendors', label: 'Application Recovery', icon: '🛟', desc: 'Failed or abandoned application attempts' },
@@ -59,9 +71,10 @@ export const SECTIONS = [
   { key: 'expenses', group: 'money', label: 'Expenses', icon: '🧮', desc: 'Market costs against what you collected' },
   { key: 'reports', group: 'money', label: 'Reports', icon: '📊', desc: 'Event reports, profit & loss, money owed' },
   // Messages
-  { key: 'vendor-communications', group: 'messages', label: 'Vendor Communications', icon: '✉️', desc: 'Bulk email and announcements to vendors' },
-  { key: 'live-chat', group: 'messages', label: 'Live Chat', icon: '💬', desc: 'Real-time chat with vendors and shoppers' },
-  { key: 'social-media', group: 'messages', label: 'Social Media', icon: '📣', desc: 'Posts and promotion for the market' },
+  { key: 'vendor-communications', group: 'messages', label: 'Vendor Communications', icon: '✉️', desc: 'Bulk email and announcements to vendors', live: 'comms' },
+  { key: 'vendor-messages', group: 'messages', label: 'Vendor Messages', icon: '🧵', desc: 'Per-application message threads with vendors', live: 'threads' },
+  { key: 'live-chat', group: 'messages', label: 'Live Chat', icon: '💬', desc: 'Real-time chat with vendors and shoppers', live: 'chat' },
+  { key: 'social-media', group: 'messages', label: 'Social Media', icon: '📣', desc: 'Posts and promotion for the market', live: 'social' },
   // Setup
   { key: 'dates-locations', group: 'setup', label: 'Dates & Locations', icon: '📍', desc: 'Market calendar, venues, capacities and prices', live: 'dates' },
   { key: 'categories', group: 'setup', label: 'Categories', icon: '🏷️', desc: 'Vendor categories and per-category limits', live: 'categories' },
@@ -74,7 +87,14 @@ export const SECTIONS = [
 const sectionByKey = k => SECTIONS.find(s => s.key === k);
 const groupOf = k => GROUPS.find(g => g.key === k);
 
-const state = { user: null, admin: null, pendingMoves: null, route: { name: 'home' } };
+const state = {
+  user: null, admin: null, pendingMoves: null, route: { name: 'home' },
+  // Stage 3b role payloads: the manager payload + permission list for
+  // staff, and the vendor's own rows / move requests / credits / public
+  // application data for vendors.
+  manager: null, permissions: [],
+  vendorRows: null, vendorMoves: [], credits: null, publicData: null, vendorProfile: null
+};
 
 const $ = s => document.querySelector(s);
 
@@ -109,7 +129,10 @@ function parseHash() {
   const [path, qs] = raw.split('?');
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
   if (path.startsWith('section/')) return { name: 'section', section: path.slice(8) };
-  if (['event-day', 'attendees', 'applications', 'waitlist', 'directory', 'moves', 'payments', 'invoices', 'flooredit', 'dates', 'categories', 'managers', 'connections', 'surveys', 'archive', 'tools', 'vendors', 'money', 'messages', 'more'].includes(path)) return { name: path, ...params };
+  if (['event-day', 'attendees', 'applications', 'waitlist', 'directory', 'moves', 'payments', 'invoices', 'flooredit', 'dates', 'categories', 'managers', 'connections', 'surveys', 'archive', 'tools', 'vendors', 'money', 'messages', 'more',
+    'rsvps', 'comms', 'threads', 'chat', 'social',
+    'mhome', 'meventday', 'mattendees', 'mapplications', 'mwaitlist', 'mrsvps', 'mmoves', 'mthreads', 'mchat', 'mfloor', 'mmore',
+    'vhome', 'vbookings', 'vapply', 'vprofile', 'vmessages', 'vthreads', 'vmore'].includes(path)) return { name: path, ...params };
   return { name: 'home', ...params };
 }
 function bindGo(scope) {
@@ -117,6 +140,7 @@ function bindGo(scope) {
     const go = b.dataset.go;
     if (go === 'event-day') navigate('event-day', { event: b.dataset.event || '' });
     else if (go === 'section') openSection(b.dataset.section);
+    else if (go) navigate(go);
   });
 }
 function openSection(key) {
@@ -128,35 +152,85 @@ function openSection(key) {
 }
 
 // --- chrome (header + nav) ------------------------------------------------------
+// One shell, three role shapes (Stage 3b): the organizer gets the five
+// groups; a manager gets Home + their permitted sections; a vendor gets
+// Home / My Bookings / Apply / Messages / More. Nothing renders a tab
+// the signed-in role cannot open.
+const roleOf = () => state.user?.admin ? 'admin' : state.user?.manager ? 'manager' : 'vendor';
+const todayStr = () => new Date().toLocaleDateString('en-CA');
+
+function resetSession() {
+  signOut();
+  state.user = null; state.admin = null; state.manager = null; state.permissions = [];
+  state.vendorRows = null; state.vendorMoves = []; state.credits = null; state.publicData = null;
+  boot();
+}
+
 function renderChrome() {
   const u = state.user;
-  const next = state.admin?.events?.[0];
+  if (!u) return;
+  const role = roleOf();
+  let subtitle = 'Organizer view';
+  if (role === 'manager') {
+    const next = (state.manager?.events || []).filter(e => String(e.date) >= todayStr()).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+    subtitle = next ? 'Next market · ' + esc(niceShort(next.date)) + ' · ' + esc(marketName(next)) : 'Staff view';
+  } else if (role === 'vendor') {
+    const next = (state.vendorRows || []).filter(r => ['approved', 'paid', 'held'].includes(String(r.status)) && String(r.date) >= todayStr()).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+    subtitle = next ? 'Your next market · ' + esc(niceShort(next.date)) + (next.location ? ' · ' + esc(next.location) : '') : 'Vendor view';
+  } else {
+    const next = state.admin?.events?.[0];
+    subtitle = next ? 'Next market · ' + esc(niceShort(next.date)) + ' · ' + esc(marketName(next)) : 'Organizer view';
+  }
   $('#app-head').innerHTML = `
     <div class="wrap head-wrap">
       <div class="brand">
         <div class="brand-mark">T</div>
         <div><h1>Trinity Crafters Market</h1>
-        <p>${next ? 'Next market · ' + esc(niceShort(next.date)) + ' · ' + esc(marketName(next)) : 'Organizer view'}</p></div>
+        <p>${subtitle}</p></div>
       </div>
-      ${u ? `<div class="head-user"><span class="head-email">${esc(u.email)}</span><button class="btn small ghost-light" id="v2-signout">Sign out</button></div>` : ''}
+      <div class="head-user"><span class="head-email">${esc(u.email)}</span><button class="btn small ghost-light" id="v2-signout">Sign out</button></div>
     </div>`;
   const out = $('#v2-signout');
-  if (out) out.onclick = () => { signOut(); state.user = null; state.admin = null; boot(); };
+  if (out) out.onclick = resetSession;
 
-  const tabs = [
-    { name: 'home', label: 'Market Day', icon: '🎪', routeNames: ['home', 'event-day'] },
-    { name: 'vendors', label: 'Vendors', icon: '👥', badge: state.pendingMoves || 0 },
-    { name: 'money', label: 'Money', icon: '💵' },
-    { name: 'messages', label: 'Messages', icon: '💬' },
-    { name: 'more', label: 'More', icon: '☰' }
-  ];
-  // Stage-2 screens are their own routes; map them back to their group tab.
-  const routeTab = { attendees: 'home', flooredit: 'home', applications: 'vendors', waitlist: 'vendors', directory: 'vendors', moves: 'vendors', payments: 'money', invoices: 'money', dates: 'more', categories: 'more', managers: 'more', connections: 'more', surveys: 'more', archive: 'more', tools: 'more' };
-  const activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name || (state.route.name === 'section' && sectionByKey(state.route.section)?.group === t.name) || routeTab[state.route.name] === t.name;
+  let tabs, activeFor, homeTarget = '';
+  if (role === 'admin') {
+    tabs = [
+      { name: 'home', label: 'Market Day', icon: '🎪', routeNames: ['home', 'event-day'] },
+      { name: 'vendors', label: 'Vendors', icon: '👥', badge: state.pendingMoves || 0 },
+      { name: 'money', label: 'Money', icon: '💵' },
+      { name: 'messages', label: 'Messages', icon: '💬' },
+      { name: 'more', label: 'More', icon: '☰' }
+    ];
+    // Screens are their own routes; map them back to their group tab.
+    const routeTab = { attendees: 'home', flooredit: 'home', rsvps: 'home', applications: 'vendors', waitlist: 'vendors', directory: 'vendors', moves: 'vendors', payments: 'money', invoices: 'money', dates: 'more', categories: 'more', managers: 'more', connections: 'more', surveys: 'more', archive: 'more', tools: 'more', comms: 'messages', threads: 'messages', chat: 'messages', social: 'messages' };
+    activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name || (state.route.name === 'section' && sectionByKey(state.route.section)?.group === t.name) || routeTab[state.route.name] === t.name;
+  } else if (role === 'manager') {
+    const sections = managerSections({ state });
+    const icons = { meventday: '🎪', mapplications: '📝', mwaitlist: '⏳', mattendees: '👥', mrsvps: '🎟️', mmoves: '⇄', mthreads: '🧵', mchat: '💬', mfloor: '🗺️' };
+    tabs = [
+      { name: 'mhome', label: 'Home', icon: '🎪', routeNames: ['mhome', 'home'] },
+      ...sections.slice(0, 3).map(s => ({ name: s.id, label: s.label, icon: icons[s.id] || '•' })),
+      { name: 'mmore', label: 'More', icon: '☰' }
+    ];
+    const extra = sections.slice(3).map(s => s.id);
+    activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name || (t.name === 'mmore' && (state.route.name === 'mmore' || extra.includes(state.route.name)));
+    homeTarget = 'mhome';
+  } else {
+    tabs = [
+      { name: 'vhome', label: 'Home', icon: '🏠', routeNames: ['vhome', 'home'] },
+      { name: 'vbookings', label: 'Bookings', icon: '🎪' },
+      { name: 'vapply', label: 'Apply', icon: '📝' },
+      { name: 'vmessages', label: 'Messages', icon: '💬' },
+      { name: 'vmore', label: 'More', icon: '☰', routeNames: ['vmore', 'vprofile', 'vthreads'] }
+    ];
+    activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name;
+    homeTarget = 'vhome';
+  }
   const navHtml = tabs.map(t => `<button class="nav-item ${activeFor(t) ? 'active' : ''}" data-nav="${t.name}"><span class="ti">${t.icon}</span><span class="nav-label">${t.label}</span>${t.badge ? `<span class="tab-badge">${t.badge}</span>` : ''}</button>`).join('');
   $('#tabbar').innerHTML = `<div class="tabbar-inner">${navHtml}</div>`;
-  $('#sidenav').innerHTML = `<div class="side-brand"><div class="brand-mark">T</div><div><strong>Trinity</strong><span>Crafters Market</span></div></div>${navHtml}<div class="side-foot">New organizer app · ${STAGE}<br>build ${VERSION}</div>`;
-  document.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => navigate(b.dataset.nav === 'home' ? '' : b.dataset.nav));
+  $('#sidenav').innerHTML = `<div class="side-brand"><div class="brand-mark">T</div><div><strong>Trinity</strong><span>Crafters Market</span></div></div>${navHtml}<div class="side-foot">New ${role === 'admin' ? 'organizer' : role} app · ${STAGE}<br>build ${VERSION}</div>`;
+  document.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => navigate(b.dataset.nav === 'home' ? homeTarget : b.dataset.nav));
 }
 
 // --- screens rendered by the shell itself ---------------------------------------
@@ -182,7 +256,7 @@ function moreScreen(root) {
   root.innerHTML = `
     <p class="eyebrow">All tools</p>
     <h2 class="display">Menu</h2>
-    <p class="lede">27 loose buttons become 5 groups. Market Day, Vendors, Money and Setup are live in the new app; Messages arrives in the next stage and keeps working in the current app meanwhile.</p>
+    <p class="lede">27 loose buttons become 5 groups — and with Stage 3b every group is live in the new app. The few sections never rebuilt (Application Recovery, Manual Booking, billing and reports tools) still open their placeholder and work in the current app.</p>
     ${GROUPS.map(g => `<div class="group"><h3>${esc(g.label)}</h3><div class="card group-card">${SECTIONS.filter(s => s.group === g.key).map(s => menuItem(s)).join('')}</div></div>`).join('')}
     <div class="card account-card">
       <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">${state.user.admin ? 'Organizer' : 'Manager'} · the new app and the current app share this sign-in.</span></p>
@@ -194,7 +268,7 @@ function moreScreen(root) {
     </div>`;
   bindMenu(root);
   const out = $('#v2-signout-2');
-  if (out) out.onclick = () => { signOut(); state.user = null; state.admin = null; boot(); };
+  if (out) out.onclick = resetSession;
 }
 function sectionScreen(root, key) {
   const s = sectionByKey(key);
@@ -214,30 +288,61 @@ function sectionScreen(root, key) {
     </div>`;
   root.querySelector('[data-go-home]').onclick = () => navigate('');
 }
-function roleNotice(root, kind) {
+// Manager "More": every section their permissions open, plus the
+// account card. Sections they cannot access are not listed at all.
+function managerMoreScreen(root) {
+  const sections = managerSections({ state });
   root.innerHTML = `
-    <p class="eyebrow">New organizer app · ${STAGE}</p>
-    <h2 class="display">${kind === 'manager' ? 'Manager workspace is on its way' : 'This preview is organizer-only'}</h2>
-    <p class="lede">${kind === 'manager'
-      ? 'Stage 1 covers the organizer\'s Market Day screens. The manager workspace — the same screens, scoped to your permissions — arrives in a later stage. Your current workspace is unchanged.'
-      : 'Stage 1 is the organizer\'s Market Day workspace. Your bookings, online check-in and profile all stay in the current app for now.'}</p>
-    <div class="card empty-card"><div class="vendor-actions">
-      <a class="btn primary small" href="${kind === 'manager' ? '/#admin' : '/#account'}">Continue in the current app</a>
-      <button class="btn small ghost" id="v2-signout-3">Sign out</button>
-    </div></div>`;
-  $('#v2-signout-3').onclick = () => { signOut(); state.user = null; state.admin = null; boot(); };
+    <p class="eyebrow">Staff menu</p>
+    <h2 class="display">Your sections</h2>
+    <p class="lede">Scoped to your permissions — the organizer sees everything.</p>
+    <div class="card group-card">${sections.map(s => `<button class="menu-item" data-go="${s.id}"><span><b>${esc(s.label)}</b><span>${esc(s.sub)}</span></span><span class="chev">›</span></button>`).join('') || '<p class="note">No sections are open for your account yet.</p>'}</div>
+    <div class="card account-card">
+      <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">Staff · the new app and the current app share this sign-in.</span></p>
+      <div class="vendor-actions">
+        <a class="btn small" href="/">Open the current app</a>
+        <button class="btn small ghost" id="v2-signout-m">Sign out</button>
+      </div>
+      <p class="note">Trinity Crafters Market — staff app · ${STAGE} · build ${VERSION}</p>
+    </div>`;
+  bindGo(root);
+  const out = $('#v2-signout-m');
+  if (out) out.onclick = resetSession;
+}
+
+// Vendor "More": profile, message threads, and the account card.
+function vendorMoreScreen(root) {
+  root.innerHTML = `
+    <p class="eyebrow">Vendor menu</p>
+    <h2 class="display">More</h2>
+    <div class="card group-card">
+      <button class="menu-item" data-go="vprofile"><span><b>My Profile</b><span>Your details, saved once — applications pre-fill from them</span></span><span class="chev">›</span></button>
+      <button class="menu-item" data-go="vthreads"><span><b>Application messages</b><span>The message thread on each of your applications</span></span><span class="chev">›</span></button>
+      <button class="menu-item" data-go="vmessages"><span><b>Chat with us</b><span>Live chat with the organizer</span></span><span class="chev">›</span></button>
+    </div>
+    <div class="card account-card">
+      <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">Vendor · the new app and the current app share this sign-in.</span></p>
+      <div class="vendor-actions">
+        <a class="btn small" href="/">Open the current app</a>
+        <button class="btn small ghost" id="v2-signout-v">Sign out</button>
+      </div>
+      <p class="note">Trinity Crafters Market — vendor app · ${STAGE} · build ${VERSION}</p>
+    </div>`;
+  bindGo(root);
+  const out = $('#v2-signout-v');
+  if (out) out.onclick = resetSession;
 }
 
 // --- sign-in (same email-code flow as the current app) ---------------------------
 function signInScreen(root) {
-  $('#app-head').innerHTML = `<div class="wrap head-wrap"><div class="brand"><div class="brand-mark">T</div><div><h1>Trinity Crafters Market</h1><p>New organizer app · ${STAGE}</p></div></div></div>`;
+  $('#app-head').innerHTML = `<div class="wrap head-wrap"><div class="brand"><div class="brand-mark">T</div><div><h1>Trinity Crafters Market</h1><p>New app · ${STAGE}</p></div></div></div>`;
   $('#tabbar').innerHTML = '';
   $('#sidenav').innerHTML = '';
   root.innerHTML = `
     <section class="card signin-card">
-      <p class="eyebrow">Organizer access</p>
+      <p class="eyebrow">Trinity Crafters Market</p>
       <h2 class="display">Welcome back.</h2>
-      <p class="lede">Sign in with a code sent to your email — the same sign-in as the current app, so if you're signed in there you may already be signed in here.</p>
+      <p class="lede">Sign in with a code sent to your email — the same sign-in as the current app, so if you're signed in there you may already be signed in here. Vendors, staff, and the organizer all sign in here; you land on your own home.</p>
       <form id="v2-login">
         <label class="sheet-field">Email address<input name="email" type="email" required autocomplete="email" placeholder="you@example.com"></label>
         <button class="btn primary btn-block">Email my sign-in code</button>
@@ -280,6 +385,20 @@ async function refreshAdmin() {
     state.pendingMoves = typeof r.pending === 'number' ? r.pending : null;
   } catch { state.pendingMoves = null; }
 }
+async function refreshManager() {
+  state.manager = await api('manager');
+  state.permissions = state.user?.permissions || [];
+}
+async function refreshVendor() {
+  state.vendorRows = await api('mine');
+  // Move requests + credits ride along; each is best-effort so one
+  // failing never takes My Bookings down with it.
+  try { state.vendorMoves = (await fn('move-requests', { action: 'mine' })).requests || []; } catch { state.vendorMoves = []; }
+  try { state.credits = await fn('vendor-credit', { action: 'mine' }); } catch { state.credits = null; }
+}
+async function ensurePublic() {
+  if (!state.publicData) state.publicData = await api('public');
+}
 
 const ctx = {
   state,
@@ -288,7 +407,16 @@ const ctx = {
   closeSheet,
   navigate,
   bindGo,
-  refreshAdmin: async () => { await refreshAdmin(); renderChrome(); }
+  refreshAdmin: async () => { await refreshAdmin(); renderChrome(); },
+  // The role-aware refresh every Stage 3b screen mutates through:
+  // re-fetch the signed-in role's payload, then refresh the chrome.
+  refreshData: async () => {
+    const role = roleOf();
+    if (role === 'admin') await refreshAdmin();
+    else if (role === 'manager') await refreshManager();
+    else await refreshVendor();
+    renderChrome();
+  }
 };
 Object.defineProperty(ctx, 'sheetEl', { get: () => document.querySelector('#sheet-root .sheet') });
 
@@ -297,8 +425,11 @@ async function route() {
   const r = parseHash();
   state.route = r;
   const root = $('#screen');
+  const role = roleOf();
   renderChrome();
   try {
+    if (role === 'manager') return await routeManager(r, root);
+    if (role === 'vendor') return await routeVendor(r, root);
     if (r.name === 'home') { await refreshAdmin(); renderChrome(); renderHome(ctx, root); }
     else if (r.name === 'event-day') { await refreshAdmin(); renderChrome(); renderEventDay(ctx, root, r); }
     else if (r.name === 'attendees') { await refreshAdmin(); renderChrome(); renderAttendees(ctx, root, r); }
@@ -316,6 +447,11 @@ async function route() {
     else if (r.name === 'surveys') { renderSurveys(ctx, root); }
     else if (r.name === 'archive') { await refreshAdmin(); renderChrome(); renderArchive(ctx, root); }
     else if (r.name === 'tools') { renderTools(ctx, root); }
+    else if (r.name === 'rsvps') { renderRsvps(ctx, root); }
+    else if (r.name === 'comms') { renderComms(ctx, root); }
+    else if (r.name === 'threads') { await refreshAdmin(); renderChrome(); renderThreads(ctx, root, { apps: threadApps(state.admin?.applications) }); }
+    else if (r.name === 'chat') { renderChatAdmin(ctx, root); }
+    else if (r.name === 'social') { renderSocial(ctx, root); }
     else if (['vendors', 'money', 'messages'].includes(r.name)) groupScreen(root, r.name);
     else if (r.name === 'more') moreScreen(root);
     else if (r.name === 'section') sectionScreen(root, r.section);
@@ -323,6 +459,51 @@ async function route() {
   } catch (e) {
     root.innerHTML = `<div class="card empty-card"><h3>Something went wrong loading this screen.</h3><p class="muted">${esc(e.message)}</p><div class="vendor-actions"><button class="btn small" onclick="location.reload()">Reload</button><a class="btn small" href="/">Open the current app</a></div></div>`;
   }
+  window.scrollTo(0, 0);
+}
+
+// Thread screens take a deduped application list from whichever payload
+// the role carries (admin applications / manager applications / the
+// vendor's own rows).
+function threadApps(rows) {
+  const seen = new Map();
+  for (const a of rows || []) {
+    if (a?.application_id && !seen.has(String(a.application_id))) seen.set(String(a.application_id), a);
+  }
+  return [...seen.values()];
+}
+
+async function routeManager(r, root) {
+  await refreshManager();
+  renderChrome();
+  const guard = (perm, render) => {
+    if (!managerCan(ctx, perm)) { renderManagerHome(ctx, root); return; }
+    render();
+  };
+  if (r.name === 'meventday') guard('attendees', () => renderManagerEventDay(ctx, root));
+  else if (r.name === 'mattendees') guard('attendees', () => renderManagerEventDay(ctx, root, { attendeesMode: true }));
+  else if (r.name === 'mapplications') guard('applications', () => renderManagerApplications(ctx, root));
+  else if (r.name === 'mwaitlist') guard('waitlist', () => renderManagerApplications(ctx, root, { waitlistOnly: true }));
+  else if (r.name === 'mrsvps') guard('shopper_rsvps', () => renderRsvps(ctx, root));
+  else if (r.name === 'mmoves') guard('moves:approve', () => renderMoves(ctx, root));
+  else if (r.name === 'mthreads') guard('vendor_messages', () => renderThreads(ctx, root, { eyebrow: 'Staff messages', apps: threadApps(state.manager?.applications) }));
+  else if (r.name === 'mchat') guard('live_chat', () => renderChatAdmin(ctx, root));
+  else if (r.name === 'mfloor') guard('floor_plans', () => renderManagerFloor(ctx, root));
+  else if (r.name === 'mmore') managerMoreScreen(root);
+  else renderManagerHome(ctx, root);
+  window.scrollTo(0, 0);
+}
+
+async function routeVendor(r, root) {
+  await refreshVendor();
+  renderChrome();
+  if (r.name === 'vbookings') renderVendorBookings(ctx, root);
+  else if (r.name === 'vapply') { await ensurePublic(); renderVendorApply(ctx, root); }
+  else if (r.name === 'vprofile') { await ensurePublic(); renderVendorProfile(ctx, root); }
+  else if (r.name === 'vmessages') renderChatVendor(ctx, root);
+  else if (r.name === 'vthreads') renderThreads(ctx, root, { eyebrow: 'Messages', title: 'Application messages', apps: threadApps(state.vendorRows) });
+  else if (r.name === 'vmore') vendorMoreScreen(root);
+  else renderVendorHome(ctx, root);
   window.scrollTo(0, 0);
 }
 
@@ -338,20 +519,17 @@ async function boot() {
     signInScreen(root);
     return;
   }
-  if (state.user.admin) {
-    try { await refreshAdmin(); } catch (e) { toast(e.message, true); }
-    renderChrome();
-    route();
-  } else {
-    renderChrome();
-    // Stage 1 has no workspace for this role yet — hide the organizer nav
-    // so nothing on screen is a dead button.
-    $('#tabbar').innerHTML = '';
-    $('#sidenav').innerHTML = '';
-    roleNotice(root, state.user.manager ? 'manager' : 'vendor');
-  }
+  // Every role lands in the same shell now (Stage 3b): route() dispatches
+  // to the organizer, manager, or vendor screens by role.
+  try {
+    if (state.user.admin) await refreshAdmin();
+    else if (state.user.manager) await refreshManager();
+    else await refreshVendor();
+  } catch (e) { toast(e.message, true); }
+  renderChrome();
+  route();
 }
 
-window.addEventListener('hashchange', () => { if (state.user?.admin) route(); });
+window.addEventListener('hashchange', () => { if (state.user) route(); });
 getConfig(); // warm the OTP config so the sign-in form answers fast
 boot();
