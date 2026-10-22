@@ -13,6 +13,12 @@ const ACTION_PERMISSION={
  'payment-reminder-now':'applications'
 };
 
+// Feature permissions that gate a whole function surface rather than one
+// api.mjs action; checked with hasStaffPermission (admin always passes).
+// 'moves:approve' (§13.3): staff who may approve/decline vendor date-move
+// requests in netlify/functions/move-requests.mjs.
+export const MOVE_REQUEST_PERMISSION='moves:approve';
+
 export function hasStaffPermission(u,permission){
  return u?.admin===true||(u?.manager===true&&Array.isArray(u.permissions)&&u.permissions.includes(permission));
 }
