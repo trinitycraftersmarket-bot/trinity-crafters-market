@@ -1,6 +1,15 @@
 import postgres from 'postgres';
 import {createClient} from '@supabase/supabase-js';
 import {normalizePhone} from './rules.mjs';
+import {publicCounts,categoryCountRows} from './counts.mjs';
+// User-facing validation failures are thrown as plain Errors all over the
+// codebase (throw Error('This space is sold out.')). Anything else —
+// TypeError/ReferenceError, database errors (postgres.js errors carry a
+// `code` and a non-'Error' name), network failures — is a server fault.
+// Handlers use this to answer 400 with the message for the former and a
+// generic, fully-logged 500 for the latter, instead of masking real faults
+// as bad requests (audit §7.4.3).
+export const isUserError=e=>!!e&&e.name==='Error'&&typeof e.message==='string'&&e.message.length>0&&e.code===undefined;
 export const ready=()=>!!(process.env.DATABASE_URL&&process.env.SUPABASE_URL&&process.env.SUPABASE_PUBLISHABLE_KEY&&process.env.SUPABASE_SECRET_KEY&&process.env.ADMIN_EMAIL);
 let connection;
 export const db=()=>connection ||= postgres(process.env.DATABASE_URL,{ssl:'require',max:2,prepare:false,idle_timeout:20});
@@ -51,12 +60,19 @@ export async function flushMail(){
 export async function publicData(){
  const sql=db();await expire(sql);
  // Live inventory uses the same active vendor records shown on the attendance list.
- // Normalize imported space labels because PDF/manual imports may contain casing or whitespace differences.
- const events=await sql`select e.*,l.name as location,l.address,l.market_name,((select count(*)::int from market.bookings b where b.event_id=e.id and lower(trim(b.space)) in ('indoor','inside') and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+(select count(*)::int from market.imported_attendees i where i.event_id=e.id and not coalesce(i.cancelled,false) and lower(trim(i.space)) in ('inside','indoor'))) as indoor_used,((select count(*)::int from market.bookings b where b.event_id=e.id and lower(trim(b.space)) in ('outdoor','outside') and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())))+(select count(*)::int from market.imported_attendees i where i.event_id=e.id and not coalesce(i.cancelled,false) and lower(trim(i.space)) in ('outside','outdoor'))) as outdoor_used from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date,e.start_time`;
+ // All used-space / used-category numbers come from server/counts.mjs — the
+ // single counting function (owner semantics: pending does not reserve;
+ // booking/imported twins deduplicated by vendor identity).
+ const events=await sql`select e.*,l.name as location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date,e.start_time`;
  const categories=await sql`select * from market.categories where active order by name`;
  const locations=await sql`select id,name,address,market_name from market.locations order by name`;
  const categoryLimits=await sql`select event_id,category_id,vendor_limit from market.event_category_limits`;
- const counts=await sql`select x.event_id,x.category_id,count(*)::int as used,coalesce(o.vendor_limit,c.vendor_limit) as vendor_limit from (select b.event_id,a.category_id from market.bookings b join market.applications a on a.id=b.application_id where b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now()) union all select i.event_id,i.category_id from market.imported_attendees i where i.category_id is not null and not coalesce(i.cancelled,false)) x join market.categories c on c.id=x.category_id left join market.event_category_limits o on o.event_id=x.event_id and o.category_id=x.category_id group by x.event_id,x.category_id,o.vendor_limit,c.vendor_limit`;
+ const inventory=await publicCounts(sql);
+ for(const e of events){const s=inventory.spaces.get(String(e.id))||{indoor:0,outdoor:0};e.indoor_used=s.indoor;e.outdoor_used=s.outdoor;}
+ // The old counts query joined every category (active or not); keep that
+ // exact reach for the row shaping even though the payload list is active-only.
+ const allCategories=await sql`select id,vendor_limit from market.categories`;
+ const counts=categoryCountRows(inventory,allCategories,categoryLimits);
  const offerings=await sql`select event_id,space,category from (
    select b.event_id,lower(trim(b.space)) space,case when lower(c.name) like 'other%' then null else c.name end category from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id where b.status in ('approved','paid') or (b.status='held' and b.hold_until>now())
    union all
