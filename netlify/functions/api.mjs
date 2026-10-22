@@ -793,10 +793,19 @@ trinitycraftersmarket@gmail.com`;
   if(!(u.admin||u.manager))return json({error:'Organizer or Manager access only'},403);
   if(!p.id||!['approved','needs_correction','refused','not_inspected'].includes(p.status))throw Error('Choose a valid inspection status.');
   if((p.status==='needs_correction'||p.status==='refused')&&!String(p.notes||'').trim())throw Error('Inspection notes are required.');
-  const who=u.email||'Staff';
-  if(p.imported)await sql`update market.imported_attendees set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${p.status==='not_inspected'?null:new Date().toISOString()},inspected_by=${p.status==='not_inspected'?null:who} where id=${p.id}`;
-  else await sql`update market.bookings set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${p.status==='not_inspected'?null:new Date().toISOString()},inspected_by=${p.status==='not_inspected'?null:who} where id=${p.id}`;
-  await audit(sql,u,'vendor inspection',{id:p.id,imported:!!p.imported,status:p.status,notes:p.notes||null});return json({ok:true});
+  const who=u.email||'Staff',at=p.status==='not_inspected'?null:new Date().toISOString(),by=p.status==='not_inspected'?null:who;
+  // A vendor can exist as both a booking and an imported attendee for the same
+  // event; keep both records in sync so every view shows the same label.
+  let updated=0;
+  if(p.imported){
+   const [row]=await sql`update market.imported_attendees set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} where id=${p.id} returning event_id,email`;
+   if(row){updated++;const sib=await sql`update market.bookings b set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} from market.applications a where b.application_id=a.id and b.event_id=${row.event_id} and lower(a.email)=lower(${row.email}) returning b.id`;updated+=sib.length;}
+  }else{
+   const [row]=await sql`update market.bookings set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} where id=${p.id} returning event_id,application_id`;
+   if(row){updated++;const [app]=await sql`select email from market.applications where id=${row.application_id}`;if(app){const sib=await sql`update market.imported_attendees set inspection_status=${p.status},inspection_notes=${p.notes||null},inspected_at=${at},inspected_by=${by} where event_id=${row.event_id} and lower(email)=lower(${app.email}) returning id`;updated+=sib.length;}}
+  }
+  if(!updated)throw Error('That vendor record was not found, so nothing was updated. Reload the list and try again.');
+  await audit(sql,u,'vendor inspection',{id:p.id,imported:!!p.imported,status:p.status,notes:p.notes||null,updated});return json({ok:true,updated});
  }
  if(action==='imported-attendance'){
   if(!p.id||!['checked_in','no_show','clear','remove'].includes(p.state))throw Error('Choose an attendance status.');

@@ -118,3 +118,5 @@ body:has(#floor-area-manager) #live-chat-root{display:none!important}
  #application .market-picked-date{padding:12px}
  #application .market-picked-date-top strong{font-size:15px}
 }
+
+footer a.app-download{display:inline-block;margin-top:8px;background:#123f38;color:#f8d776;border:1px solid #f8d776;border-radius:999px;padding:8px 14px;font-weight:600;text-decoration:none}
