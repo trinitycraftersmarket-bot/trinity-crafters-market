@@ -10,7 +10,7 @@
 // event+space) is the exclusion list. All capacity/category math goes through
 // server/counts.mjs — this module writes no count SQL of its own.
 import {audit, queue} from './core.mjs';
-import {assertCapacity, categoryUsed, eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
+import {assertCapacity, eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
 import {decisionEmail} from './notifications.mjs';
 
 export const OFFER_WINDOW_HOURS = 12;
@@ -80,7 +80,7 @@ async function setEpisode(tx, eventId, space, when) {
 export async function scanWaitlist(tx, eventId, {space = null, actor = 'system'} = {}) {
   await ensureWaitlistSchema(tx);
   const event = await eventRow(tx, eventId);
-  if (!event || event.status !== 'open' || event.sold_out) return [];
+  if (!event || !event.open || event.sold_out) return [];
   const inv = await eventInventory(tx, eventId);
   const limits = await effectiveLimits(tx, eventId);
   const created = [];
@@ -104,12 +104,12 @@ export async function scanWaitlist(tx, eventId, {space = null, actor = 'system'}
     // category are not both offered past the limit.
     const catUsed = new Map(inv.categories);
     for (const r of live) if (r.category_id) catUsed.set(r.category_id, (catUsed.get(r.category_id) || 0) + 1);
-    const queueRows = await tx`select b.id, b.space, b.price, b.category_exception, a.name, a.email, a.business, a.category_id, a.vendor_id, a.phone from market.bookings b join market.applications a on a.id = b.application_id where b.event_id = ${eventId} and b.space = ${sp} and b.status = 'waitlist' and not exists(select 1 from market.users usr where usr.id = a.user_id and usr.banned) order by b.waitlisted_at asc nulls last, b.id asc`;
+    const queueRows = await tx`select b.id, b.space, b.price, b.category_exception, a.name, a.email, a.business, a.category_id, a.vendor_id, a.phone from market.bookings b join market.applications a on a.id = b.application_id where b.event_id = ${eventId} and b.space = ${sp} and b.status = 'waitlist' and not exists(select 1 from market.bans bn where bn.active and (bn.user_id = a.user_id or lower(bn.email) = lower(a.email))) order by b.waitlisted_at asc nulls last, b.id asc`;
     for (const b of queueRows) {
       if (offeredCount >= free) break;
       if (liveIds.has(b.id) || excluded.has(b.id)) continue;
       const key = vendorIdentityKey({vendor_id: b.vendor_id, email: b.email, phone: b.phone, business: b.business, name: b.name});
-      if (inv.vendors.has(key)) continue; // already attending this date via another record
+      if (inv.vendors.some(v => v.key === key)) continue; // already attending this date via another record
       if (b.category_id && !b.category_exception) {
         const lim = limits.get(b.category_id);
         if (lim != null && (catUsed.get(b.category_id) || 0) >= lim) continue; // category full — SKIPPED, keeps position
@@ -142,7 +142,7 @@ export async function sweepWaitlist(tx, actor = 'system') {
 // Backstop: scan every future open event that has anyone waitlisted.
 export async function scanAllFutureWaitlists(tx, actor = 'system') {
   await ensureWaitlistSchema(tx);
-  const events = await tx`select distinct ev.id from market.events ev join market.bookings b on b.event_id = ev.id and b.status = 'waitlist' where ev.status = 'open' and (ev.date + coalesce(ev.end_time, time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;
+  const events = await tx`select distinct ev.id from market.events ev join market.bookings b on b.event_id = ev.id and b.status = 'waitlist' where ev.open and (ev.date + coalesce(ev.end_time, time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;
   let created = 0;
   for (const e of events) created += (await scanWaitlist(tx, e.id, {actor})).length;
   return created;
@@ -237,7 +237,7 @@ export async function offerAnyway(tx, bookingId, actor) {
     await tx`update market.waitlist_offers set state = 'superseded' where booking_id = ${b.id} and state = 'offered'`;
   }
   const limits = await effectiveLimits(tx, b.event_id);
-  const catUsedNow = b.category_id ? categoryUsed(inv, b.category_id) : 0;
+  const catUsedNow = b.category_id ? (inv.categories.get(String(b.category_id)) || 0) : 0;
   const catLimit = b.category_id ? limits.get(b.category_id) : null;
   const offer = await makeOffer(tx, b, event, {offeredBy: 'organizer', override: true, actor});
   await audit(tx, actor, 'waitlist offer override', {booking_id: b.id, vendor: b.business || b.name, email: b.email, event_id: b.event_id, event: dateOnly(event.date), category: b.category || null, category_used: catUsedNow, category_limit: catLimit ?? null, space: b.space});

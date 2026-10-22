@@ -8,7 +8,7 @@
 // stays pending. All capacity / category / duplicate math goes through
 // server/counts.mjs — this module writes no count SQL of its own.
 import {audit, queue} from './core.mjs';
-import {categoryUsed, eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
+import {eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
 import {scanWaitlist} from './waitlist.mjs';
 
 export const MOVE_CUTOFF_HOURS = 48;
@@ -82,14 +82,14 @@ export async function targetProblems(tx, source, target) {
   if (!target) return ['That market date could not be found.'];
   if (target.id === source.event_id) problems.push('That is the date this booking is already on.');
   if (target.ended) problems.push('That date has already ended.');
-  if (target.status !== 'open') problems.push('That date is not open for booking.');
+  if (!target.open) problems.push('That date is not open for booking.');
   if (target.sold_out) problems.push('That date is marked sold out.');
   if (source.space === 'indoor' && !target.indoor_open) problems.push('Indoor booths are closed for that date.');
   if (source.space === 'outdoor' && !target.outdoor_open) problems.push('Outdoor booths are closed for that date.');
   if (problems.length) return problems;
   const inv = await eventInventory(tx, target.id);
   const key = vendorIdentityKey({vendor_id: source.vendor_id, email: source.email, phone: source.phone, business: source.business, name: source.name});
-  if (inv.vendors.has(key)) problems.push('You already have a spot on that date.');
+  if (inv.vendors.some(v => v.key === key)) problems.push('You already have a spot on that date.');
   const email = emailKey(source.email);
   if (!problems.length && email) {
     const [pend] = await tx`select b.id from market.bookings b join market.applications a on a.id = b.application_id where b.event_id = ${target.id} and lower(a.email) = ${email} and b.status in ('pending','waitlist') limit 1`;
@@ -107,7 +107,7 @@ export async function targetProblems(tx, source, target) {
   if (used >= capacity) problems.push(`${spaceLabel(source.space)} is full for that date.`);
   if (source.category_id) {
     const [lim] = await tx`select coalesce(l.vendor_limit, c.vendor_limit) as lim from market.categories c left join market.event_category_limits l on l.event_id = ${target.id} and l.category_id = c.id where c.id = ${source.category_id}`;
-    if (lim && lim.lim != null && categoryUsed(inv, source.category_id) >= lim.lim) problems.push('Your category is full for that date.');
+    if (lim && lim.lim != null && (inv.categories.get(String(source.category_id)) || 0) >= lim.lim) problems.push('Your category is full for that date.');
   }
   return problems;
 }
@@ -115,7 +115,7 @@ export async function targetProblems(tx, source, target) {
 // Dates the vendor could pick, plus the dates that fail pre-checks (with
 // reasons) so the dialog can say why a date is missing.
 export async function eligibleTargets(tx, source) {
-  const rows = await tx`select ev.id from market.events ev where ev.status = 'open' and ev.id <> ${source.event_id}
+  const rows = await tx`select ev.id from market.events ev where ev.open and ev.id <> ${source.event_id}
     and (ev.date + coalesce(ev.end_time, time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by ev.date`;
   const eligible = [], excluded = [];
   for (const r of rows) {
@@ -188,7 +188,7 @@ export async function approveMoveRequest(tx, {requestId, actor, overrideCutoff =
   } else {
     await tx`update market.imported_attendees set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, attendance_state = 'not_marked' where id = ${source.source_id}`;
     await tx`delete from market.imported_category_reservations where imported_attendee_id = ${source.source_id}`;
-    if (source.category_id) await tx`insert into market.imported_category_reservations(id, imported_attendee_id, event_id, category_id, email) values(gen_random_uuid(), ${source.source_id}, ${target.id}, ${source.category_id}, ${source.email}) on conflict do nothing`;
+    if (source.category_id) await tx`insert into market.imported_category_reservations(imported_attendee_id, event_id, category_id, space) values(${source.source_id}, ${target.id}, ${source.category_id}, ${source.space}) on conflict(imported_attendee_id, category_id) do nothing`;
   }
   await clearFloorAssignments(tx, req.from_event_id, source.source_id);
   const [updated] = await tx`update market.move_requests set status = 'approved', decided_at = now(), decided_by = ${actor.email || String(actor)} where id = ${req.id} returning *`;
