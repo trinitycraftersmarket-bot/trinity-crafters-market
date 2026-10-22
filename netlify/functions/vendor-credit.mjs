@@ -1,6 +1,7 @@
 import {db,identity,audit,queue,flushMail,isUserError} from '../../server/core.mjs';
 import {eventInventory,categoryUsed,vendorIdentityKey} from '../../server/counts.mjs';
 import {syncCancellation} from '../../server/twins.mjs';
+import {scanWaitlist} from '../../server/waitlist.mjs';
 
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
@@ -70,7 +71,7 @@ export default async req=>{
     await syncCancellation(tx,{eventId:v.event_id,key:vendorIdentityKey({vendor_id:v.vendor_id,email:v.email,phone:v.phone,business:v.business,name:v.name,id:v.id}),exclude:{source:v.imported?'imported':'booking',id:v.id}});
     const link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';
     const body='Hi '+(v.name||'Vendor')+',\n\nA '+money(amount)+' credit has been issued for your cancelled '+fmtDate(v.event_date)+' market booking.\n\nChoose a different available market date online under My Bookings:\n'+link+'\n\nWhen you apply the credit, the new booking will be automatically approved and marked paid, and your category will be reserved for that date. If the new space costs less than your credit, the unused balance will remain available.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com';
-    await queue(tx,v.email,'Vendor credit available — '+money(amount),body);await audit(tx,u,'vendor credit issued',{credit_id:c.id,source_type:c.source_type,source_id:c.source_id,amount,source_event_id:c.source_event_id});created=c;
+    await queue(tx,v.email,'Vendor credit available — '+money(amount),body);await audit(tx,u,'vendor credit issued',{credit_id:c.id,source_type:c.source_type,source_id:c.source_id,amount,source_event_id:c.source_event_id});created=c;await scanWaitlist(tx,v.event_id,{space:v.space,actor:u});
    });
    await flushMail();return json({ok:true,credit:created});
   }
