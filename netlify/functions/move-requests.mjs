@@ -29,7 +29,7 @@ export default async req => {
       if (source.source_type === 'booking' ? source.user_id !== u.id : String(source.email || '').trim().toLowerCase() !== String(u.email || '').trim().toLowerCase())
         return json({error: 'That booking is not yours.'}, 403);
       const {eligible, excluded} = await sql.begin(async tx => { await lock(tx); return eligibleTargets(tx, source); });
-      return json({ok: true, eligible, excluded: excluded.map(x => ({event: x.event, problems: x.problems}))});
+      return json({ok: true, space: source.space, eligible, excluded: excluded.map(x => ({event: x.event, problems: x.problems}))});
     }
 
     if (p.action === 'create') {
