@@ -10,6 +10,10 @@ import {publicCounts,categoryCountRows} from './counts.mjs';
 // generic, fully-logged 500 for the latter, instead of masking real faults
 // as bad requests (audit §7.4.3).
 export const isUserError=e=>!!e&&e.name==='Error'&&typeof e.message==='string'&&e.message.length>0&&e.code===undefined;
+// Shared JSON responder (same shape as the local helper in api.mjs).
+// netlify/functions/move-requests.mjs has imported this since Features A;
+// without the export that module fails to load at all.
+export const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 export const ready=()=>!!(process.env.DATABASE_URL&&process.env.SUPABASE_URL&&process.env.SUPABASE_PUBLISHABLE_KEY&&process.env.SUPABASE_SECRET_KEY&&process.env.ADMIN_EMAIL);
 let connection;
 export const db=()=>connection ||= postgres(process.env.DATABASE_URL,{ssl:'require',max:2,prepare:false,idle_timeout:20});
