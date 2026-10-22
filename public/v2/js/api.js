@@ -70,6 +70,61 @@ export async function fn(name, payload) {
   return parse(r);
 }
 
+// Query-param action transport: communications and live-chat take their
+// action as an '?action=' query parameter (their legacy clients call
+// them that way), unlike the body-action functions above. GET when body
+// is undefined, POST JSON otherwise — same convention as api().
+export async function fnq(name, action, body) {
+  const token = getToken();
+  const r = await fetch('/.netlify/functions/' + name + '?action=' + encodeURIComponent(action), {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: {
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+    },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  return parse(r);
+}
+
+// buffer-social is the one function with no action parameter at all: a GET
+// returns channels + events, a JSON POST publishes/saves, and a multipart
+// POST uploads a post image (the legacy social-media center's shapes).
+export async function fnGet(name) {
+  const token = getToken();
+  const r = await fetch('/.netlify/functions/' + name, {
+    headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}) }
+  });
+  return parse(r);
+}
+export async function fnForm(name, formData) {
+  const token = getToken();
+  const r = await fetch('/.netlify/functions/' + name, {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: formData
+  });
+  return parse(r);
+}
+
+// Chat attachments (live chat, both sides): the function hands back a
+// signed-upload ticket {url, key, bucket, path, token}; the file goes
+// straight to Supabase Storage with the official client, exactly as the
+// legacy chat scripts do it. Returns the {path, name, type, size} object
+// the send/reply actions expect.
+let storageLib = null;
+export async function uploadChatFile(ticket, file) {
+  const okTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+  if (!file || !file.size || file.size > 10 * 1024 * 1024 || !okTypes.includes(file.type)) {
+    throw Error('Attach a JPG, PNG, WEBP, GIF, or PDF up to 10 MB.');
+  }
+  storageLib = storageLib || await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+  const client = storageLib.createClient(ticket.url, ticket.key, { auth: { persistSession: false, autoRefreshToken: false } });
+  const { error } = await client.storage.from(ticket.bucket).uploadToSignedUrl(ticket.path, ticket.token, file, { contentType: file.type, upsert: false });
+  if (error) throw Error('The file could not be uploaded. Please try again.');
+  return { path: ticket.path, name: file.name, type: file.type, size: file.size };
+}
+
 // --- auth (Supabase OTP, identical flow to the legacy sign-in) ---------------
 let configCache = null;
 export async function getConfig() {
