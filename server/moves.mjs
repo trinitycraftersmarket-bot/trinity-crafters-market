@@ -107,7 +107,7 @@ export async function targetProblems(tx, source, target) {
   if (used >= capacity) problems.push(`${spaceLabel(source.space)} is full for that date.`);
   if (source.category_id) {
     const [lim] = await tx`select coalesce(l.vendor_limit, c.vendor_limit) as lim from market.categories c left join market.event_category_limits l on l.event_id = ${target.id} and l.category_id = c.id where c.id = ${source.category_id}`;
-    if (lim && lim.lim != null && (inv.categories.get(String(source.category_id)) || 0) >= lim.lim) problems.push('Your category is full for that date.');
+    if (lim && lim.lim != null && Number(lim.lim) > 0 && (inv.categories.get(String(source.category_id)) || 0) >= Number(lim.lim)) problems.push('Your category is full for that date.');
   }
   return problems;
 }

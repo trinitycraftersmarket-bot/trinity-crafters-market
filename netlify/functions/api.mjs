@@ -195,20 +195,23 @@ async function classifyVendorProducts(description,selectedCategory,categories){
  const matched=[...new Set((Array.isArray(parsed.matched_categories)?parsed.matched_categories:[]).map(x=>canonical.get(String(x).toLowerCase())).filter(Boolean))];
  return {matched_categories:matched,selected_category_match:parsed.selected_category_match===true,summary:String(parsed.summary||'').slice(0,500),source:'ai'};
 }
-async function categoryScanConflicts(sql,matchedCategories,dateIds=[]){
+export async function categoryScanConflicts(sql,matchedCategories,dateIds=[]){
  const conflicts=[];
  for(const categoryName of matchedCategories||[]){
   const [cat]=await sql`select id,name,vendor_limit from market.categories where active and lower(name)=lower(${categoryName}) limit 1`;if(!cat)continue;
   const ids=[...new Set((dateIds||[]).map(String).filter(Boolean))];
-  if(!ids.length&&Number(cat.vendor_limit)===0){conflicts.push({event_id:null,category:cat.name,used:0,limit:0,reason:'Category is currently filled'});continue;}
   for(const eventId of ids){
    const [event]=await sql`select id,date from market.events where id=${eventId}`;if(!event)continue;
    const [override]=await sql`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;
+   // Effective limit = per-event override ?? category default, and a
+   // limit of 0 means NO per-category cap (server/counts.mjs semantics;
+   // owner ruling on the Holly case, Oct 22) — it never flags a category
+   // as filled/closed. Enforcement applies only when the cap is > 0.
    const limit=Number(override?.vendor_limit??cat.vendor_limit??1);
    // Advisory AI scan; the used count comes from the single counting
    // function (server/counts.mjs) like every other capacity number.
    const used=await categoryUsed(sql,event.id,cat.id);
-   if(limit===0||used>=limit)conflicts.push({event_id:event.id,category:cat.name,used,limit,reason:limit===0?'Category is currently filled':'Category limit is already reached'});
+   if(limit>0&&used>=limit)conflicts.push({event_id:event.id,category:cat.name,used,limit,reason:'Category limit is already reached'});
   }
  }
  return conflicts;
@@ -661,7 +664,7 @@ trinitycraftersmarket@gmail.com`;
     // still includes pending — it guards double submission, not capacity.
     const inv=await eventInventory(tx,event.id);if((inv[d.space]||0)>=event[d.space+'_capacity'])throw Error(marketDateLabel(event.date)+': '+d.space+' space is sold out.');
     const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('pending','waitlist','approved','held','paid') and (a.user_id=${attempt.user_id} or lower(a.email)=lower(${attempt.email}) or regexp_replace(a.phone,'[^0-9]','','g')=${phone}) limit 1`;if(duplicate.length)throw Error(marketDateLabel(event.date)+': this vendor already has an application or booking.');
-    const [limitOverride]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;const categoryLimit=limitOverride?.vendor_limit??cat.vendor_limit,categoryException=(inv.categories.get(String(cat.id))||0)>=categoryLimit;
+    const [limitOverride]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;const categoryLimit=limitOverride?.vendor_limit??cat.vendor_limit,categoryException=Number(categoryLimit)>0&&(inv.categories.get(String(cat.id))||0)>=Number(categoryLimit);
     const [booking]=await tx`insert into market.bookings(application_id,event_id,space,price,status,category_exception) values(${app.id},${event.id},${d.space},${event[d.space+'_price']},'approved',${categoryException}) returning *`;created.push({...booking,date:event.date,location:event.location,address:event.address,title:event.title});
     const mail=decisionEmail({...booking,name,email:attempt.email,business,status:'approved'},event,'');await queue(tx,attempt.email,mail.subject,mail.body);
    }
@@ -726,6 +729,7 @@ trinitycraftersmarket@gmail.com`;
   await sql.begin(async tx=>{await queue(tx,v.email,`Trinity Crafters Market ${year} Year-End Statement`,body);await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+year+' Statement — '+(v.business||v.name),body);});await flushMail();return json({ok:true});
  }
  if(action==='floor-area-plans-save')return await saveAreaPlans(sql,p,u);
+ if(action==='floor-area-plans-delete')return await deleteAreaPlan(sql,p,u);
  if(action==='floor-plan-pdf'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   const [event]=await sql`select e.*,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;if(!event)throw Error('Market date not found.');
@@ -1357,6 +1361,29 @@ async function saveAreaPlans(sql,p,u){
   return all;
  });
  return json({ok:true,area_count:updated.length,areas:updated});
+}
+
+// Delete ONE saved floor plan area for an event (closes the Stage 3a gap:
+// saveAreaPlans only ever upserts, so a saved area could never go away).
+// Staff-gated exactly like the save (floor_plans permission). Safety rule:
+// an area that still has vendor booth assignments REFUSES with the reason —
+// deleting it would orphan those vendors' pins; the organizer moves or
+// unassigns them first. Exported as a test seam (vendor-credit.mjs pattern).
+export async function deleteAreaPlan(sql,p,u){
+ if(!hasStaffPermission(u,'floor_plans'))return json({error:'Access denied'},403);
+ if(!p.event_id||!p.area_key)throw Error('Event and floor plan area are required.');
+ const key=String(p.area_key);
+ return await sql.begin(async tx=>{
+  const [event]=await tx`select id from market.events where id=${p.event_id} for update`;
+  if(!event)throw Error('Market date not found.');
+  const [area]=await tx`select area_key,title,assignments from market.floor_plan_areas where event_id=${p.event_id} and area_key=${key}`;
+  if(!area)throw Error('That floor plan area is not saved for this market date. Reload the event and retry.');
+  const assigned=Object.values(area.assignments||{}).filter(entry=>String(entry?.vendor_id||'')).length;
+  if(assigned)throw Error(`"${area.title||key}" still has ${assigned} vendor booth assignment${assigned===1?'':'s'} — move or unassign those vendors first, then delete the area.`);
+  await tx`delete from market.floor_plan_areas where event_id=${p.event_id} and area_key=${key}`;
+  await audit(tx,u,'floor plan area deleted',{event_id:p.event_id,area_key:key,title:area.title||key});
+  return json({ok:true,area_key:key});
+ });
 }
 
 async function eventAreaMailPackages(sql,eventId,rows){

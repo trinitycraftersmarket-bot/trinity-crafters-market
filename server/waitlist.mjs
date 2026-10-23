@@ -112,7 +112,7 @@ export async function scanWaitlist(tx, eventId, {space = null, actor = 'system'}
       if (inv.vendors.some(v => v.key === key)) continue; // already attending this date via another record
       if (b.category_id && !b.category_exception) {
         const lim = limits.get(b.category_id);
-        if (lim != null && (catUsed.get(b.category_id) || 0) >= lim) continue; // category full — SKIPPED, keeps position
+        if (lim != null && lim > 0 && (catUsed.get(b.category_id) || 0) >= lim) continue; // category full — SKIPPED, keeps position (limit 0 = no cap, never full)
       }
       const offer = await makeOffer(tx, {...b, space: sp}, event, {actor});
       created.push(offer);

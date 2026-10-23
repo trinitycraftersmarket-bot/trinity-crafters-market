@@ -6,7 +6,7 @@
 // in the shared sheet system, every mutation re-fetches, and a save only
 // ever sends the fields it means to change (§5 R-7: the event-capacity
 // floor now bites only when capacity is actually reduced, server-side).
-import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261022-7';
+import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261022-8';
 
 const stamp = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 const intOr = (v, f) => { const n = parseInt(v, 10); return Number.isInteger(n) && n >= 0 ? n : f; };
@@ -202,7 +202,7 @@ export function renderCategories(ctx, root) {
       <h3 class="sheet-title">${c.id ? 'Edit' : 'Add'} category</h3>
       <form id="su-category-form">
         <label class="sheet-field">Category name<input name="name" required value="${esc(c.name || '')}"></label>
-        <label class="sheet-field">Vendors allowed per date (0 = filled / no new vendors)<input name="vendor_limit" type="number" min="0" required value="${c.vendor_limit ?? 1}"></label>
+        <label class="sheet-field">Vendors allowed per date (0 = no cap)<input name="vendor_limit" type="number" min="0" required value="${c.vendor_limit ?? 1}"></label>
         <label class="checkline"><input type="checkbox" name="active" ${c.active !== false ? 'checked' : ''}> Active category</label>
         <p class="note flag-note" data-form-msg hidden></p>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Save category</button></div>
@@ -236,8 +236,10 @@ export function renderCategories(ctx, root) {
         <p class="note">What's actually allowed <strong>for the selected date</strong>, including date overrides:</p>
         <div>${active.map(c => {
           const eff = effective(eventId, c);
-          const chip = eff.limit === 0 ? '<span class="status bad">Closed</span>' : eff.used >= eff.limit ? '<span class="status warn">Full</span>' : '<span class="status ok">Open</span>';
-          return `<div class="mini-row"><span><strong>${esc(c.name)}</strong> · ${eff.used} of ${eff.limit} booked${eff.overridden ? ' · <em>date override</em>' : ''}</span>${chip}</div>`;
+          // Limit 0 means NO cap (owner ruling): never "Closed", and the
+          // count reads "N booked · no cap" instead of a misleading "of 0".
+          const chip = eff.limit === 0 ? '<span class="status ok">No cap</span>' : eff.used >= eff.limit ? '<span class="status warn">Full</span>' : '<span class="status ok">Open</span>';
+          return `<div class="mini-row"><span><strong>${esc(c.name)}</strong> · ${eff.limit === 0 ? eff.used + ' booked · no cap' : eff.used + ' of ' + eff.limit + ' booked'}${eff.overridden ? ' · <em>date override</em>' : ''}</span>${chip}</div>`;
         }).join('') || '<p class="note">No active categories.</p>'}</div>
         <h3 class="section-title">Change one category for this date</h3>
         <form id="su-limit-form">
@@ -254,7 +256,7 @@ export function renderCategories(ctx, root) {
       <div class="vendor-list">${(a.allCategories || []).map(c => `
         <article class="card vendor">
           <div class="vendor-top"><div><h3>${esc(c.name)}</h3></div><span class="status ${c.active ? 'ok' : 'neutral'}">${c.active ? 'Active' : 'Inactive'}</span></div>
-          <p class="note">Global default: ${c.vendor_limit} vendor(s) per date</p>
+          <p class="note">Global default: ${c.vendor_limit === 0 ? 'no cap — unlimited vendors per date' : c.vendor_limit + ' vendor(s) per date'}</p>
           <div class="vendor-actions"><button class="btn small" data-edit-category="${esc(c.id)}">Edit global default</button></div>
         </article>`).join('')}</div>`;
     const eventSel = root.querySelector('#su-cat-event');

@@ -128,7 +128,12 @@ export async function assertCapacity(sql,event,{space,categoryId,limit,exception
  const s=normalizeSpace(space)||space;
  const selfInSpace=!!selfKey&&inv.vendors.some(v=>v.key===selfKey&&v.space===s);
  if(inv[s]>=Number(event[s+'_capacity']||0)&&!selfInSpace)throw Error('This space is sold out.');
- if(!exception&&limit!=null){
+ // A limit of 0 means NO per-category cap (owner ruling, Holly case):
+ // enforcement applies only when the cap is > 0. Callers may pass the raw
+ // effective limit (event override ?? category default); null also means
+ // no cap. Without this guard, used >= 0 made every limit-0 category read
+ // as permanently full.
+ if(!exception&&limit!=null&&Number(limit)>0){
   const selfInCategory=!!selfKey&&inv.vendors.some(v=>v.key===selfKey&&String(v.category_id||'')===String(categoryId||''));
   if((inv.categories.get(String(categoryId))||0)>=Number(limit)&&!selfInCategory)throw Error('Category is full. Explicitly approve a category exception to continue.');
  }

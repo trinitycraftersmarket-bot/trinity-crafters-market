@@ -1,7 +1,9 @@
 // Setup & Floor Plan — the ONE floor-plan editor in the rebuild
 // (audit §13.9). It reads and writes the same store the read-only views
 // render (market.floor_plan_areas via floor-area-plans /
-// floor-area-plans-save) and resolves label positions through the shared
+// floor-area-plans-save / floor-area-plans-delete — the delete refuses
+// while vendors are still assigned to the area) and resolves label
+// positions through the shared
 // math in floorplan.js — the editor, the Event Day view and both print
 // paths can never disagree about where a vendor's name sits again.
 //
@@ -12,11 +14,11 @@
 // organizer's concurrent edits instead of overwriting them, the canvas
 // composite print, and the setup instructions email. Native confirm()
 // dialogs are replaced by the shared sheet system (§6.2).
-import { api, esc, nice, clock, marketName } from './api.js?v=20261022-7';
+import { api, esc, nice, clock, marketName } from './api.js?v=20261022-8';
 import {
   imageAllowed, standardizeArea, spotId, spotIds, clampPct, vendorLabel,
   resolvePinPosition, fitPins, composePlanCanvas, printFloorPlan, printBoothList
-} from './floorplan.js?v=20261022-7';
+} from './floorplan.js?v=20261022-8';
 
 let view = { eventId: '' };
 const clone = data => JSON.parse(JSON.stringify(data));
@@ -370,7 +372,7 @@ export function renderFloorEditor(ctx, root, params = {}) {
           <div class="vendor-actions">
             <button class="btn small" id="fe-area-edit">Edit area settings</button>
             <button class="btn small" id="fe-area-add">Add new area</button>
-            ${savedArea ? '' : '<button class="btn small danger" id="fe-area-remove">Remove this unsaved area</button>'}
+            ${savedArea ? '<button class="btn small danger" id="fe-area-delete">Delete saved area</button>' : '<button class="btn small danger" id="fe-area-remove">Remove this unsaved area</button>'}
           </div>
           <div class="vendor-actions">
             <label class="btn small" for="fe-upload">Upload room image (PNG, JPG or WebP)</label>
@@ -379,7 +381,7 @@ export function renderFloorEditor(ctx, root, params = {}) {
             <button class="btn small" id="fe-reuse" ${state.template.length ? '' : 'disabled'}>Reuse prior venue layouts</button>
             <button class="btn small danger" id="fe-clear" ${a.image_data_url ? '' : 'disabled'}>Remove this image</button>
           </div>
-          <p class="note">Changing an image does not remove vendor assignments. Reusing a prior layout does reset assignments, after confirmation. Saved areas can't be deleted — rename or repurpose one instead; a new area can be removed until its first save.</p>
+          <p class="note">Changing an image does not remove vendor assignments. Reusing a prior layout does reset assignments, after confirmation. A saved area can be deleted once no vendors are assigned to its booths; a new area can be removed until its first save.</p>
         </div>
       </details>`;
 
@@ -461,6 +463,19 @@ export function renderFloorEditor(ctx, root, params = {}) {
       state.active = 0;
       state.selectedSpot = null;
       render();
+    };
+    const deleteBtn = q('#fe-area-delete');
+    if (deleteBtn) deleteBtn.onclick = async () => {
+      // Delete acts on the SAVED row; with unsaved changes pending, the
+      // editor state and the stored area may disagree (and a pending
+      // autosave could re-create the area), so require a clean state.
+      if (state.dirty) { ctx.toast('Save or discard your changes before deleting an area.', true); return; }
+      if (!(await confirmSheet('Delete ' + a.title + '?', 'This permanently deletes the saved "' + a.title + '" floor plan for this market date, including its image. It cannot be undone.', 'Delete area', true))) return;
+      try {
+        await api('floor-area-plans-delete', { event_id: state.eventId, area_key: a.area_key });
+        ctx.toast('Deleted ' + a.title + '.');
+        await load();
+      } catch (e) { ctx.toast(e.message, true); } // a server refusal (vendors still assigned) shows its reason
     };
     q('#fe-upload').onchange = onUpload;
     q('#fe-clear').onclick = async () => {

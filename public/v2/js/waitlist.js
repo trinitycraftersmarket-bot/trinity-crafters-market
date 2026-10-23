@@ -4,8 +4,8 @@
 // "Offer anyway" override. Ported from the legacy waitlistPanel(): same
 // payload fields (applications + waitlistOffers + counts), same actions
 // (waitlist-offer, booking approve). Mutations re-fetch, then re-render.
-import { api, esc, nice, niceShort } from './api.js?v=20261022-7';
-import { normalizeSpace } from './data.js?v=20261022-7';
+import { api, esc, nice, niceShort } from './api.js?v=20261022-8';
+import { normalizeSpace } from './data.js?v=20261022-8';
 
 let view = { eventId: '', space: '' };
 
@@ -46,7 +46,8 @@ export function renderWaitlist(ctx, root) {
       ?? (admin().categoryLimits || []).find(l => String(l.event_id) === String(b.event_id) && String(l.category_id) === String(b.category_id))?.vendor_limit
       ?? (admin().allCategories || []).find(c => String(c.id) === String(b.category_id))?.vendor_limit
       ?? null;
-    return { used, lim, full: lim != null && used >= lim };
+    // Limit 0 = no cap (owner ruling), so it can never be "full".
+    return { used, lim, full: lim != null && lim > 0 && used >= lim };
   };
   const offerState = (b, offers) => {
     const o = offers[b.id];
