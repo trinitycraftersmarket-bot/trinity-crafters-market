@@ -299,16 +299,10 @@ test('stage-3b vendor floor plan: multi-area, original image, own booth highligh
   assert.ok(fp.includes('data-fp-area'), 'the vendor plan must offer the other area plans as a switcher');
   assert.ok(fp.includes('image_data_url'), 'the vendor plan must render the original uploaded layout image');
   assert.ok(fp.includes("' mine'"), 'the vendor renderer must highlight the vendor\'s own pin/booth');
-  // Venue sharing rule: vendor/public floor plans only for Hampton Inn /
-  // Trinity Yoga venues; every other venue (e.g. Hilton Garden Inn) is
-  // organizer-only — the vendor renderer gates BEFORE fetching, and the
-  // vendor entry points hide entirely for non-shareable venues.
-  assert.ok(fp.includes('export const floorPlanShareable'), 'floorplan.js must export the venue sharing check');
-  assert.ok(fp.includes('hampton inn') && fp.includes('trinity yoga'), 'the sharing rule must name the shareable venues');
-  assert.ok(fp.includes('!floorPlanShareable(mineRow'), 'the vendor renderer must refuse non-shareable venues before any plan fetch');
-  const v = readFileSync(join(v2, 'js', 'vendor.js'), 'utf8');
-  assert.ok(v.includes('floorPlanShareable(r.location)'), 'booking cards must hide the floor-plan entry for non-shareable venues');
-  assert.ok(v.includes('floorPlanShareable(next.location)'), 'the vendor home must hide the floor-plan entry for non-shareable venues');
+  // Venue sharing: the Hampton-only restriction was lifted by the owner
+  // (Oct 22 eve) — vendors see saved plans at EVERY venue, Hilton Garden
+  // Inn included. No venue check may gate the vendor renderer.
+  assert.ok(!fp.includes('floorPlanShareable'), 'no venue gate may remain in the vendor floor-plan path');
   const css = readFileSync(join(v2, 'css', 'app.css'), 'utf8');
   for (const cls of ['.fp-pin.mine', '.fp-booth.mine', '.fp-mine-note', '.msg-thread', '.msg.mine', '.offer-box', '.checkin-box', '.comm-recipients', '.channel-row.off', '.apply-date', '.photo-thumbs', '.social-preview-img', '.chat-attachment-img'])
     assert.ok(css.includes(cls), `app.css must style ${cls} (stage-3b components)`);

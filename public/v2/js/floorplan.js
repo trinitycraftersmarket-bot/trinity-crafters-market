@@ -163,16 +163,6 @@ export async function renderSavedFloorPlan(host, eventId) {
   }
 }
 
-// --- venue sharing rule ---------------------------------------------------
-// Floor plans may be shown to vendors (and the public) ONLY for venues
-// matching Hampton Inn / Trinity Yoga. Every other venue — notably
-// Hilton Garden Inn (the Nov 28 Lutz market) — is ORGANIZER-ONLY: its
-// plans, placements and booth numbers must never render in a vendor or
-// public view, and the plan data is not even fetched there. Organizer
-// and staff views are unaffected by this rule. The check fails closed:
-// a venue text that matches neither name is treated as organizer-only.
-export const floorPlanShareable = venueText => /hampton inn|trinity yoga/i.test(String(venueText || ''));
-
 // --- vendor view: "Where will you be" -------------------------------------
 // Multi-area events (owner decision, Oct 22 eve — from the Nov 28 market
 // onward an event can have NUMEROUS floor_plan_areas): this renderer
@@ -199,14 +189,10 @@ export function findVendorSpot(areas, rowIds) {
 
 export async function renderVendorFloorPlan(host, eventId, mineRow) {
   if (!host || !eventId) return;
-  // Venue sharing rule (above): for a non-shareable venue the vendor
-  // view shows no plan, no placements and no booth number — and the
-  // plan store is never fetched. (The server enforces the same rule on
-  // the floor-area-plans action; this keeps the client from asking.)
-  if (!floorPlanShareable(mineRow?.location)) {
-    host.innerHTML = '<p class="muted">Floor plans for this venue are not shared with vendors. The organizer will let you know your booth placement for this market.</p>';
-    return;
-  }
+  // Venue sharing: an earlier same-day restriction (Hampton Inn /
+  // Trinity Yoga venues only) was LIFTED by the owner on Oct 22 eve —
+  // vendors see the saved plans at EVERY venue, Hilton Garden Inn
+  // included. No venue check and no fetch gate here.
   host.innerHTML = '<p class="muted">Loading the floor plan…</p>';
   let result, rows;
   try {

@@ -6,7 +6,7 @@
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
 import { api, fnq, esc, nice, money } from './api.js?v=20261022-4';
-import { renderVendorFloorPlan, floorPlanShareable } from './floorplan.js?v=20261022-4';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261022-4';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -68,7 +68,7 @@ function bookingCard(ctx, r) {
       </form>` : ''}
     ${moveChip(ctx, r)}
     <div class="vendor-actions">
-      ${booked(r) && upcoming(r) && floorPlanShareable(r.location) ? `<button type="button" class="btn small" data-floorplan="${esc(r.id)}">🗺️ Where will you be</button>` : ''}
+      ${booked(r) && upcoming(r) ? `<button type="button" class="btn small" data-floorplan="${esc(r.id)}">🗺️ Where will you be</button>` : ''}
       ${booked(r) ? `<button type="button" class="btn small" data-move="${esc(r.id)}">Request a date change</button>` : ''}
     </div>
   </article>`;
@@ -185,7 +185,7 @@ export function renderVendorHome(ctx, root) {
       ${next.setup_arrival_time ? `<p class="note">Setup arrival: <strong>${esc(next.setup_arrival_time)}</strong></p>` : '<p class="note">You have not picked a setup arrival time yet — choose one in My Bookings.</p>'}
       <div class="vendor-actions">
         <button class="btn primary small" data-go="vbookings">My Bookings</button>
-        ${floorPlanShareable(next.location) ? '<button class="btn small" id="v2-home-fp">🗺️ Where will you be</button>' : ''}
+        <button class="btn small" id="v2-home-fp">🗺️ Where will you be</button>
       </div>
     </section>` : '<section class="card empty-card"><h3>No upcoming market booked</h3><p class="muted">Apply for a date and it will show up here.</p><div class="vendor-actions"><button class="btn primary small" data-go="vapply">Apply for a market</button></div></section>'}
     <section class="card">
