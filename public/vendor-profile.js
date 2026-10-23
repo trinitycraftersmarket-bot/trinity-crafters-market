@@ -11,7 +11,7 @@
     if (!r.ok) throw Error(v.error || 'Request failed');
     return v;
   }
-  const MISSING_LABEL = {business: 'your business name', name: 'your contact name', category_id: 'your category', description: 'your products', phone: 'your phone number', space_preference: 'your space preference', website: 'your website', social_links: 'your social links'};
+  const MISSING_LABEL = {business: 'your business name', name: 'your contact name', category_id: 'your category', description: 'your products', phone: 'your phone number', address: 'your address', space_preference: 'your space preference', website: 'your website', social_links: 'your social links'};
   const SPACE_LABEL = {indoor: 'Indoor', outdoor: 'Outdoor', none: 'No preference'};
 
   function hint(completeness) {
@@ -33,6 +33,7 @@
         <label>Contact name<input name="name" value="${esc(p.name || '')}" maxlength="200"></label>
         <label>Category<select name="category_id">${cats.map(c => `<option value="${esc(c.id)}" ${String(p.category_id || '') === String(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
         <label>Phone<input name="phone" value="${esc(p.phone || '')}" maxlength="30"></label>
+        <label>Address<textarea name="address" rows="2" maxlength="500">${esc(p.address || '')}</textarea></label>
         <label>What you sell<textarea name="description" rows="3" maxlength="5000">${esc(p.description || '')}</textarea></label>
         <label>Space preference<select name="space_preference">
           <option value="" ${!p.space_preference ? 'selected' : ''}>Not set</option>
@@ -47,7 +48,7 @@
     form.onsubmit = async e => {
       e.preventDefault();
       const fd = new FormData(form), body = {action: 'save'};
-      for (const k of ['business', 'name', 'category_id', 'phone', 'description', 'space_preference', 'website', 'social_links']) body[k] = fd.get(k) ?? '';
+      for (const k of ['business', 'name', 'category_id', 'phone', 'address', 'description', 'space_preference', 'website', 'social_links']) body[k] = fd.get(k) ?? '';
       try {
         const v = await post(body);
         render(el, categories, v.profile, 'Profile saved.');

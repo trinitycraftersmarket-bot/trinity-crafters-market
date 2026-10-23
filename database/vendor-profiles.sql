@@ -24,6 +24,7 @@ create table if not exists market.vendor_profiles (
   category_id uuid references market.categories(id),
   description text not null default '',
   phone text not null default '',
+  address text not null default '',
   space_preference text not null default ''
     check (space_preference in ('', 'indoor', 'outdoor', 'none')),
   website text not null default '',
@@ -36,6 +37,10 @@ create table if not exists market.vendor_profiles (
 
 create index if not exists vendor_profiles_user_idx
   on market.vendor_profiles(user_id);
+
+-- Address was added to the profile after the table first shipped.
+alter table market.vendor_profiles
+  add column if not exists address text not null default '';
 
 alter table market.vendor_profiles enable row level security;
 revoke all on market.vendor_profiles from anon, authenticated;

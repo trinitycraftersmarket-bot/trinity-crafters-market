@@ -11,7 +11,7 @@ const clean = (v, max = 200) => v == null ? undefined : String(v).slice(0, max);
 // fields the form didn't include (cleanProfileFields merges server-side).
 function fieldsFrom(p) {
   const out = {};
-  for (const k of ['name', 'business', 'description', 'phone', 'website', 'social_links', 'space_preference', 'category_id'])
+  for (const k of ['name', 'business', 'description', 'phone', 'address', 'website', 'social_links', 'space_preference', 'category_id'])
     if (k in p) out[k] = p[k];
   return out;
 }
