@@ -17,26 +17,27 @@
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261023-1';
-import { VERSION, STAGE } from './version.js?v=20261023-1';
-import { renderHome } from './home.js?v=20261023-1';
-import { renderEventDay } from './eventday.js?v=20261023-1';
-import { renderAttendees } from './attendees.js?v=20261023-1';
-import { renderApplications } from './applications.js?v=20261023-1';
-import { renderWaitlist } from './waitlist.js?v=20261023-1';
-import { renderMoves } from './moves.js?v=20261023-1';
-import { renderVendors } from './vendors.js?v=20261023-1';
-import { renderPayments } from './payments.js?v=20261023-1';
-import { renderInvoices } from './invoices.js?v=20261023-1';
-import { renderFloorEditor } from './flooredit.js?v=20261023-1';
-import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-1';
-import { renderComms } from './comms.js?v=20261023-1';
-import { renderThreads } from './threads.js?v=20261023-1';
-import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-1';
-import { renderSocial } from './social.js?v=20261023-1';
-import { renderRsvps } from './rsvps.js?v=20261023-1';
-import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-1';
-import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-1';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261023-2';
+import { VERSION, STAGE } from './version.js?v=20261023-2';
+import { renderHome } from './home.js?v=20261023-2';
+import { renderEventDay } from './eventday.js?v=20261023-2';
+import { renderAttendees } from './attendees.js?v=20261023-2';
+import { renderApplications } from './applications.js?v=20261023-2';
+import { renderWaitlist } from './waitlist.js?v=20261023-2';
+import { renderMoves } from './moves.js?v=20261023-2';
+import { renderVendors } from './vendors.js?v=20261023-2';
+import { renderPayments } from './payments.js?v=20261023-2';
+import { renderInvoices } from './invoices.js?v=20261023-2';
+import { renderFloorEditor } from './flooredit.js?v=20261023-2';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-2';
+import { renderComms } from './comms.js?v=20261023-2';
+import { renderThreads } from './threads.js?v=20261023-2';
+import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-2';
+import { renderSocial } from './social.js?v=20261023-2';
+import { renderRsvps } from './rsvps.js?v=20261023-2';
+import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-2';
+import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-2';
+import { renderManualBooking } from './manualbooking.js?v=20261023-2';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -60,7 +61,7 @@ export const SECTIONS = [
   { key: 'waitlist', group: 'vendors', label: 'Wait List', icon: '⏳', desc: 'Vendors waiting for a spot — offers go out automatically', live: 'waitlist' },
   { key: 'vendor-directory', group: 'vendors', label: 'Vendor Directory', icon: '📋', desc: 'Every vendor, credits, payments and history', live: 'directory' },
   { key: 'move-requests', group: 'vendors', label: 'Move Requests', icon: '⇄', desc: 'Date-change requests needing your approval', badge: 'moves', live: 'moves' },
-  { key: 'manual-booking', group: 'vendors', label: 'Manual Booking', icon: '✍️', desc: 'Add a vendor by hand (PDF and paper sign-ups)' },
+  { key: 'manual-booking', group: 'vendors', label: 'Manual Booking', icon: '✍️', desc: 'Add a vendor by hand (PDF and paper sign-ups)', live: 'manualbooking' },
   { key: 'cancelled-vendors', group: 'vendors', label: 'Cancelled Vendors', icon: '↩️', desc: 'Cancelled bookings and reinstatements' },
   { key: 'banned-vendors', group: 'vendors', label: 'Banned Vendors', icon: '🚫', desc: 'Vendors blocked from booking' },
   { key: 'food-trucks', group: 'vendors', label: 'Food Trucks', icon: '🚚', desc: 'Food truck applications and approvals' },
@@ -130,7 +131,7 @@ function parseHash() {
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
   if (path.startsWith('section/')) return { name: 'section', section: path.slice(8) };
   if (['event-day', 'attendees', 'applications', 'waitlist', 'directory', 'moves', 'payments', 'invoices', 'flooredit', 'dates', 'categories', 'managers', 'connections', 'surveys', 'archive', 'tools', 'vendors', 'money', 'messages', 'more',
-    'rsvps', 'comms', 'threads', 'chat', 'social',
+    'rsvps', 'comms', 'threads', 'chat', 'social', 'manualbooking',
     'mhome', 'meventday', 'mattendees', 'mapplications', 'mwaitlist', 'mrsvps', 'mmoves', 'mthreads', 'mchat', 'mfloor', 'mmore',
     'vhome', 'vbookings', 'vapply', 'vprofile', 'vmessages', 'vthreads', 'vmore'].includes(path)) return { name: path, ...params };
   return { name: 'home', ...params };
@@ -203,7 +204,7 @@ function renderChrome() {
       { name: 'more', label: 'More', icon: '☰' }
     ];
     // Screens are their own routes; map them back to their group tab.
-    const routeTab = { attendees: 'home', flooredit: 'home', rsvps: 'home', applications: 'vendors', waitlist: 'vendors', directory: 'vendors', moves: 'vendors', payments: 'money', invoices: 'money', dates: 'more', categories: 'more', managers: 'more', connections: 'more', surveys: 'more', archive: 'more', tools: 'more', comms: 'messages', threads: 'messages', chat: 'messages', social: 'messages' };
+    const routeTab = { attendees: 'home', flooredit: 'home', rsvps: 'home', applications: 'vendors', waitlist: 'vendors', directory: 'vendors', moves: 'vendors', manualbooking: 'vendors', payments: 'money', invoices: 'money', dates: 'more', categories: 'more', managers: 'more', connections: 'more', surveys: 'more', archive: 'more', tools: 'more', comms: 'messages', threads: 'messages', chat: 'messages', social: 'messages' };
     activeFor = t => t.routeNames ? t.routeNames.includes(state.route.name) : state.route.name === t.name || (state.route.name === 'section' && sectionByKey(state.route.section)?.group === t.name) || routeTab[state.route.name] === t.name;
   } else if (role === 'manager') {
     const sections = managerSections({ state });
@@ -256,7 +257,7 @@ function moreScreen(root) {
   root.innerHTML = `
     <p class="eyebrow">All tools</p>
     <h2 class="display">Menu</h2>
-    <p class="lede">27 loose buttons become 5 groups — and with Stage 3b every group is live in the new app. The few sections never rebuilt (Application Recovery, Manual Booking, billing and reports tools) still open their placeholder and work in the current app.</p>
+    <p class="lede">27 loose buttons become 5 groups — and with Stage 3b every group is live in the new app. The few sections never rebuilt (Application Recovery, billing and reports tools) still open their placeholder and work in the current app.</p>
     ${GROUPS.map(g => `<div class="group"><h3>${esc(g.label)}</h3><div class="card group-card">${SECTIONS.filter(s => s.group === g.key).map(s => menuItem(s)).join('')}</div></div>`).join('')}
     <div class="card account-card">
       <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">${state.user.admin ? 'Organizer' : 'Manager'} · the new app and the current app share this sign-in.</span></p>
@@ -436,6 +437,7 @@ async function route() {
     else if (r.name === 'applications') { await refreshAdmin(); renderChrome(); renderApplications(ctx, root); }
     else if (r.name === 'waitlist') { await refreshAdmin(); renderChrome(); renderWaitlist(ctx, root); }
     else if (r.name === 'moves') { renderMoves(ctx, root); }
+    else if (r.name === 'manualbooking') { renderManualBooking(ctx, root); }
     else if (r.name === 'directory') { await refreshAdmin(); renderChrome(); renderVendors(ctx, root); }
     else if (r.name === 'payments') { await refreshAdmin(); renderChrome(); renderPayments(ctx, root); }
     else if (r.name === 'invoices') { await refreshAdmin(); renderChrome(); renderInvoices(ctx, root); }
