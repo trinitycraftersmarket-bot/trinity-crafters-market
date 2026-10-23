@@ -25,12 +25,18 @@ create table if not exists market.vendor_credits(
 create table if not exists market.vendor_credit_redemptions(
   id uuid primary key default gen_random_uuid(),
   credit_id uuid not null references market.vendor_credits(id) on delete restrict,
-  imported_attendee_id uuid not null references market.imported_attendees(id) on delete restrict,
+  imported_attendee_id uuid references market.imported_attendees(id) on delete restrict,
+  booking_id uuid references market.bookings(id) on delete restrict,
   event_id uuid not null references market.events(id) on delete restrict,
   amount integer not null check(amount > 0),
   created_at timestamptz not null default now(),
   unique(imported_attendee_id)
 );
+-- Existing databases: organizer approve-with-credit settles application
+-- bookings, which have no imported attendee (mirrors the lazy DDL in
+-- netlify/functions/vendor-credit.mjs ensureRedemptionBookingColumn).
+alter table market.vendor_credit_redemptions add column if not exists booking_id uuid references market.bookings(id);
+alter table market.vendor_credit_redemptions alter column imported_attendee_id drop not null;
 
 create index if not exists vendor_credits_email_available_idx
   on market.vendor_credits(lower(email),status)
