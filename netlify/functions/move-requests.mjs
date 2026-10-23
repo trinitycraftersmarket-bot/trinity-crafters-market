@@ -4,7 +4,7 @@
 // server/moves.mjs; capacity/category math in server/counts.mjs.
 import {db, ready, json, identity, banned, flushMail, isUserError} from '../../server/core.mjs';
 import {hasStaffPermission, MOVE_REQUEST_PERMISSION} from '../../server/permissions.mjs';
-import {approveMoveRequest, cancelMoveRequest, createMoveRequest, declineMoveRequest, eligibleTargets, ensureMoveSchema, loadMoveSource} from '../../server/moves.mjs';
+import {approveMoveRequest, cancelMoveRequest, createMoveRequest, declineMoveRequest, eligibleTargets, ensureMoveSchema, loadMoveSource, movableSources, organizerMove, organizerMoveTargets} from '../../server/moves.mjs';
 
 const lock = tx => tx`select pg_advisory_xact_lock(708821)`;
 const clean = (v, max = 200) => String(v ?? '').trim().slice(0, max);
@@ -73,6 +73,36 @@ export default async req => {
           from: fe || null, to: te || null, from_within_cutoff: !!srcEv?.within_cutoff});
       }
       return json({ok: true, items, pending: rows.filter(r => r.status === 'pending').length});
+    }
+
+    // Organizer-initiated move (no vendor request needed): the attendee
+    // card's "Move date" button. Same decider gate as approve/decline.
+    if (p.action === 'organizer-movable') {
+      if (!canDecide(u)) return json({error: 'Move-request access has not been assigned.'}, 403);
+      const sources = await movableSources(sql, clean(p.event_id, 40));
+      return json({ok: true, sources});
+    }
+
+    if (p.action === 'organizer-options') {
+      if (!canDecide(u)) return json({error: 'Move-request access has not been assigned.'}, 403);
+      const source = await loadMoveSource(sql, clean(p.source_type, 20), clean(p.source_id, 40));
+      if (!source) return json({error: 'That booking could not be found.'}, 404);
+      const summary = {name: source.name, business: source.business, space: source.space, status: source.status};
+      if (!source.confirmed) return json({ok: true, movable: false, reason: `This booking is not confirmed (status: ${source.status}), so it cannot be moved.`, source: summary});
+      const [fromEv] = await sql`select ((date + coalesce(end_time, time '15:00') + interval '1 minute') <= (now() at time zone 'America/New_York')) as ended from market.events where id = ${source.event_id}`;
+      if (fromEv?.ended) return json({ok: true, movable: false, reason: 'That market has already ended.', source: summary});
+      const out = await sql.begin(async tx => { await lock(tx); return organizerMoveTargets(tx, source); });
+      return json({ok: true, movable: true, source: summary, targets: out.targets, excluded: out.excluded});
+    }
+
+    if (p.action === 'organizer-move') {
+      if (!canDecide(u)) return json({error: 'Move-request approval has not been assigned.'}, 403);
+      const out = await sql.begin(async tx => {
+        await lock(tx);
+        return organizerMove(tx, {sourceType: clean(p.source_type, 20), sourceId: clean(p.source_id, 40), targetEventId: clean(p.to_event_id, 40), space: p.space ? clean(p.space, 20) : null, actor: u});
+      });
+      await flushMail();
+      return json({ok: true, space: out.space, from: {date: out.from?.date ?? null, location: out.from?.location ?? null}, to: {date: out.to?.date ?? null, location: out.to?.location ?? null}, resolved_request: out.request ? {id: out.request.id, status: out.request.status} : null});
     }
 
     if (p.action === 'approve' || p.action === 'decline') {
