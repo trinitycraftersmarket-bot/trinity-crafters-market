@@ -190,6 +190,57 @@ test('stage H: public food-truck application form lives in v2 on the same contra
     assert.ok(t.includes(s), `trucksapply.js must include ${s}`);
 });
 
+test('§22: recovery reinstate + completion-link email actions are organizer-only in api.mjs', () => {
+  const apiSrc = readFileSync(join(root, 'netlify', 'functions', 'api.mjs'), 'utf8');
+  for (const action of ['application-attempt-reinstate', 'application-attempt-email', 'application-attempt-mine']) {
+    const idx = apiSrc.indexOf(`action==='${action}'`);
+    assert.ok(idx > 0, `api.mjs must implement ${action}`);
+  }
+  const reinstate = apiSrc.slice(apiSrc.indexOf("action==='application-attempt-reinstate'"), apiSrc.indexOf("action==='application-attempt-email'"));
+  assert.ok(reinstate.includes("if(!u.admin)return json({error:'Organizer access only'},403)"), 'reinstate must be organizer-only');
+  assert.ok(reinstate.includes("attempt.status!=='dismissed'"), 'reinstate must only accept dismissed attempts');
+  assert.ok(reinstate.includes('reviewed_at=null'), 'reinstate must clear the review stamp');
+  assert.ok(reinstate.includes("'application attempt reinstated'"), 'reinstate must be audit-logged');
+  const email = apiSrc.slice(apiSrc.indexOf("action==='application-attempt-email'"), apiSrc.indexOf("action==='recover-application'"));
+  assert.ok(email.includes("if(!u.admin)return json({error:'Organizer access only'},403)"), 'email must be organizer-only');
+  assert.ok(email.includes("'Complete your Trinity Crafters Market application'"), 'email subject must be the completion subject');
+  assert.ok(email.includes('https://trinitylutzmarkets.com/#apply'), 'email must link the apply form');
+  assert.ok(email.includes('attemptMissingItems(snap)'), 'the missing list must be computed server-side from the snapshot');
+  assert.ok(email.includes('attemptHasAgreementsError(attempt)'), 'the apology must key off the agreements-error test');
+  assert.ok(email.includes('emailed_at=now()'), 'the send must stamp emailed_at on the attempt');
+  assert.ok(email.includes('email_delivery'), 'the response must report delivery honestly');
+  assert.ok(apiSrc.includes('add column if not exists emailed_at timestamptz'), 'ensureApplicationAttempts must add emailed_at');
+  // The vendor-self restore read: own rows only, unfinished only.
+  const mine = apiSrc.slice(apiSrc.indexOf("action==='application-attempt-mine'"), apiSrc.indexOf('if(!staffActionAllowed'));
+  assert.ok(mine.includes('user_id=${u.id}'), 'mine must scope to the signed-in vendor');
+  assert.ok(mine.includes("status in ('draft','submitting','failed')"), 'mine must only return unfinished attempts');
+  assert.ok(mine.includes("snap.signature=''"), 'mine must not carry the signature over');
+});
+
+test('§22: recovery UI gains reinstate, completion-link email, and our-bug badges', () => {
+  const r = read(v2js, 'apprecovery.js');
+  assert.ok(r.includes("'application-attempt-reinstate'"), 'UI must call the reinstate action');
+  assert.ok(r.includes('data-reinstate-attempt'), 'dismissed cards must get a Reinstate button');
+  assert.ok(r.includes("'application-attempt-email'"), 'UI must call the completion-email action');
+  assert.ok(r.includes('data-email-attempt'), 'unfinished cards must get an Email completion link button');
+  assert.ok(r.includes('Email completion link'), 'the email sheet must be present');
+  assert.ok(r.includes('Our bug — fixed Oct 23'), 'the fault badge must render');
+  assert.ok(r.includes('attemptOurBug'), 'the badge must use the shared fault test');
+  assert.ok(r.includes('Read and accept every required agreement'), 'the fault test must match the agreements error text');
+  assert.ok(r.includes('Completion link emailed:'), 'cards must show when the link was emailed');
+  assert.ok(r.includes('attemptMissingItems'), 'the email sheet must preview the missing-items list');
+});
+
+test('§22: apply form restores the vendor\'s own unfinished attempt', () => {
+  const v = read(v2js, 'vendor.js');
+  assert.ok(v.includes("'application-attempt-mine'"), 'the form must fetch its own latest attempt');
+  assert.ok(v.includes('attemptId = att.id'), 'the form must adopt the restored attempt id');
+  assert.ok(v.includes('category: categoryId'), 'the attempt snapshot must send the category under the server key');
+  assert.ok(v.includes('thumb-saved'), 'restored photos without a display URL must still render a chip');
+  const css = readFileSync(join(root, 'public', 'v2', 'css', 'app.css'), 'utf8');
+  assert.ok(css.includes('.thumb-saved'), 'app.css must style the saved-photo chip');
+});
+
 test('stage H: legacy hash aliases deep-link into v2 (permanent)', () => {
   const app = read(v2js, 'app.js');
   assert.ok(app.includes('HASH_ALIASES'), 'app.js must define the legacy hash aliases');

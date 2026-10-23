@@ -186,6 +186,10 @@ create table if not exists market.application_attempts(
   reviewed_by text
 );
 create index if not exists application_attempts_status_seen_idx on market.application_attempts(status,last_seen_at desc);
+-- §22 (Oct 23): completion-link email tracking, added by
+-- ensureApplicationAttempts() in netlify/functions/api.mjs.
+alter table market.application_attempts add column if not exists emailed_at timestamptz;
+alter table market.application_attempts add column if not exists emailed_by text;
 alter table market.application_attempts enable row level security;
 revoke all on market.application_attempts from anon,authenticated;
 

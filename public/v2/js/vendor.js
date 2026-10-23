@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fnq, esc, nice, money } from './api.js?v=20261023-10';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261023-10';
+import { api, fnq, esc, nice, money } from './api.js?v=20261023-11';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261023-11';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -321,7 +321,7 @@ export function renderVendorApply(ctx, root) {
   // then submitting / failed / completed as the submit resolves.
   const snapshot = () => ({
     name: FV('name'), business: FV('business'), phone: FV('phone'), billing_address: FV('billing_address'),
-    description: FV('description'), category_id: categoryId,
+    description: FV('description'), category: categoryId,
     referral_source: FV('referral_source'), referral_group: FV('referral_group'),
     signature: FV('signature'), dates: [...chosen].map(([id, space]) => ({ id, space })),
     photos: photos.map(p => p.path)
@@ -432,7 +432,7 @@ export function renderVendorApply(ctx, root) {
     return { path: ticket.path, url: URL.createObjectURL(file) };
   }
   function drawThumbs() {
-    $('#v2-apply-thumbs').innerHTML = photos.map((p, i) => `<span class="thumb"><img src="${p.url}" alt="Product photo ${i + 1}"><button type="button" data-photo-remove="${i}" aria-label="Remove photo ${i + 1}">×</button></span>`).join('');
+    $('#v2-apply-thumbs').innerHTML = photos.map((p, i) => `<span class="thumb">${p.url ? `<img src="${p.url}" alt="Product photo ${i + 1}">` : '<span class="thumb-saved">Saved photo</span>'}<button type="button" data-photo-remove="${i}" aria-label="Remove photo ${i + 1}">×</button></span>`).join('');
     root.querySelectorAll('[data-photo-remove]').forEach(b => b.onclick = () => { photos.splice(Number(b.dataset.photoRemove), 1); drawThumbs(); queueDraft(); });
   }
   $('#v2-apply-photos').onchange = async e => {
@@ -507,6 +507,36 @@ export function renderVendorApply(ctx, root) {
     if (p.address && !FV('billing_address')) F('billing_address').value = p.address;
     if (p.description && !FV('description')) F('description').value = p.description;
     if (p.category_id) { categoryId = p.category_id; drawCategory(); }
+  }).catch(() => {});
+
+  // Draft restore (§22): the vendor's own latest unfinished attempt —
+  // this is what the organizer's completion-link email lands on. The
+  // attempt row is adopted (attemptId) so further edits keep updating
+  // the same recovery record. Agreements and the signature are NOT
+  // restored (the server strips them): the vendor must re-accept.
+  fnq('application-attempt-mine').then(r => {
+    const att = r?.attempt, s = att?.snapshot;
+    if (!att || !s) return;
+    attemptId = att.id;
+    if (s.name) F('name').value = s.name;
+    if (s.business) F('business').value = s.business;
+    if (s.phone) F('phone').value = s.phone;
+    if (s.billing_address) F('billing_address').value = s.billing_address;
+    if (s.description) F('description').value = s.description;
+    if (s.exception) F('category_exception').value = s.exception;
+    if (s.referral_source) { F('referral_source').value = s.referral_source; $('#v2-apply-group-wrap').hidden = s.referral_source !== 'Facebook'; }
+    if (s.referral_group) F('referral_group').value = s.referral_group;
+    if (s.category) categoryId = s.category;
+    for (const d of s.dates || []) {
+      const e = byId.get(String(d.id));
+      if (!e || chosen.has(String(d.id))) continue;
+      const open = spacesOf(e);
+      chosen.set(String(d.id), open.includes(d.space) ? d.space : open[0]);
+    }
+    const urls = new Map((att.photo_urls || []).map(p => [p.path, p.url]));
+    for (const path of s.photos || []) if (!photos.some(p => p.path === path)) photos.push({ path, url: urls.get(path) || '' });
+    drawDates(); drawCategory(); drawThumbs(); queueScan();
+    ctx.toast('We reloaded your saved application — just review it, re-check the agreements, and submit.');
   }).catch(() => {});
 }
 

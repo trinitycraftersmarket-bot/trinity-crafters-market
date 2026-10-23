@@ -11,7 +11,12 @@
 // public/category-conflicts.js — kept in step deliberately). The
 // server still blocks banned vendors, duplicates, closed areas,
 // sold-out markets and full physical inventory on recovery.
-import { api, fnq, esc, nice, marketName } from './api.js?v=20261023-10';
+// §22 additions: dismissed attempts can be reinstated to the working
+// queue ('application-attempt-reinstate'), any unfinished attempt can
+// be emailed a completion link ('application-attempt-email'), and
+// attempts hit by the Oct 22–23 agreements form bug carry an
+// "Our bug — fixed Oct 23" badge.
+import { api, fnq, esc, nice, marketName } from './api.js?v=20261023-11';
 
 // --- category fit (ported from public/category-conflicts.js) ---
 const cleanText = v => String(v || '').toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9&/' -]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -44,6 +49,30 @@ export function analyzeCategoryFit(description, selectedCategory = '', categorie
 }
 // --- end category fit ---
 
+// §22: the agreements error is the signature of the Oct 22–23 v2
+// 'nolm'/'nomlm' form bug — attempts carrying it in their technical
+// history failed through no fault of the vendor. Same test the server
+// uses for the completion-email apology (api.mjs attemptHasAgreementsError).
+const AGREEMENTS_ERROR_TEXT = 'Read and accept every required agreement';
+export const attemptOurBug = x => String(x.error_message || '').includes(AGREEMENTS_ERROR_TEXT)
+  || (Array.isArray(x.error_log) ? x.error_log : []).some(e => String(e?.message || '').includes(AGREEMENTS_ERROR_TEXT));
+// Mirror of the server's attemptMissingItems (api.mjs): what the
+// completion email will list as still missing for this attempt.
+export function attemptMissingItems(x) {
+  const s = x.snapshot || {}, missing = [];
+  if (!s.name) missing.push('your name');
+  if (!s.business) missing.push('your business name');
+  if (String(s.phone || '').replace(/[^0-9]/g, '').length < 10) missing.push('a valid phone number');
+  if (!s.description) missing.push('a description of what you sell');
+  if (!s.category) missing.push('your product category');
+  if (!(s.dates || []).length) missing.push('at least one market date');
+  if (!(s.photos || []).length) missing.push('at least one product photo');
+  const ag = s.agreements || {};
+  if (!['nonrefundable', 'rain', 'nomlm', 'facebook', 'stayuntil3', 'hurricane', 'paymentready', 'contract'].every(k => ag[k] === true)) missing.push('reviewing and accepting the vendor agreements');
+  if (!String(s.signature || '').trim()) missing.push('typing your full legal name as your signature');
+  return missing;
+}
+
 const staleOf = x => ['draft', 'submitting'].includes(x.status) && Date.now() - new Date(x.last_seen_at).getTime() > 600000;
 export const attemptStatusOf = x => x.status === 'overridden' ? 'Recovered' : x.status === 'dismissed' ? 'Dismissed' : x.status === 'failed' ? 'Failed' : staleOf(x) ? 'Abandoned' : 'In progress';
 const activeOf = x => x.status === 'failed' || staleOf(x);
@@ -74,6 +103,46 @@ export function renderAppRecovery(ctx, root) {
         ctx.toast('Application attempt dismissed.');
       } catch (e) { ctx.toast(e.message, true); }
     };
+  }
+
+  function emailSheet(x) {
+    const missing = attemptMissingItems(x);
+    ctx.openSheet(`
+      <p class="eyebrow">Application recovery</p>
+      <h3 class="sheet-title">Email completion link</h3>
+      <p><strong>${esc(x.business || x.name || 'Incomplete application')}</strong><br><span class="note">${esc(x.email || '')}</span></p>
+      ${attemptOurBug(x) ? '<p class="note"><strong>Our bug — fixed Oct 23:</strong> this attempt hit the agreements error, so the email will include an apology — the form bug was on our end, not theirs.</p>' : ''}
+      <p class="note">The email tells them their application never came through, links them to the application form (which reloads what they already entered), and lists what is still missing:</p>
+      ${missing.length ? `<ul class="note">${missing.map(m => `<li>${esc(m[0].toUpperCase() + m.slice(1))}</li>`).join('')}</ul>` : '<p class="note">Nothing is missing — the email will ask them to review, re-check the agreements, sign, and submit.</p>'}
+      <form id="v2-rec-email-form">
+        <label class="sheet-field">Note to include (optional)<textarea name="note" rows="3" maxlength="1000" placeholder="Anything personal to add — it appears in the email as a note from you"></textarea></label>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary" id="v2-rec-email-send">Send email</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-rec-email-form').onsubmit = async e => {
+      e.preventDefault();
+      const note = new FormData(e.target).get('note');
+      const btn = ctx.sheetEl.querySelector('#v2-rec-email-send');
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const r = await api('application-attempt-email', { id: x.id, note: note || '' });
+        x.emailed_at = r.emailed_at || new Date().toISOString();
+        x.emailed_by = r.emailed_by || '';
+        ctx.closeSheet();
+        draw();
+        if (r.email_delivery && !r.email_delivery.sent) ctx.toast('Email queued but not confirmed delivered' + (r.email_delivery.error ? ': ' + r.email_delivery.error : '.'), true);
+        else ctx.toast('Completion link emailed to ' + (x.email || 'the vendor') + '.');
+      } catch (err) { ctx.toast(err.message, true); btn.disabled = false; btn.textContent = 'Send email'; }
+    };
+  }
+
+  async function reinstate(x) {
+    try {
+      const r = await api('application-attempt-reinstate', { id: x.id });
+      x.status = r.status || 'draft';
+      x.reviewed_at = null; x.reviewed_by = null;
+      draw();
+      ctx.toast('Attempt reinstated to the working queue as ' + (r.status === 'failed' ? 'Failed' : 'a draft') + '.');
+    } catch (e) { ctx.toast(e.message, true); }
   }
 
   function recoverSheet(x) {
@@ -144,8 +213,10 @@ export function renderAppRecovery(ctx, root) {
         <div class="contact">${esc(x.email || '')}${x.phone ? ' · ' + esc(x.phone) : ''}</div></div>
         <span class="status ${x.status === 'failed' ? 'bad' : x.status === 'overridden' ? 'ok' : 'warn'}">${esc(st)}</span>
       </div>
+      ${attemptOurBug(x) ? '<p class="note"><span class="status bad">Our bug — fixed Oct 23</span> This attempt hit the agreements form bug — the vendor did nothing wrong.</p>' : ''}
       <p class="note"><strong>Last activity:</strong> ${esc(new Date(x.last_seen_at).toLocaleString('en-US', { timeZone: 'America/New_York' }))}<br>
       <strong>Last step:</strong> ${esc(x.step || 'form')}${x.category_name ? '<br><strong>Category:</strong> ' + esc(x.category_name) : ''}</p>
+      ${x.emailed_at ? `<p class="note"><strong>Completion link emailed:</strong> ${esc(new Date(x.emailed_at).toLocaleString('en-US', { timeZone: 'America/New_York' }))}${x.emailed_by ? ' by ' + esc(x.emailed_by) : ''}</p>` : ''}
       <p class="note"><strong>Requested date(s):</strong><br>${dates}</p>
       ${categoryAlert}
       ${problem ? `<p class="note"><strong>What happened:</strong><br>${esc(problem)}</p>` : ''}
@@ -159,6 +230,8 @@ export function renderAppRecovery(ctx, root) {
       </details>
       <div class="vendor-actions">
         ${activeOf(x) ? `<button class="btn primary small" data-recover-attempt="${esc(x.id)}">Approve Override</button><button class="btn small ghost" data-dismiss-attempt="${esc(x.id)}">Dismiss</button>` : st === 'In progress' ? '<span class="status warn">Vendor is still working on this form</span>' : ''}
+        ${x.status === 'dismissed' ? `<button class="btn small" data-reinstate-attempt="${esc(x.id)}">Reinstate</button>` : ''}
+        ${x.status !== 'overridden' ? `<button class="btn small" data-email-attempt="${esc(x.id)}">Email completion link</button>` : ''}
         ${x.status === 'overridden' && x.application_id ? '<span class="status ok">Moved to approved applications</span>' : ''}
       </div>
     </article>`;
@@ -197,6 +270,14 @@ export function renderAppRecovery(ctx, root) {
     root.querySelectorAll('[data-recover-attempt]').forEach(b => b.onclick = () => {
       const x = attempts().find(v => String(v.id) === b.dataset.recoverAttempt);
       if (x) recoverSheet(x);
+    });
+    root.querySelectorAll('[data-reinstate-attempt]').forEach(b => b.onclick = () => {
+      const x = attempts().find(v => String(v.id) === b.dataset.reinstateAttempt);
+      if (x) reinstate(x);
+    });
+    root.querySelectorAll('[data-email-attempt]').forEach(b => b.onclick = () => {
+      const x = attempts().find(v => String(v.id) === b.dataset.emailAttempt);
+      if (x) emailSheet(x);
     });
     root.querySelectorAll('[data-attempt-photo]').forEach(b => b.onclick = async () => {
       try {
