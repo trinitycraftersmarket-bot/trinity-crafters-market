@@ -463,13 +463,20 @@ alter table market.outbox add column if not exists html_body text;
 -- read — server/core.mjs:56 and throughout).
 alter table market.locations add column if not exists market_name text not null default '';
 
+
+-- categories.vendor_limit: 0 means NO per-category cap (owner decision,
+-- Oct 22 2026). setup.sql historically declared check(vendor_limit>0), but
+-- the save path accepts 0 and live categories sit at 0 — relax the check to
+-- >= 0 so a fresh database matches live behavior and the product rule.
+alter table market.categories drop constraint if exists categories_vendor_limit_check;
+alter table market.categories add constraint categories_vendor_limit_check check (vendor_limit >= 0);
+
 -- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------
--- (a) categories.vendor_limit: setup.sql declares check(vendor_limit>0), but
---     the category save accepts 0 (netlify/functions/api.mjs:1128 only
---     rejects <0), so the live constraint was likely relaxed out-of-band.
---     Not altered here: which behavior is correct is a product decision.
+-- (a) categories.vendor_limit: RESOLVED Oct 22 2026 — the owner ruled that
+--     0 means no per-category cap; setup.sql and the statements above now
+--     declare check(vendor_limit>=0), matching the save path and live data.
 -- (b) food_truck_applications legacy columns: see section 6 note.
 -- (c) vendor_surveys unique constraint: see section 10 note.
 -- (d) New-feature storage from the rebuild spec — market.move_requests
