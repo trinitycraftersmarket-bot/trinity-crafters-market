@@ -1,5 +1,6 @@
 import {db,identity,audit,queue,flushMail,isUserError} from '../../server/core.mjs';
 import {eventInventory,categoryUsed,vendorIdentityKey} from '../../server/counts.mjs';
+import {ensureProfileSchema} from '../../server/profiles.mjs';
 import {syncCancellation} from '../../server/twins.mjs';
 import {scanWaitlist} from '../../server/waitlist.mjs';
 
@@ -113,11 +114,111 @@ export async function redeemCredit(sql,{credit_id,event_id,space},u){
  return result;
 }
 
+// Organizer application-review flag data: every available credit with a
+// balance, keyed by vendor email in the client, with the source market
+// date so the review card can say "Holds a $X credit from <date>".
+export async function applicantCredits(sql){
+ return sql`select vc.id,lower(vc.email) email,vc.remaining_amount,vc.original_amount,to_char(e.date,'YYYY-MM-DD') source_date from market.vendor_credits vc join market.events e on e.id=vc.source_event_id where vc.status='available' and vc.remaining_amount>0 order by vc.issued_at`;
+}
+
+// vendor_credit_redemptions originally recorded only automatic redeems
+// (which create an imported attendee). The organizer path below settles an
+// application BOOKING instead, so the table needs a booking_id and a
+// nullable imported_attendee_id. Lazy DDL, same pattern as the other
+// feature migrations; database/vendor-credits.sql carries the fresh shape.
+async function ensureRedemptionBookingColumn(sql){
+ await sql`alter table market.vendor_credit_redemptions add column if not exists booking_id uuid references market.bookings(id)`;
+ await sql`alter table market.vendor_credit_redemptions alter column imported_attendee_id drop not null`;
+}
+
+// ORGANIZER OVERRIDE (owner, Oct 22): approve an application booking and
+// settle it from the vendor's credit, even when category/space counts
+// would block a normal approval or an automatic redeem — the organizer
+// compared the application (photos etc.) and decided. Deliberately NO
+// capacity/category/space checks here. The credit applies up to the
+// booking's outstanding balance; a shortfall stays as the booking's
+// normal amount due (status 'approved', not paid). Full settlement marks
+// the booking paid-from-credit exactly like an automatic redeem does
+// (payment_method 'Credit', payment_reference 'CREDIT-<id prefix>'), with
+// the ledger row in vendor_payments and the redemption row recorded.
+export async function redeemForApplication(sql,{booking_id,credit_id},u){
+ if(!u?.admin)throw Error('Organizer access only');
+ await ensureRedemptionBookingColumn(sql);
+ let result;
+ await sql.begin(async tx=>{
+  await tx`select pg_advisory_xact_lock(708821)`;
+  const [b]=await tx`select b.*,a.email,a.name,a.business,c.name category,to_char(e.date,'YYYY-MM-DD') event_date,e.title,l.name location,l.address,l.market_name from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.id=${booking_id} for update of b`;
+  if(!b)throw Error('Booking not found.');
+  if(!['pending','waitlist','approved','held'].includes(b.status))throw Error('This booking can no longer be approved.');
+  let credit;
+  if(credit_id){const [c]=await tx`select * from market.vendor_credits where id=${credit_id} for update`;credit=c;}
+  else{const [c]=await tx`select * from market.vendor_credits where lower(email)=lower(${b.email}) and status='available' and remaining_amount>0 order by issued_at limit 1 for update`;credit=c;}
+  if(!credit||credit.status!=='available'||Number(credit.remaining_amount)<=0)throw Error('That credit is no longer available.');
+  if(String(credit.email||'').trim().toLowerCase()!==String(b.email||'').trim().toLowerCase())throw Error('That credit belongs to a different vendor.');
+  const [paidRow]=await tx`select coalesce(sum(amount),0)::int paid from market.vendor_payments where booking_id=${b.id}`;
+  const outstanding=Number(b.price||0)-Number(paidRow.paid||0);
+  if(outstanding<=0)throw Error('This booking is already fully paid.');
+  const applied=Math.min(Number(credit.remaining_amount),outstanding),due=outstanding-applied,reference='CREDIT-'+String(credit.id).slice(0,8);
+  await tx`insert into market.vendor_payments(application_id,booking_id,amount,payment_method,paid_at,note,recorded_by) values(${b.application_id},${b.id},${applied},'Credit',now(),${'Vendor credit '+reference+' applied by organizer'},${u.email})`;
+  await tx`insert into market.vendor_credit_redemptions(credit_id,booking_id,event_id,amount) values(${credit.id},${b.id},${b.event_id},${applied})`;
+  const remaining=Number(credit.remaining_amount)-applied;
+  await tx`update market.vendor_credits set remaining_amount=${remaining},status=${remaining===0?'used':'available'},last_redeemed_at=now(),updated_at=now() where id=${credit.id}`;
+  if(due===0)await tx`update market.bookings set status='paid',paid_at=now(),payment_method='Credit',payment_reference=${reference},hold_until=null where id=${b.id}`;
+  else await tx`update market.bookings set status='approved',hold_until=null where id=${b.id}`;
+  const body='Hi '+(b.name||'Vendor')+',\n\nYour vendor credit has been applied and your market date is confirmed.\n\nMarket: '+(b.market_name||b.title||'Trinity Crafters Market')+'\nDate: '+fmtDate(b.event_date)+'\nLocation: '+b.location+'\n'+(b.address||'')+'\nSpace: '+(b.space==='indoor'?'Indoor':'Outdoor')+'\nAmount applied: '+money(applied)+'\nPayment status: '+(due===0?'PAID':'PARTIALLY PAID')+'\nCategory reserved: '+b.category+'\nCredit remaining: '+money(remaining)+(due===0?'\n\nYour booking is approved and paid. Your category is now reserved for that market date.':'\nRemaining balance due: '+money(due)+'. The organizer will invoice you for the remaining balance.\n\nYour booking is approved. Your category is now reserved for that market date.')+'\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com';
+  await queue(tx,b.email,'Credit applied — '+fmtDate(b.event_date),body);
+  await audit(tx,u,'vendor credit redeemed for application',{credit_id:credit.id,booking_id:b.id,event_id:b.event_id,amount:applied,remaining,amount_due:due,override:true});
+  result={ok:true,booking_id:b.id,applied,remaining_credit:remaining,amount_due:due,status:due===0?'paid':'approved'};
+ });
+ return result;
+}
+
+// Organizer application-review conflict panel data (owner, Oct 22): for
+// each application booking under review whose category is at/over its cap
+// on that date, assemble the "who sells what" comparison — the applicant's
+// own line plus one line per vendor who genuinely holds that category on
+// that date. Holders come from server/counts.mjs eventInventory, i.e. the
+// single counting rules: pending does not reserve, booking/imported twins
+// count once, cancelled imports excluded. A cap of 0 means NO cap
+// (categoryCap), so limit-0 categories never conflict. "Sells" text
+// preference: application description (bookings) / imported selling field
+// (imports), then the vendor profile description; empty when none exists
+// (the client renders "products not listed" — text is never invented).
+// The applicant's own record is excluded from the holder list by identity
+// key, and a date whose cap is consumed only by the applicant themselves
+// is not a conflict.
+export async function applicationConflicts(sql){
+ await ensureProfileSchema(sql);
+ const apps=await sql`select b.id booking_id,b.event_id,a.vendor_id,a.email,a.phone,a.business,a.name,a.description,c.id category_id,c.name category,c.vendor_limit,o.vendor_limit override_limit,to_char(e.date,'YYYY-MM-DD') event_date from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id join market.events e on e.id=b.event_id left join market.event_category_limits o on o.event_id=b.event_id and o.category_id=a.category_id where b.status in ('pending','waitlist','approved','held') order by e.date,a.business`;
+ const cache=new Map(),out=[];
+ for(const b of apps){
+  const cap=categoryCap(b.override_limit,b.vendor_limit);if(cap<=0)continue;
+  const key=String(b.event_id)+'|'+String(b.category_id);
+  if(!cache.has(key)){
+   const inv=await eventInventory(sql,b.event_id),vendors=[];
+   for(const h of inv.vendors.filter(v=>String(v.category_id)===String(b.category_id))){
+    if(h.source==='booking'){const [r]=await sql`select a.business,a.description,p.description profile_description from market.bookings bk join market.applications a on a.id=bk.application_id left join market.vendor_profiles p on p.email=lower(trim(a.email)) where bk.id=${h.id}`;if(r)vendors.push({key:h.key,business:r.business||'',sells:String(r.description||'').trim()||String(r.profile_description||'').trim()});}
+    else{const [r]=await sql`select coalesce(nullif(i.business,''),i.name) business,i.selling,p.description profile_description from market.imported_attendees i left join market.vendor_profiles p on p.email=lower(trim(both ' ,' from i.email)) where i.id=${h.id}`;if(r)vendors.push({key:h.key,business:r.business||'',sells:String(r.selling||'').trim()||String(r.profile_description||'').trim()});}
+   }
+   cache.set(key,{used:inv.categories.get(String(b.category_id))||0,vendors});
+  }
+  const entry=cache.get(key);if(entry.used<cap)continue;
+  const selfKey=vendorIdentityKey({vendor_id:b.vendor_id,email:b.email,phone:b.phone,business:b.business,name:b.name,id:b.booking_id});
+  const others=entry.vendors.filter(v=>v.key!==selfKey).map(({business,sells})=>({business,sells}));
+  if(!others.length)continue;
+  out.push({booking_id:b.booking_id,event_id:b.event_id,event_date:b.event_date,category:b.category,limit:cap,used:entry.used,applicant:{business:b.business||b.name||'',sells:String(b.description||'').trim()},vendors:others});
+ }
+ return out;
+}
+
 export default async req=>{
  try{
   if(req.method!=='POST')return json({error:'Method not allowed'},405);
   const u=await identity(req),p=await req.json(),sql=db(),action=clean(p.action,60);
   if(action==='admin-sources'){if(!u.admin)return json({error:'Organizer access only'},403);return json({sources:await adminSources(sql)});}
+  if(action==='applicant-credits'){if(!u.admin)return json({error:'Organizer access only'},403);return json({credits:await applicantCredits(sql)});}
+  if(action==='application-conflicts'){if(!u.admin)return json({error:'Organizer access only'},403);return json({conflicts:await applicationConflicts(sql)});}
+  if(action==='redeem-for-application'){if(!u.admin)return json({error:'Organizer access only'},403);const result=await redeemForApplication(sql,{booking_id:p.booking_id,credit_id:p.credit_id},u);await flushMail();return json(result);}
   if(action==='preview'){if(!u.admin)return json({error:'Organizer access only'},403);const v=await sourceRecord(sql,p.id,p.imported===true);if(!v)throw Error('Vendor booking not found.');return json({source:v});}
   if(action==='issue'){
    if(!u.admin)return json({error:'Organizer access only'},403);
