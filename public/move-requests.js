@@ -75,21 +75,59 @@
   };
 
   // ---- Organizer tab injection (Organizer Tools pattern) -----------------
-  let tabBusy = false;
-  async function install() {
+  // Race-free by construction: the existence check and the DOM append happen
+  // synchronously inside placeButton(), BEFORE any await. The previous
+  // version checked for [data-move-tab], then awaited two network calls
+  // (me() + the pending list) before appending — every MutationObserver pass
+  // in that window passed the same check, so each in-flight call appended
+  // another "Move Requests" button and the tab bar filled with duplicates.
+  // The permission lookup is cached per sign-in token so it runs once.
+  let permKey = null, permOk = false, permDone = false, permPending = null;
+  function wireButton(b, tabs) {
+    b.onclick = () => { tabs.querySelectorAll('button').forEach(x => x.classList.remove('active')); b.classList.add('active'); const panel = document.querySelector('#panel'); if (panel) window.renderMoveRequests(panel); };
+  }
+  async function refreshBadge(b) {
+    try { const v = await post({action: 'list'}); if (b.isConnected) b.textContent = v.pending ? `Move Requests (${v.pending})` : 'Move Requests'; } catch {}
+  }
+  function placeButton(refresh) {
     if (location.hash !== '#admin') return;
     const tabs = document.querySelector('.tabs');
-    if (!tabs || tabs.querySelector('[data-move-tab]')) return;
-    const u = await me().catch(() => null);
-    if (!u || !(u.admin || (u.permissions || []).includes('moves:approve'))) return;
+    if (!tabs) return;
+    const existing = tabs.querySelectorAll('[data-move-tab]');
+    if (existing.length) {
+      // Keep the first button; remove extras left behind by the old race.
+      existing.forEach((x, i) => { if (i) x.remove(); });
+      wireButton(existing[0], tabs);
+      if (refresh) refreshBadge(existing[0]);
+      return;
+    }
+    if (!permOk) return;
     const b = document.createElement('button');
     b.type = 'button'; b.dataset.moveTab = '1'; b.textContent = 'Move Requests';
-    try { const v = await post({action: 'list'}); if (v.pending) b.textContent = `Move Requests (${v.pending})`; } catch {}
-    b.onclick = () => { tabs.querySelectorAll('button').forEach(x => x.classList.remove('active')); b.classList.add('active'); const panel = document.querySelector('#panel'); if (panel) window.renderMoveRequests(panel); };
+    wireButton(b, tabs);
     tabs.append(b);
+    refreshBadge(b);
   }
-  const observer = new MutationObserver(() => { if (!tabBusy) { tabBusy = true; requestAnimationFrame(() => { tabBusy = false; install(); }); } });
+  function install(refresh) {
+    if (location.hash !== '#admin') return;
+    const key = token();
+    if (permKey !== key) { permKey = key; permOk = false; permDone = false; permPending = null; }
+    if (!permDone) {
+      if (!permPending) {
+        permPending = me().then(u => {
+          permOk = !!(u && (u.admin || (u.permissions || []).includes('moves:approve')));
+          permDone = true; permPending = null;
+          placeButton(true);
+        }).catch(() => { permPending = null; });
+      }
+      return;
+    }
+    if (!permOk) return;
+    placeButton(refresh);
+  }
+  let tabBusy = false;
+  const observer = new MutationObserver(() => { if (!tabBusy) { tabBusy = true; requestAnimationFrame(() => { tabBusy = false; install(false); }); } });
   observer.observe(document.body, {childList: true, subtree: true});
-  window.addEventListener('hashchange', install);
-  install();
+  window.addEventListener('hashchange', () => install(true));
+  install(true);
 })();
