@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261022-3';
+import { api, esc, nice } from './api.js?v=20261022-4';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -236,45 +236,49 @@ export function composePlanCanvas(area, vendors) {
   });
 }
 
-// Print the floor plan image: title + the full plan together on ONE
-// letter page. The popup opens synchronously inside the click (popup
-// blockers), shows a preparing note, and is replaced once the composite
-// image is rendered. The toolbar (Print / ✕ Close) never prints.
-export async function printFloorPlan({ event, area, vendors, toast }) {
-  const pins = resolvePins(area, vendors);
-  if (!pins.length) { toast('No vendors are assigned in ' + area.title + ' yet. Assign vendors before printing the floor plan.', true); return; }
+// Print the floor plan: one printed page PER area plan. Each area gets a
+// .plan-page section sized to the printed page's content box (flex column:
+// title block, then the composite image in a flexing frame with
+// object-fit:contain), so title + full plan always land together on a
+// single page, whatever margins the printer or print service uses. The
+// previous version sized the image in fixed inches (9.5in tall plus
+// ~0.75in of titles) against an assumed 10.4in printable height at .3in
+// margins; with any larger effective margin the unbreakable image no
+// longer fit under the titles and was pushed whole onto page 2. The popup
+// opens synchronously inside the click (popup blockers), shows a preparing
+// note, and is replaced once the composite images are rendered. The
+// toolbar (Print / \u2715 Close) never prints.
+const PLAN_PRINT_CSS = '@page{size:letter portrait;margin:.4in}*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:#fff;font-family:Arial,Helvetica,sans-serif}.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}.plan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always}.plan-page.last{break-after:auto;page-break-after:auto}.plan-head{flex:0 0 auto}.plan-head h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.plan-head .sub{margin:0 4px 10px;color:#44554c;font-size:10pt}.plan-frame{flex:1 1 auto;min-height:0}.plan-frame img{display:block;width:100%;height:100%;object-fit:contain}@media print{.tools{display:none!important}}';
+const PLAN_PRINT_SCRIPT = '<script>function p(){setTimeout(function(){window.print();},150);}if(document.readyState==="complete")p();else window.addEventListener("load",p);<\/script>';
+export async function printFloorPlan({ event, areas, area, vendors, toast }) {
+  const list = (areas && areas.length ? areas : [area]).filter(Boolean);
+  // Every area with a layout image or at least one assigned vendor gets
+  // its own page; an area with neither is skipped so no blank page appears.
+  const targets = list.map(a => ({ area: a, pins: resolvePins(a, vendors) }))
+    .filter(x => x.pins.length || imageAllowed(x.area.image_data_url));
+  if (!targets.some(x => x.pins.length)) { toast('No vendors are assigned in ' + (area?.title || list[0]?.title || 'this area') + ' yet. Assign vendors before printing the floor plan.', true); return; }
   const popup = window.open('', '_blank');
   if (!popup) { toast('Your browser blocked the print window. Allow pop-ups for this site and try again.', true); return; }
   popup.document.open();
-  popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing floor plan</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable floor plan…</body></html>');
+  popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing floor plan</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable floor plan\u2026</body></html>');
   popup.document.close();
-  const canvas = await composePlanCanvas(area, vendors);
-  const dataUrl = canvas.toDataURL('image/png');
-  const aspect = canvas.height / canvas.width;
-  // One letter page: 7.9in wide printable at .3in margins. The title
-  // lines above the image take ~0.75in, so the image gets 9.5in of
-  // height — otherwise it bumps onto page 2 (the Oct 22 page-2 fix).
-  const fit = aspect > (9.5 / 7.9) ? 'height:9.5in;width:auto' : 'width:100%;height:auto';
-  const title = String(event?.title || 'Market') + ' — ' + area.title + ' floor plan';
+  const sections = [];
+  for (const [i, t] of targets.entries()) {
+    const canvas = await composePlanCanvas(t.area, vendors);
+    sections.push('<section class="plan-page' + (i === targets.length - 1 ? ' last' : '') + '"><div class="plan-head"><h1>' + esc(t.area.title) + ' \u2014 floor plan</h1><p class="sub">' + esc(event?.date ? nice(event.date) : '') + ' \u00b7 ' + t.pins.length + ' vendor' + (t.pins.length === 1 ? '' : 's') + ' placed</p></div><div class="plan-frame"><img class="plan" alt="Floor plan with vendor names" src="' + canvas.toDataURL('image/png') + '"></div></section>');
+  }
+  const title = String(event?.title || 'Market') + ' \u2014 floor plans';
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' +
-    '@page{size:letter portrait;margin:.3in}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;font-family:Arial,Helvetica,sans-serif;text-align:center}' +
-    '.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5;text-align:left}' +
-    '.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}' +
-    '.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}' +
-    'h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px;text-align:left}.sub{margin:0 4px 10px;color:#44554c;font-size:10pt;text-align:left}' +
-    'img.plan{display:block;margin:0 auto;max-width:100%}' +
-    '@media print{.tools{display:none!important}}' +
+    PLAN_PRINT_CSS +
     '</style></head><body>' +
-    '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close()">✕ Close</button></div>' +
-    '<h1>' + esc(area.title) + ' — floor plan</h1><p class="sub">' + esc(event?.date ? nice(event.date) : '') + ' · ' + pins.length + ' vendor' + (pins.length === 1 ? '' : 's') + ' placed</p>' +
-    '<img class="plan" id="planimg" alt="Floor plan with vendor names" style="' + fit + '" src="' + dataUrl + '">' +
-    '<script>document.getElementById("planimg").addEventListener("load",function(){setTimeout(function(){window.print();},150);});<\/script>' +
+    '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close()">\u2715 Close</button></div>' +
+    sections.join('') + PLAN_PRINT_SCRIPT +
     '</body></html>';
   popup.document.open();
   popup.document.write(doc);
   popup.document.close();
   popup.focus();
-  toast('Printable floor plan opened with ' + pins.length + ' vendor name(s) on one page.');
+  toast('Printable floor plan opened \u2014 ' + targets.length + ' area plan' + (targets.length === 1 ? '' : 's') + ', one page each.');
 }
 
 // Print the booth list: every area as a check-in table, plus the
