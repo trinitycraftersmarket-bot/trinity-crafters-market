@@ -487,10 +487,16 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       render();
     }catch(e){status('Could not load area plans: '+e.message);}
   }
-  function printFloorPlan(){
-    const area=current();
-    if(!area){notice('Choose a floor plan area first.');return;}
-    const event=events.find(e=>e.id===state.eventId);
+  // Printable floor-plan document: one .plan-page section per area, each
+  // exactly the printed page's content box (flex column: title block, then
+  // the plan image in a flexing frame with object-fit:contain). Title +
+  // full plan therefore always land together on a single page, whatever
+  // margins the printer or print service actually uses. The previous
+  // version sized the image in fixed inches (9.5in tall plus ~0.75in of
+  // titles) against an assumed 10.4in printable height at .3in margins;
+  // with any larger effective margin the unbreakable image no longer fit
+  // under the titles and was pushed whole onto page 2.
+  function pinsForArea(area){
     const pins=[];
     for(let i=0;i<area.capacity;i++){
       const id=spot(area,i),entry=area.assignments[id]||{};
@@ -501,103 +507,103 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       const num=(v,f)=>{const n=Number(v);return v!=null&&Number.isFinite(n)?n:f;};
       pins.push({label:String(vendor.business||vendor.name||'Vendor'),x:num(entry.x,fallback.x),y:num(entry.y,fallback.y)});
     }
-    if(!pins.length){notice('No vendors are assigned in '+area.title+' yet. Assign vendors before printing the floor plan.');return;}
+    return pins;
+  }
+  function drawPlanPins(ctx,W,H,pins){
+    const maxRectW=W*0.30,basePx=Math.max(20,Math.round(W*0.017));
+    for(const p of pins){
+      let fontPx=basePx,lines=[],textW=0;
+      for(let attempt=0;attempt<4;attempt++){
+        ctx.font='700 '+fontPx+'px Arial,Helvetica,sans-serif';
+        lines=[];let line='';
+        const words=p.label.split(/\s+/);
+        for(const w of words){
+          const t=line?line+' '+w:w;
+          if(ctx.measureText(t).width<=maxRectW-16||!line){line=t;}
+          else{lines.push(line);line=w;if(lines.length===2)break;}
+        }
+        if(line&&lines.length<2)lines.push(line);
+        const joined=lines.join(' ');
+        if(joined!==p.label&&lines.length===2){
+          let l2=lines[1];
+          while(l2.length>1&&ctx.measureText(l2+'…').width>maxRectW-16)l2=l2.slice(0,-1);
+          lines[1]=l2+'…';
+        }
+        textW=Math.max.apply(null,lines.map(l=>ctx.measureText(l).width));
+        if(textW<=maxRectW-16||attempt===3)break;
+        fontPx=Math.max(12,Math.round(fontPx*0.85));
+      }
+      const padX=10,padY=7,lineH=Math.round(fontPx*1.18);
+      const rw=Math.ceil(textW)+padX*2,rh=lineH*lines.length+padY*2;
+      let cx=p.x/100*W,cy=p.y/100*H;
+      cx=Math.max(rw/2+4,Math.min(W-rw/2-4,cx));
+      cy=Math.max(rh/2+4,Math.min(H-rh/2-4,cy));
+      const x=cx-rw/2,y=cy-rh/2,r=8;
+      ctx.beginPath();
+      ctx.moveTo(x+r,y);
+      ctx.arcTo(x+rw,y,x+rw,y+rh,r);
+      ctx.arcTo(x+rw,y+rh,x,y+rh,r);
+      ctx.arcTo(x,y+rh,x,y,r);
+      ctx.arcTo(x,y,x+rw,y,r);
+      ctx.closePath();
+      ctx.fillStyle='rgba(255,255,255,0.97)';ctx.fill();
+      ctx.lineWidth=Math.max(2,W*0.0016);ctx.strokeStyle='#16594a';ctx.stroke();
+      ctx.fillStyle='#103e35';ctx.textAlign='center';ctx.textBaseline='top';
+      lines.forEach((l,i)=>ctx.fillText(l,cx,y+padY+i*lineH));
+    }
+  }
+  function renderComposite(area,pins){
+    return new Promise(resolve=>{
+      const render=img=>{
+        let W,H;
+        if(img){W=img.naturalWidth;H=img.naturalHeight;}
+        else{W=1600;H=2000;}
+        const scale=Math.min(1,2400/W);
+        W=Math.round(W*scale);H=Math.round(H*scale);
+        const canvas=document.createElement('canvas');
+        canvas.width=W;canvas.height=H;
+        const ctx=canvas.getContext('2d');
+        if(img)ctx.drawImage(img,0,0,W,H);
+        else{ctx.fillStyle='#f7f3e7';ctx.fillRect(0,0,W,H);ctx.lineWidth=4;ctx.strokeStyle='#174d40';ctx.strokeRect(2,2,W-4,H-4);}
+        drawPlanPins(ctx,W,H,pins);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      if(imageAllowed(area.image_data_url)){
+        const img=new Image();
+        img.onload=()=>render(img);
+        img.onerror=()=>render(null);
+        img.src=area.image_data_url;
+      }else render(null);
+    });
+  }
+  const PLAN_PRINT_CSS='@page{size:letter portrait;margin:.4in}*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:#fff;font-family:Arial,Helvetica,sans-serif}.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}.plan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always}.plan-page.last{break-after:auto;page-break-after:auto}.plan-head{flex:0 0 auto}.plan-head h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.plan-head .sub{margin:0 4px 10px;color:#44554c;font-size:10pt}.plan-frame{flex:1 1 auto;min-height:0}.plan-frame img{display:block;width:100%;height:100%;object-fit:contain}@media print{.tools{display:none!important}}';
+  const PLAN_PRINT_SCRIPT='<script>function p(){setTimeout(function(){window.print();},150);}if(document.readyState==="complete")p();else window.addEventListener("load",p);<\/script>';
+  function printFloorPlan(){
+    const event=events.find(e=>e.id===state.eventId);
+    // One printed page PER area plan (an event can have numerous areas):
+    // print every area that has a layout image or at least one assigned
+    // vendor. An area with neither is skipped, so no blank page appears.
+    const printable=state.areas.map(area=>({area,pins:pinsForArea(area)})).filter(x=>x.pins.length||imageAllowed(x.area.image_data_url));
+    if(!printable.some(x=>x.pins.length)){notice('No vendors are assigned in this event yet. Assign vendors before printing the floor plan.');return;}
     // Open the popup synchronously inside the click (popup blockers), show a
-    // preparing note, and replace it once the composite image is rendered.
+    // preparing note, and replace it once the composite images are rendered.
     const popup=window.open('','_blank');
     if(!popup){notice('Your browser blocked the print window. Allow pop-ups for this site and try again.');return;}
     popup.document.open();
-    popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing floor plan</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable floor plan…</body></html>');
+    popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing floor plan</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable floor plan\u2026</body></html>');
     popup.document.close();
     const dateLabel=(()=>{const raw=String(event?.date||'');const d=new Date(raw+'T12:00:00');return raw&&!Number.isNaN(d.getTime())?d.toLocaleDateString('en-US',{weekday:'short',month:'long',day:'numeric',year:'numeric'}):raw;})();
-    function finish(dataUrl,aspect){
-      // One letter page: 7.9in x 10.3in printable at .3in margins. The
-      // title lines above the image take ~0.75in, so the composite image
-      // gets 9.5in of height — otherwise it bumps onto page 2.
-      const fit=aspect>(9.5/7.9)?'height:9.5in;width:auto':'width:100%;height:auto';
-      const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(String(event?.title||'Market')+' — '+area.title+' floor plan')+'</title><style>'+
-        '@page{size:letter portrait;margin:.3in}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;font-family:Arial,Helvetica,sans-serif;text-align:center}'+
-        '.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5;text-align:left}'+
-        '.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}'+
-        '.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}'+
-        'h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px;text-align:left}.sub{margin:0 4px 10px;color:#44554c;font-size:10pt;text-align:left}'+
-        'img.plan{display:block;margin:0 auto;max-width:100%}'+
-        '@media print{.tools{display:none!important}}'+
-        '</style></head><body>'+
-        '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close()">✕ Close</button></div>'+
-        '<h1>'+safe(area.title)+' — floor plan</h1><p class="sub">'+safe(dateLabel)+' · '+pins.length+' vendor'+(pins.length===1?'':'s')+' placed</p>'+
-        '<img class="plan" id="planimg" alt="Floor plan with vendor names" style="'+fit+'" src="'+dataUrl+'">'+
-        '<script>document.getElementById("planimg").addEventListener("load",function(){setTimeout(function(){window.print();},150);});<\/script>'+
-        '</body></html>';
+    Promise.all(printable.map(x=>renderComposite(x.area,x.pins))).then(urls=>{
+      const sections=printable.map((x,i)=>'<section class="plan-page'+(i===printable.length-1?' last':'')+'"><div class="plan-head"><h1>'+safe(x.area.title)+' \u2014 floor plan</h1><p class="sub">'+safe(dateLabel)+' \u00b7 '+x.pins.length+' vendor'+(x.pins.length===1?'':'s')+' placed</p></div><div class="plan-frame"><img class="plan" alt="Floor plan with vendor names" src="'+urls[i]+'"></div></section>').join('');
+      const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(String(event?.title||'Market')+' \u2014 floor plans')+'</title><style>'+PLAN_PRINT_CSS+'</style></head><body>'+
+        '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close()">\u2715 Close</button></div>'+
+        sections+PLAN_PRINT_SCRIPT+'</body></html>';
       popup.document.open();
       popup.document.write(doc);
       popup.document.close();
       popup.focus();
-      status('Printable floor plan opened with '+pins.length+' vendor name(s) on one page. Use its ✕ Close button to come back.');
-    }
-    function drawPins(ctx,W,H){
-      const maxRectW=W*0.30,basePx=Math.max(20,Math.round(W*0.017));
-      for(const p of pins){
-        let fontPx=basePx,lines=[],textW=0;
-        for(let attempt=0;attempt<4;attempt++){
-          ctx.font='700 '+fontPx+'px Arial,Helvetica,sans-serif';
-          lines=[];let line='';
-          const words=p.label.split(/\s+/);
-          for(const w of words){
-            const t=line?line+' '+w:w;
-            if(ctx.measureText(t).width<=maxRectW-16||!line){line=t;}
-            else{lines.push(line);line=w;if(lines.length===2)break;}
-          }
-          if(line&&lines.length<2)lines.push(line);
-          const joined=lines.join(' ');
-          if(joined!==p.label&&lines.length===2){
-            let l2=lines[1];
-            while(l2.length>1&&ctx.measureText(l2+'…').width>maxRectW-16)l2=l2.slice(0,-1);
-            lines[1]=l2+'…';
-          }
-          textW=Math.max.apply(null,lines.map(l=>ctx.measureText(l).width));
-          if(textW<=maxRectW-16||attempt===3)break;
-          fontPx=Math.max(12,Math.round(fontPx*0.85));
-        }
-        const padX=10,padY=7,lineH=Math.round(fontPx*1.18);
-        const rw=Math.ceil(textW)+padX*2,rh=lineH*lines.length+padY*2;
-        let cx=p.x/100*W,cy=p.y/100*H;
-        cx=Math.max(rw/2+4,Math.min(W-rw/2-4,cx));
-        cy=Math.max(rh/2+4,Math.min(H-rh/2-4,cy));
-        const x=cx-rw/2,y=cy-rh/2,r=8;
-        ctx.beginPath();
-        ctx.moveTo(x+r,y);
-        ctx.arcTo(x+rw,y,x+rw,y+rh,r);
-        ctx.arcTo(x+rw,y+rh,x,y+rh,r);
-        ctx.arcTo(x,y+rh,x,y,r);
-        ctx.arcTo(x,y,x+rw,y,r);
-        ctx.closePath();
-        ctx.fillStyle='rgba(255,255,255,0.97)';ctx.fill();
-        ctx.lineWidth=Math.max(2,W*0.0016);ctx.strokeStyle='#16594a';ctx.stroke();
-        ctx.fillStyle='#103e35';ctx.textAlign='center';ctx.textBaseline='top';
-        lines.forEach((l,i)=>ctx.fillText(l,cx,y+padY+i*lineH));
-      }
-    }
-    function render(img){
-      let W,H;
-      if(img){W=img.naturalWidth;H=img.naturalHeight;}
-      else{W=1600;H=2000;}
-      const scale=Math.min(1,2400/W);
-      W=Math.round(W*scale);H=Math.round(H*scale);
-      const canvas=document.createElement('canvas');
-      canvas.width=W;canvas.height=H;
-      const ctx=canvas.getContext('2d');
-      if(img)ctx.drawImage(img,0,0,W,H);
-      else{ctx.fillStyle='#f7f3e7';ctx.fillRect(0,0,W,H);ctx.lineWidth=4;ctx.strokeStyle='#174d40';ctx.strokeRect(2,2,W-4,H-4);}
-      drawPins(ctx,W,H);
-      finish(canvas.toDataURL('image/png'),H/W);
-    }
-    if(imageAllowed(area.image_data_url)){
-      const img=new Image();
-      img.onload=()=>render(img);
-      img.onerror=()=>render(null);
-      img.src=area.image_data_url;
-    }else render(null);
+      status('Printable floor plan opened \u2014 '+printable.length+' area plan'+(printable.length===1?'':'s')+', one page each.');
+    });
   }
 
   q('fam-print').onclick=printAssignments;
