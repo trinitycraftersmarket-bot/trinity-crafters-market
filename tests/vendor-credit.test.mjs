@@ -186,3 +186,38 @@ test('credits carry no expiry in the schema, and a credit must fully cover the c
   const credit = await issueCredit(sql, {id: v.id, imported: false}, ORG);
   await assert.rejects(() => redeemCredit(sql, {credit_id: credit.id, event_id: pricey.id, space: 'indoor'}, v.user), /fully cover/);
 });
+
+test('Holly case: a category with vendor_limit 0 (no cap) still gets eligible dates and redeems', async () => {
+  const {db, sql, hampton, hilton, cats, event, booking} = await seededDb();
+  // Live categories sit at vendor_limit 0 (the live constraint was relaxed
+  // out-of-band — codify-live-schema.sql §14a); mirror that here, then set
+  // the category to 0 the way the owner's live data has it.
+  await db.exec('alter table market.categories drop constraint if exists categories_vendor_limit_check');
+  await sql`update market.categories set vendor_limit = 0 where id = ${cats.Candles}`;
+  const A = await event('2027-03-06', hampton.id);
+  const B = await event('2027-03-20', hilton.id);
+  const v = await booking({event: A, email: 'holly@example.com', business: 'Holly Bell Designs', category: cats.Candles});
+  const credit = await issueCredit(sql, {id: v.id, imported: false}, ORG);
+  const [creditRow] = await sql`select * from market.vendor_credits where id = ${credit.id}`;
+  const eligible = await eligibleEvents(sql, creditRow, v.user);
+  assert.ok(eligible.some(e => e.id === B.id), 'limit 0 must not dead-end eligible dates');
+  const res = await redeemCredit(sql, {credit_id: credit.id, event_id: B.id, space: 'indoor'}, v.user);
+  assert.equal(res.ok, true);
+  const [row] = await sql`select payment_status,payment_method from market.imported_attendees where id = ${res.booking_id}`;
+  assert.equal(row.payment_status, 'paid');
+  assert.equal(row.payment_method, 'Credit');
+});
+
+test('a real numeric category cap is still enforced (eligible dates + redeem)', async () => {
+  const {sql, hampton, hilton, cats, event, booking} = await seededDb();
+  // Candles has vendor_limit 1 in the seed. Another vendor fills it at B.
+  const A = await event('2027-03-06', hampton.id);
+  const B = await event('2027-03-20', hilton.id);
+  await booking({event: B, email: 'other@example.com', business: 'Other Candles', category: cats.Candles});
+  const v = await booking({event: A, email: 'susan@example.com', business: 'Susan Crafts', category: cats.Candles});
+  const credit = await issueCredit(sql, {id: v.id, imported: false}, ORG);
+  const [creditRow] = await sql`select * from market.vendor_credits where id = ${credit.id}`;
+  const eligible = await eligibleEvents(sql, creditRow, v.user);
+  assert.ok(!eligible.some(e => e.id === B.id), 'a full capped category must not be offered');
+  await assert.rejects(() => redeemCredit(sql, {credit_id: credit.id, event_id: B.id, space: 'indoor'}, v.user), /category just filled/);
+});

@@ -9,6 +9,15 @@ const money=n=>'$'+(Number(n||0)/100).toFixed(2);
 const dateOnly=v=>v instanceof Date?v.toISOString().slice(0,10):(String(v??'').match(/\d{4}-\d{2}-\d{2}/)?.[0]||'');
 const fmtDate=v=>{const s=dateOnly(v),m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!m)return s||'Market date';return new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}).format(new Date(Date.UTC(+m[1],+m[2]-1,+m[3],17)));};
 
+// Category-cap semantics, mirrored from server/counts.mjs and the owner's
+// ruling on the Holly case (Oct 22): the effective limit for an event is
+// the per-event override when a row exists, else the category default
+// (event_category_limits ?? categories.vendor_limit — codify-live-schema
+// §4), and a limit of 0 means NO per-category cap: several live categories
+// sit at 0 with vendors actively booked into them, so 0 must never read as
+// "category closed". Enforcement applies only when the cap is > 0.
+const categoryCap=(override,fallback)=>{const n=Number(override??fallback);return Number.isFinite(n)&&n>0?n:0;};
+
 export async function sourceRecord(sql,id,imported){
  if(imported){
   const [r]=await sql`select i.id,i.vendor_id,i.event_id,i.name,coalesce(nullif(i.business,''),i.name) business,i.email,i.phone,i.category_id,coalesce(c.name,i.category) category,i.selling description,lower(trim(i.space)) space,i.payment_status,i.invoice_amount,i.paid_at,i.cancelled,to_char(e.date,'YYYY-MM-DD') event_date,e.title,l.name location,l.address,(i.payment_status='paid' or i.paid_at is not null) was_paid,coalesce(i.invoice_amount,0)::int paid_amount from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id left join market.categories c on c.id=i.category_id where i.id=${id}`;
@@ -27,13 +36,13 @@ async function categoryAndSpaceCounts(sql,eventId,categoryId,space){
 
 export async function eligibleEvents(sql,credit,u){
  const [cat]=await sql`select id,name,vendor_limit,active from market.categories where id=${credit.category_id}`;
- if(!cat?.active||Number(cat.vendor_limit)<=0)return [];
+ if(!cat?.active)return [];
  const events=await sql`select e.*,l.name location,l.address,l.market_name,o.vendor_limit override_limit from market.events e join market.locations l on l.id=e.location_id left join market.event_category_limits o on o.event_id=e.id and o.category_id=${credit.category_id} where e.open and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and e.id<>${credit.source_event_id} order by e.date,e.start_time`;
  const out=[];
  for(const e of events){
   const dup=await sql`select 1 from (select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${e.id} and lower(trim(a.email))=lower(${u.email}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())) union all select i.id from market.imported_attendees i where i.event_id=${e.id} and lower(trim(i.email))=lower(${u.email}) and not coalesce(i.cancelled,false)) q limit 1`;
   if(dup.length||e.sold_out)continue;
-  const limit=Number(e.override_limit??cat.vendor_limit);if(await categoryUsed(sql,e.id,credit.category_id)>=limit)continue;
+  const limit=categoryCap(e.override_limit,cat.vendor_limit);if(limit>0&&await categoryUsed(sql,e.id,credit.category_id)>=limit)continue;
   const spaces=[];
   for(const space of ['indoor','outdoor']){
    if(space==='indoor'&&e.indoor_open===false)continue;if(space==='outdoor'&&e.outdoor_open===false)continue;
@@ -88,10 +97,10 @@ export async function redeemCredit(sql,{credit_id,event_id,space},u){
  await sql.begin(async tx=>{
   await tx`select pg_advisory_xact_lock(708821)`;
   const [credit]=await tx`select * from market.vendor_credits where id=${credit_id} and lower(email)=lower(${u.email}) for update`;if(!credit||credit.status!=='available'||Number(credit.remaining_amount)<=0)throw Error('This credit is no longer available.');if(String(credit.source_event_id)===String(event_id))throw Error('Choose a different market date for this credit.');
-  const [cat]=await tx`select id,name,vendor_limit,active from market.categories where id=${credit.category_id}`;if(!cat?.active||Number(cat.vendor_limit)<=0)throw Error('This category is not currently available.');
+  const [cat]=await tx`select id,name,vendor_limit,active from market.categories where id=${credit.category_id}`;if(!cat?.active)throw Error('This category is not currently available.');
   const [e]=await tx`select e.*,l.name location,l.address,l.market_name,o.vendor_limit override_limit from market.events e join market.locations l on l.id=e.location_id left join market.event_category_limits o on o.event_id=e.id and o.category_id=${credit.category_id} where e.id=${event_id} and e.open and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') for update of e`;if(!e||e.sold_out)throw Error('That market date is no longer available.');
   const dup=await tx`select 1 from (select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${e.id} and lower(trim(a.email))=lower(${u.email}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())) union all select i.id from market.imported_attendees i where i.event_id=${e.id} and lower(trim(i.email))=lower(${u.email}) and not coalesce(i.cancelled,false)) q limit 1`;if(dup.length)throw Error('You already have a booking or application for that market date.');
-  const counts=await categoryAndSpaceCounts(tx,e.id,credit.category_id,space),limit=Number(e.override_limit??cat.vendor_limit);if(Number(counts.category_used)>=limit)throw Error('Your category just filled for that date. Choose another market date.');if(space==='indoor'&&e.indoor_open===false)throw Error('Indoor spaces are closed for that date.');if(space==='outdoor'&&e.outdoor_open===false)throw Error('Outdoor spaces are closed for that date.');if(Number(counts.space_used)>=Number(e[space+'_capacity']||0))throw Error('That space just sold out. Choose another option.');
+  const counts=await categoryAndSpaceCounts(tx,e.id,credit.category_id,space),limit=categoryCap(e.override_limit,cat.vendor_limit);if(limit>0&&Number(counts.category_used)>=limit)throw Error('Your category just filled for that date. Choose another market date.');if(space==='indoor'&&e.indoor_open===false)throw Error('Indoor spaces are closed for that date.');if(space==='outdoor'&&e.outdoor_open===false)throw Error('Outdoor spaces are closed for that date.');if(Number(counts.space_used)>=Number(e[space+'_capacity']||0))throw Error('That space just sold out. Choose another option.');
   const price=Number(e[space+'_price']||0);if(price<=0)throw Error('That space does not have a valid price.');if(price>Number(credit.remaining_amount))throw Error('This credit does not fully cover that space. Choose a lower-priced space or contact the organizer.');
   const v=await sourceRecord(tx,credit.source_id,credit.source_type==='imported');if(!v)throw Error('The original vendor record could not be found.');
   const [row]=await tx`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state,payment_status,invoice_amount,selling,payment_method,payment_reference,paid_at,vendor_id) values(${e.id},${v.name||v.business||'Vendor'},${v.business||v.name||'Vendor'},${u.email},${v.phone||''},${cat.name},${cat.id},false,${space},'Vendor credit','not_marked','paid',${price},${v.description||''},'Credit',${'CREDIT-'+String(credit.id).slice(0,8)},now(),${credit.vendor_id||v.vendor_id||null}) returning id`;
