@@ -5,9 +5,10 @@
 // profile, market dates and recorded payments). Writes go through
 // vendor-profile organizer-save / vendor-save / vendor-payment /
 // vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
-import { api, fn, esc, money, nice } from './api.js?v=20261023-2';
+import { api, fn, esc, money, nice } from './api.js?v=20261023-3';
 
 let rows = null;          // vendor-list payload for this screen session
+let creditSources = null; // vendor-credit admin-sources: paid records a credit can be issued from
 let view = { q: '', filter: 'all' };
 const selected = new Set();  // invite-back selections survive re-renders
 
@@ -48,7 +49,21 @@ export function renderVendors(ctx, root) {
   const findVendor = id => (rows || []).find(v => String(v.id) === String(id));
   const refresh = async () => {
     rows = await api('vendor-list');
+    // Credit sources ride along best-effort: a failure hides the credit
+    // section, it never takes the directory down.
+    try { creditSources = (await fn('vendor-credit', { action: 'admin-sources' })).sources || []; }
+    catch { creditSources = []; }
     draw();
+  };
+  // A vendor's creditable records (legacy vendor-credit matching): by
+  // email when the vendor has one; otherwise by record id — application
+  // id for booking sources, the row id itself for imported records.
+  const creditRowsFor = v => {
+    if (!creditSources) return [];
+    const email = String(v.email || '').replace(/,+\s*$/, '').trim().toLowerCase();
+    return creditSources.filter(x => email
+      ? String(x.email || '').trim().toLowerCase() === email
+      : (x.imported ? String(x.id) === String(v.id) : String(x.application_id) === String(v.id)));
   };
   const mutate = async (call, okMsg) => {
     try {
@@ -91,6 +106,7 @@ export function renderVendors(ctx, root) {
         ${(v.payment_history || []).map(historyLine).join('') || '<p class="note">No payments on record.</p>'}
         <h4 class="mini-title">Recorded payments / receipts</h4>
         ${(v.payments || []).map(x => `<div class="mini-row"><span>${esc(new Date(x.paid_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' }))} · ${money(x.amount)} · ${esc(x.payment_method || '')}</span><span>${x.receipt_sent_at ? 'Receipt sent ' + esc(new Date(x.receipt_sent_at).toLocaleDateString('en-US')) + ' ' : ''}<button class="btn small" data-receipt="${esc(x.id)}">${x.receipt_sent_at ? 'Resend receipt' : 'Email receipt'}</button></span></div>`).join('') || '<p class="note">No separately recorded payments.</p>'}
+        ${creditSectionHtml(v)}
       </details>
       <div class="vendor-actions">
         ${email ? `<button class="btn small" data-act="profile" data-id="${esc(v.id)}">Vendor profile</button>` : ''}
@@ -100,6 +116,47 @@ export function renderVendors(ctx, root) {
         <label class="checkline select-line"><input type="checkbox" data-select="${esc(v.id)}" ${selected.has(String(v.id)) ? 'checked' : ''}> Invite back</label>
       </div>
     </article>`;
+  }
+
+  // Cancellation credits (full-port Stage B): issue a reusable credit
+  // from any paid record — including one already cancelled, whose paid
+  // evidence the server preserves. Issuing cancels/releases the original
+  // spot (a no-op when it was already cancelled) and emails the vendor.
+  function creditSectionHtml(v) {
+    const list = creditRowsFor(v);
+    if (!list.length) return '';
+    return `<h4 class="mini-title">Cancellation credits</h4>
+      <p class="note">Issue a reusable credit from a paid booking. Issuing it also cancels and releases that original spot. Credits never expire and stay tied to the vendor's category.</p>
+      ${list.map(x => `<div class="mini-row"><span>${esc(nice(x.event_date))} · ${esc(x.space || '')} · ${Number(x.amount) > 0 ? money(x.amount) + ' paid' : 'Amount not recorded'} · ${esc(x.status || '')}</span><span>${x.credit_id
+        ? `<span class="status neutral">Credit issued · ${money(x.remaining_amount)} left</span>`
+        : `<button class="btn small" data-issue="${esc(x.id)}" data-imported="${x.imported ? '1' : '0'}">Issue Credit${Number(x.amount) > 0 ? ' ' + money(x.amount) : ''}</button>`}</span></div>`).join('')}`;
+  }
+  function issueSheet(x) {
+    // Preview first (the legacy flow): the stored paid amount decides
+    // whether the organizer must type the amount actually paid.
+    fn('vendor-credit', { action: 'preview', id: x.id, imported: x.imported }).then(r => {
+      const src = r.source || {};
+      const stored = Number(src.paid_amount || 0);
+      ctx.openSheet(`
+        <h3 class="sheet-title">Issue cancellation credit</h3>
+        <p><strong>${esc(src.business || src.name || 'Vendor')}</strong> · ${esc(nice(src.event_date))} · ${esc(src.space || '')}</p>
+        <form id="v2-issue-credit-form">
+          ${stored > 0
+            ? `<p class="note">Issue a <strong>${money(stored)}</strong> credit and cancel/release this market spot?<br>The vendor will be able to choose another available date online. The credit never expires.</p>`
+            : `<p class="note">No paid amount is stored for this booking. Enter the amount actually paid — it becomes the credit, and this market spot is cancelled/released.</p>
+               <label class="sheet-field">Amount actually paid ($)<input name="amount" type="number" min="0.01" step="0.01" required></label>`}
+          <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Issue credit &amp; release spot</button></div>
+        </form>`);
+      ctx.sheetEl.querySelector('#v2-issue-credit-form').onsubmit = e => {
+        e.preventDefault();
+        const f = new FormData(e.target);
+        const extra = stored > 0 ? {} : { amount: Math.round(Number(f.get('amount')) * 100) };
+        if (stored <= 0 && (!Number.isFinite(extra.amount) || extra.amount <= 0)) { ctx.toast('Enter a valid paid amount.', true); return; }
+        ctx.closeSheet();
+        mutate(() => fn('vendor-credit', { action: 'issue', id: x.id, imported: x.imported, ...extra }),
+          'Credit issued. The old spot and category were released, and the vendor can apply the credit from My Bookings.');
+      };
+    }).catch(e => ctx.toast(e.message, true));
   }
 
   function profileSheet(v) {
@@ -245,6 +302,11 @@ export function renderVendors(ctx, root) {
     });
     listEl.querySelectorAll('[data-receipt]').forEach(btn => btn.onclick = () =>
       mutate(() => api('vendor-receipt', { payment_id: btn.dataset.receipt }), 'Receipt emailed to vendor and organizer copy sent.'));
+    listEl.querySelectorAll('[data-issue]').forEach(btn => btn.onclick = () => {
+      const x = (creditSources || []).find(s => String(s.id) === String(btn.dataset.issue) && s.imported === (btn.dataset.imported === '1'));
+      if (!x) { ctx.toast('That record is no longer available — reloading.', true); refresh().catch(e => ctx.toast(e.message, true)); return; }
+      issueSheet(x);
+    });
     listEl.querySelectorAll('[data-select]').forEach(box => box.onchange = () => {
       if (box.checked) selected.add(String(box.dataset.select)); else selected.delete(String(box.dataset.select));
       root.querySelector('#v2-return-count').textContent = selected.size ? selected.size + ' selected' : '';

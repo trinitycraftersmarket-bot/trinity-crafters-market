@@ -39,3 +39,25 @@ test('stage A: manual booking uses the same endpoint and multi-date rules as leg
   for (const cls of ['.mb-list', '.mb-row', '.mb-rate'])
     assert.ok(css.includes(cls), `app.css must style ${cls} (stage A components)`);
 });
+
+test('stage B: credit issuance lives in the vendor directory sheet flow', () => {
+  const v = read(v2js, 'vendors.js');
+  assert.ok(v.includes("'admin-sources'"), 'directory must load creditable records via admin-sources');
+  assert.ok(v.includes("'preview'"), 'issuance must preview the stored paid amount first');
+  assert.ok(v.includes("action: 'issue'"), 'issuance must call the vendor-credit issue action');
+  assert.ok(v.includes('Cancellation credits'), 'the directory must render the Cancellation credits section');
+  assert.ok(v.includes('Credit issued'), 'already-issued records must show their remaining balance');
+  assert.ok(v.includes('data-imported'), 'issuance must distinguish imported vs booking sources');
+});
+
+test('stage B: application review flags credits and offers Approve & apply credit (§19)', () => {
+  const a = read(v2js, 'applications.js');
+  assert.ok(a.includes("'applicant-credits'"), 'review must load applicant credits');
+  assert.ok(a.includes("'application-conflicts'"), 'review must load the who-sells-what conflicts');
+  assert.ok(a.includes('Holds a '), 'the credit flag line must render');
+  assert.ok(a.includes('credit from '), 'the flag must name the credit source date');
+  assert.ok(a.includes("'redeem-for-application'"), 'the override must settle via redeem-for-application');
+  assert.ok(a.includes('Approve &amp; apply '), 'the Approve & apply credit button must render');
+  assert.ok(a.includes('products not listed'), 'conflict lines must use the no-invention fallback');
+  assert.ok(a.includes('sells '), 'conflict lines must use the "<Business> sells <products>" format');
+});

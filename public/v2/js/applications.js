@@ -9,8 +9,8 @@
 // from a legacy module. v2 cannot import legacy modules, so the flag here
 // uses the scan SAVED on the application at submit time
 // (agreements.category_scan) — the same data the legacy review reads first.
-import { api, esc, money, nice, niceShort } from './api.js?v=20261023-2';
-import { normalizeSpace } from './data.js?v=20261023-2';
+import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261023-3';
+import { normalizeSpace } from './data.js?v=20261023-3';
 
 const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', held: 'Payment due', paid: 'Paid', waitlist: 'Wait-list', declined: 'Declined', cancelled: 'Cancelled', expired: 'Expired' };
 const STATUS_CLASS = { pending: 'warn', approved: 'neutral', held: 'warn', paid: 'ok', waitlist: 'neutral', declined: 'bad', cancelled: 'bad', expired: 'bad' };
@@ -18,6 +18,16 @@ const ACTIVE_STATUSES = ['pending', 'approved', 'held', 'paid', 'expired'];
 const CLOSED_STATUSES = ['waitlist', 'cancelled', 'declined'];
 
 let view = { q: '', eventId: '', status: '', category: '', sort: 'date', closedQ: '', closedStatus: '' };
+
+// Credit manual path (audit §19, full-port Stage B): the vendor-credit
+// function's applicant-credits / application-conflicts payloads, loaded
+// alongside the admin payload and re-drawn in when they land — the same
+// async pattern the classic review uses. First available credit per
+// vendor email wins, exactly like the classic map.
+let creditMap = null, conflictMap = null;
+const CREDIT_STATUSES = ['pending', 'waitlist', 'approved', 'held'];
+const creditFor = b => (creditMap && CREDIT_STATUSES.includes(b.status))
+  ? creditMap[String(b.email || '').trim().toLowerCase()] || null : null;
 
 export function savedCategoryFlag(b) {
   const scan = b?.agreements?.category_scan;
@@ -102,6 +112,55 @@ export function renderApplications(ctx, root) {
   };
   const bookingAction = (id, payload, okMsg) => mutate(() => api('booking', { id, ...payload }), okMsg);
 
+  // §19 flag + who-sells-what conflict panel (owner's exact line format:
+  // "<Business> sells <products>", "products not listed" when the record
+  // carries none — the server never invents product text).
+  function creditFlagHtml(b) {
+    const c = creditFor(b);
+    return c ? `<p class="note">💳 Holds a ${money(c.remaining_amount)} credit from ${esc(nice(c.source_date))}.</p>` : '';
+  }
+  function conflictPanelHtml(b) {
+    const c = conflictMap?.[b.id];
+    if (!c) return '';
+    const line = (business, sells) => `${esc(business || 'Vendor')} sells ${esc(String(sells || '').trim() || 'products not listed')}`;
+    return `<p class="note flag-note"><strong>⚠ Category conflict — who sells what (${esc(c.category)} is full for this date)</strong><br>${line(c.applicant.business, c.applicant.sells)}<br>${(c.vendors || []).map(v => line(v.business, v.sells)).join('<br>')}</p>`;
+  }
+  function approveCreditSheet(b) {
+    const c = creditFor(b);
+    if (!c) return;
+    ctx.openSheet(`
+      <h3 class="sheet-title">Approve &amp; apply credit</h3>
+      <p><strong>${esc(b.business || b.name || 'Vendor')}</strong> · ${esc(niceShort(b.date))} · ${money(b.price)}</p>
+      <p class="note">Approve this booking and settle it from their ${money(c.remaining_amount)} credit (from ${esc(nice(c.source_date))})?<br><br>This is your organizer override: it approves even if the category or booths are full. If the credit is smaller than the ${money(b.price)} price, the rest stays due. The credit application is audit-logged.</p>
+      <div class="sheet-actions"><button class="btn" data-sheet-close>Cancel</button><button class="btn primary" id="v2-approve-credit-go">Approve &amp; apply credit</button></div>`);
+    ctx.sheetEl.querySelector('#v2-approve-credit-go').onclick = async () => {
+      ctx.closeSheet();
+      try {
+        const r = await fn('vendor-credit', { action: 'redeem-for-application', booking_id: b.id, credit_id: c.id });
+        await ctx.refreshAdmin();
+        await loadCreditData();
+        draw();
+        ctx.toast(r.amount_due > 0
+          ? 'Approved. ' + money(r.applied) + ' paid from credit; ' + money(r.amount_due) + ' remains due.'
+          : 'Approved and paid in full from credit (' + money(r.applied) + ').');
+      } catch (e) { ctx.toast(e.message, true); }
+    };
+  }
+  async function loadCreditData() {
+    try {
+      const r = await fn('vendor-credit', { action: 'applicant-credits' });
+      const m = {};
+      for (const c of r.credits || []) { const k = String(c.email || '').trim().toLowerCase(); if (!m[k]) m[k] = c; }
+      creditMap = m;
+    } catch { creditMap = {}; }
+    try {
+      const r = await fn('vendor-credit', { action: 'application-conflicts' });
+      const m = {};
+      for (const c of r.conflicts || []) m[c.booking_id] = c;
+      conflictMap = m;
+    } catch { conflictMap = {}; }
+  }
+
   function cardHtml(b) {
     const flag = savedCategoryFlag(b);
     const space = normalizeSpace(b.space);
@@ -121,10 +180,13 @@ export function renderApplications(ctx, root) {
       ${b.description ? `<p class="note"><strong>Sells:</strong> ${esc(String(b.description).slice(0, 180))}${String(b.description).length > 180 ? '…' : ''}</p>` : ''}
       ${b.ban_flagged ? `<p class="note flag-note"><strong>⚠ Potential banned-vendor match:</strong> ${esc(b.ban_match_reason || 'Review this application before approval.')}</p>` : ''}
       ${flag ? `<p class="note flag-note"><strong>⚠ Category review needed</strong> — selected: ${esc(b.category || 'Not selected')}${flag.overlaps.length ? '<br>Products appear to fit: ' + flag.overlaps.map(esc).join(' · ') : ''}${flag.conflicts.length ? '<br><strong>Filled/sold-out conflict: ' + flag.conflicts.map(esc).join(' · ') + '</strong>' : ''}</p>` : ''}
+      ${creditFlagHtml(b)}
+      ${conflictPanelHtml(b)}
       ${b.status === 'held' && b.hold_until ? `<p class="note"><strong>Payment deadline:</strong> ${esc(new Date(b.hold_until).toLocaleString('en-US', { timeZone: 'America/New_York' }))} Eastern</p>` : ''}
       ${b.status === 'declined' && b.decision_reason ? `<p class="note"><strong>Decline reason:</strong> ${esc(b.decision_reason)}</p>` : ''}
       <div class="vendor-actions">
         ${primaryActions(b)}
+        ${creditFor(b) ? `<button class="btn primary small" data-act="approve-credit" data-id="${esc(b.id)}">Approve &amp; apply ${money(creditFor(b).remaining_amount)} credit</button>` : ''}
         <button class="btn small ghost" data-act="details" data-id="${esc(b.id)}">Details &amp; photos</button>
         <button class="btn small ghost" data-act="more" data-id="${esc(b.id)}">More ⋯</button>
       </div>
@@ -276,6 +338,7 @@ export function renderApplications(ctx, root) {
       if (!b) { ctx.toast('That application is no longer in the list — reloading.', true); ctx.refreshAdmin().then(draw); return; }
       const act = btn.dataset.act;
       if (act === 'details') detailsSheet(b);
+      else if (act === 'approve-credit') approveCreditSheet(b);
       else if (act === 'more') moreSheet(b);
       else if (act === 'status') statusSheet(b, btn.dataset.status);
       else if (act === 'reinstate') reinstateSheet(b);
@@ -357,5 +420,7 @@ export function renderApplications(ctx, root) {
     draw();
   });
 
+  creditMap = null; conflictMap = null;
   draw();
+  loadCreditData().then(() => { if (root.isConnected) draw(); });
 }
