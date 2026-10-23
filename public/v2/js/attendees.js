@@ -5,10 +5,14 @@
 // Day (Stage 1) so there is one place that runs the day — here they are
 // shown as read-only chips. Same server-is-truth rule: every action is a
 // server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261023-7';
-import { attendeeRows, eventStats } from './data.js?v=20261023-7';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261023-8';
+import { attendeeRows, eventStats } from './data.js?v=20261023-8';
+import { parseAttendeePdf } from './pdfimport.js?v=20261023-8';
+import { printAttendance } from './print.js?v=20261023-8';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261023-8';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
+const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
 const INSP_CLASS = { not_inspected: 'warn', approved: 'ok', needs_correction: 'bad', refused: 'bad' };
 
 let view = { eventId: '', q: '' };
@@ -45,9 +49,10 @@ export function renderAttendees(ctx, root, params = {}) {
     <div class="vendor-list" id="v2-att-list"></div>
     <div class="vendor-actions att-tools">
       <button class="btn small" id="v2-att-csv">Export CSV</button>
+      <button class="btn small" id="v2-att-import">Import attendees from PDF</button>
+      <button class="btn small" id="v2-att-print">Print attendance list</button>
       <button class="btn small ghost" data-go-eventday>Open Event Day for inspections &amp; check-in</button>
-    </div>
-    <p class="note">Vendor import from PDF and the printable attendance list still live in the current app's Attendees tab for this stage.</p>`;
+    </div>`;
 
   const rowsNow = () => attendeeRows(ctx.state.admin, event.id);
   const findRow = (id, imported) => rowsNow().find(r => String(r.id) === String(id) && r.imported === imported);
@@ -190,6 +195,64 @@ export function renderAttendees(ctx, root, params = {}) {
       else if (btn.dataset.act === 'more') moreSheet(r);
     });
   }
+  function importSheet() {
+    let rows = [], filename = '';
+    ctx.openSheet(`
+      <h3 class="sheet-title">Import attendees from PDF</h3>
+      <p class="note">Choose the market date and PDF. You can edit every row before anything is saved.</p>
+      <label class="sheet-field">Market date<select id="v2-pdf-event">${events.map(e => {
+        const l = (ctx.state.admin.locations || []).find(x => String(x.id) === String(e.location_id));
+        return `<option value="${esc(e.id)}" ${String(e.id) === String(event.id) ? 'selected' : ''}>${esc(nice(e.date))} — ${esc(l?.name || '')}</option>`;
+      }).join('')}</select></label>
+      <label class="sheet-field">Attendee PDF<input id="v2-pdf-file" type="file" accept="application/pdf"></label>
+      <div class="sheet-actions"><button type="button" class="btn primary" id="v2-pdf-read">Read PDF</button></div>
+      <div id="v2-pdf-review"><p class="note">No PDF has been read yet.</p></div>`);
+    const review = ctx.sheetEl.querySelector('#v2-pdf-review');
+    const harvest = () => {
+      review.querySelectorAll('[data-import-row]').forEach(tr => {
+        const r = rows[Number(tr.dataset.importRow)];
+        if (!r) return;
+        tr.querySelectorAll('[data-k]').forEach(inp => { r[inp.dataset.k] = inp.value.trim(); });
+      });
+    };
+    const drawReview = () => {
+      review.innerHTML = rows.length ? `
+        <p class="note"><strong>${rows.length}</strong> possible attendees found. Review and correct before importing.</p>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Business</th><th>Email</th><th>Phone</th><th>Category</th><th>Space</th><th></th></tr></thead><tbody>
+        ${rows.map((r, i) => `<tr data-import-row="${i}"><td><input data-k="name" value="${esc(r.name)}"></td><td><input data-k="business" value="${esc(r.business)}"></td><td><input data-k="email" value="${esc(r.email)}"></td><td><input data-k="phone" value="${esc(r.phone)}"></td><td><input data-k="category" value="${esc(r.category)}"></td><td><select data-k="space"><option value="">Choose</option><option value="Inside" ${/^(inside|indoor)$/i.test(r.space) ? 'selected' : ''}>Inside</option><option value="Outside" ${/^(outside|outdoor)$/i.test(r.space) ? 'selected' : ''}>Outside</option></select></td><td><button type="button" class="btn small ghost" data-remove-import="${i}">Remove</button></td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="sheet-actions"><button type="button" class="btn" id="v2-pdf-add">Add row</button><button type="button" class="btn primary" id="v2-pdf-save">Import Attendees</button></div>`
+        : '<p class="note">No PDF has been read yet.</p>';
+      review.querySelectorAll('[data-remove-import]').forEach(b => b.onclick = () => { harvest(); rows.splice(Number(b.dataset.removeImport), 1); drawReview(); });
+      review.querySelector('#v2-pdf-add')?.addEventListener('click', () => { harvest(); rows.push({ name: '', business: '', email: '', phone: '', category: '', space: '' }); drawReview(); });
+      review.querySelector('#v2-pdf-save')?.addEventListener('click', async () => {
+        harvest();
+        const clean = rows.filter(r => r.name || r.business);
+        if (!clean.length) { ctx.toast('Keep at least one attendee row.', true); return; }
+        try {
+          await api('import-attendees', { event_id: ctx.sheetEl.querySelector('#v2-pdf-event').value, source_file: filename, rows: clean });
+          ctx.closeSheet();
+          await ctx.refreshAdmin();
+          draw();
+          ctx.toast(clean.length + ' attendees imported.');
+        } catch (e) { ctx.toast(e.message, true); }
+      });
+    };
+    ctx.sheetEl.querySelector('#v2-pdf-read').onclick = async () => {
+      const file = ctx.sheetEl.querySelector('#v2-pdf-file').files[0];
+      filename = file?.name || '';
+      try {
+        rows = await parseAttendeePdf(file);
+        drawReview();
+        ctx.toast('PDF read. Review the attendee rows before importing.');
+      } catch (e) {
+        ctx.toast(e.message, true);
+        if (!rows.length) rows = [{ name: '', business: '', email: '', phone: '', category: '', space: '' }];
+        drawReview();
+      }
+    };
+  }
+
   function draw() {
     const stats = eventStats(ctx.state.admin, event);
     const summary = root.querySelector('#v2-att-summary');
@@ -215,6 +278,34 @@ export function renderAttendees(ctx, root, params = {}) {
     link.download = 'market-inspection-' + event.id + '.csv';
     link.click();
     URL.revokeObjectURL(link.href);
+  };
+  root.querySelector('#v2-att-import').onclick = () => importSheet();
+  root.querySelector('#v2-att-print').onclick = async () => {
+    const rows = rowsNow();
+    let plans = [];
+    try {
+      const res = await api('floor-area-plans', undefined, { event_id: event.id });
+      plans = (res.areas || []).map(standardizeArea).filter(a => imageAllowed(a.image_data_url))
+        .map(a => ({ title: a.title || 'Floor plan', image: a.image_data_url }));
+    } catch { /* no readable plans — print the list alone */ }
+    try {
+      printAttendance({
+        market: loc?.market_name || event.title || 'Crafters Market',
+        subtitle: nice(event.date) + ' · ' + (loc?.name || event.location || '') + ' · ' + clock(event.start_time) + '–' + clock(event.end_time),
+        summary: rows.length + ' vendors · ' + rows.filter(r => r.payStatus === 'paid').length + ' paid · ' + rows.filter(r => r.attendance === 'checked_in').length + ' checked in',
+        headers: ['Space', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection'],
+        rows: rows.map(r => [
+          r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : 'Inside'),
+          r.business || '', r.name || '', r.category || '',
+          r.phone || 'Not provided',
+          String(r.email || '').replace(/,+\s*$/, '').trim() || 'Not provided',
+          r.payStatus === 'paid' ? 'Paid' : 'Unpaid',
+          r.attendance === 'checked_in' ? 'Checked in' : r.attendance === 'no_show' ? 'No show' : 'Not marked',
+          INSP_PRINT[r.inspection_status] || 'Not inspected'
+        ]),
+        plans
+      });
+    } catch (e) { ctx.toast(e.message, true); }
   };
 
   draw();

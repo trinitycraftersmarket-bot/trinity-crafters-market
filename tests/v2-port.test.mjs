@@ -169,3 +169,19 @@ test('stage F: application recovery screen keeps status rules and override actio
   const keys = [...app.matchAll(/key: 'food-trucks'/g)];
   assert.equal(keys.length, 1, 'exactly one food-trucks section entry');
 });
+
+test('stage G: attendees gains the PDF import and the printable attendance list', () => {
+  assert.ok(existsSync(join(v2js, 'pdfimport.js')), 'missing pdfimport.js');
+  const p = read(v2js, 'pdfimport.js');
+  assert.ok(p.includes('export async function parseAttendeePdf'), 'the PDF parser must be ported');
+  assert.ok(p.includes('pdfjs-dist@6.3.289'), 'the parser must use the same pdf.js build as classic');
+  assert.ok(p.includes('headerMap'), 'the parser must keep the classic header detection');
+  const at = read(v2js, 'attendees.js');
+  assert.ok(!at.includes('still live in the current app'), 'the classic-fallback note must be removed');
+  assert.ok(at.includes("'import-attendees'"), 'import must post to the existing import-attendees action');
+  assert.ok(at.includes('source_file'), 'import must carry the source file name like classic');
+  assert.ok(at.includes('printAttendance'), 'the attendance list must print via the shared builder');
+  const pr = read(v2js, 'print.js');
+  assert.ok(pr.includes('export function printAttendance'), 'print.js must export the attendance print builder');
+  assert.ok(pr.includes('break-before:page'), 'floor plans must print one per page');
+});
