@@ -85,3 +85,45 @@ test('stage C: banned vendors screen toggles bans via the existing action', () =
   assert.ok(b.includes('active: !b.active'), 'unban / reapply must flip the active flag');
   assert.ok(b.includes('Add banned vendor'), 'the add-ban form must exist');
 });
+
+test('stage D: monthly billing screen uses the monthly-invoices function actions', () => {
+  assert.ok(existsSync(join(v2js, 'billing.js')), 'missing billing.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("live: 'billing'"), 'section registry must wire live: billing');
+  assert.ok(app.includes('renderBilling'), 'app.js must dispatch to renderBilling');
+  const b = read(v2js, 'billing.js');
+  assert.ok(b.includes("/.netlify/functions/monthly-invoices"), 'must call the monthly-invoices function');
+  for (const s of ["'add-bill'", "'update'", "'cancel'", "'edit-item'", "'email'", "'godaddy-sent'", 'token='])
+    assert.ok(b.includes(s), `billing.js must use the ${s} action`);
+  assert.ok(b.includes('dueOf'), 'the due math helper must exist');
+  assert.ok(b.includes("i.status === 'cancelled' ? 0"), 'cancelled invoices must be due $0');
+});
+
+test('stage D: expenses screen keeps the log, tumbler report and itemized report', () => {
+  assert.ok(existsSync(join(v2js, 'expenses.js')), 'missing expenses.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("live: 'expenses'"), 'section registry must wire live: expenses');
+  assert.ok(app.includes('renderExpenses'), 'app.js must dispatch to renderExpenses');
+  const e = read(v2js, 'expenses.js');
+  assert.ok(e.includes("'expense'"), 'the log must use the expense action');
+  assert.ok(e.includes('isTumblerRow'), 'tumbler detection must be shared');
+  assert.ok(e.includes('tumbler credit'), 'tumbler detection must match the classic rule');
+  assert.ok(e.includes('Tumbler Credit Report'), 'the tumbler reconciliation section must exist');
+  assert.ok(e.includes('printExpenseReport'), 'printing must go through the shared print builder');
+  assert.ok(e.includes('csvDownload'), 'CSV export must exist');
+});
+
+test('stage D: reports screen keeps P&L, A/R and the payment report math', () => {
+  assert.ok(existsSync(join(v2js, 'reports.js')), 'missing reports.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("live: 'reports'"), 'section registry must wire live: reports');
+  assert.ok(app.includes('renderReports'), 'app.js must dispatch to renderReports');
+  const r = read(v2js, 'reports.js');
+  assert.ok(r.includes('plRows') && r.includes('arRows'), 'P&L and A/R row builders must exist');
+  assert.ok(r.includes('Profit & Loss'), 'the P&L report must exist');
+  assert.ok(r.includes('Accounts Receivable'), 'the A/R report must exist');
+  assert.ok(r.includes('printTable'), 'reports must print via the shared printTable builder');
+  assert.ok(r.includes('payment-report.csv'), 'the payment CSV export must exist');
+  const p = read(v2js, 'print.js');
+  assert.ok(p.includes('export function printTable') && p.includes('export function printExpenseReport'), 'print.js must export both classic print builders');
+});
