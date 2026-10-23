@@ -17,35 +17,36 @@
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261023-8';
-import { VERSION, STAGE } from './version.js?v=20261023-8';
-import { renderHome } from './home.js?v=20261023-8';
-import { renderEventDay } from './eventday.js?v=20261023-8';
-import { renderAttendees } from './attendees.js?v=20261023-8';
-import { renderApplications } from './applications.js?v=20261023-8';
-import { renderWaitlist } from './waitlist.js?v=20261023-8';
-import { renderMoves } from './moves.js?v=20261023-8';
-import { renderVendors } from './vendors.js?v=20261023-8';
-import { renderPayments } from './payments.js?v=20261023-8';
-import { renderInvoices } from './invoices.js?v=20261023-8';
-import { renderFloorEditor } from './flooredit.js?v=20261023-8';
-import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-8';
-import { renderComms } from './comms.js?v=20261023-8';
-import { renderThreads } from './threads.js?v=20261023-8';
-import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-8';
-import { renderSocial } from './social.js?v=20261023-8';
-import { renderRsvps } from './rsvps.js?v=20261023-8';
-import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-8';
-import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-8';
-import { renderManualBooking } from './manualbooking.js?v=20261023-8';
-import { renderCancelled } from './cancelled.js?v=20261023-8';
-import { renderBanned } from './banned.js?v=20261023-8';
-import { renderFoodTrucks } from './foodtrucks.js?v=20261023-8';
-import { renderCheckin } from './checkin.js?v=20261023-8';
-import { renderAppRecovery } from './apprecovery.js?v=20261023-8';
-import { renderBilling } from './billing.js?v=20261023-8';
-import { renderExpenses } from './expenses.js?v=20261023-8';
-import { renderReports } from './reports.js?v=20261023-8';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261023-9';
+import { VERSION, STAGE } from './version.js?v=20261023-9';
+import { renderHome } from './home.js?v=20261023-9';
+import { renderEventDay } from './eventday.js?v=20261023-9';
+import { renderAttendees } from './attendees.js?v=20261023-9';
+import { renderApplications } from './applications.js?v=20261023-9';
+import { renderWaitlist } from './waitlist.js?v=20261023-9';
+import { renderMoves } from './moves.js?v=20261023-9';
+import { renderVendors } from './vendors.js?v=20261023-9';
+import { renderPayments } from './payments.js?v=20261023-9';
+import { renderInvoices } from './invoices.js?v=20261023-9';
+import { renderFloorEditor } from './flooredit.js?v=20261023-9';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-9';
+import { renderComms } from './comms.js?v=20261023-9';
+import { renderThreads } from './threads.js?v=20261023-9';
+import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-9';
+import { renderSocial } from './social.js?v=20261023-9';
+import { renderRsvps } from './rsvps.js?v=20261023-9';
+import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-9';
+import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-9';
+import { renderManualBooking } from './manualbooking.js?v=20261023-9';
+import { renderCancelled } from './cancelled.js?v=20261023-9';
+import { renderBanned } from './banned.js?v=20261023-9';
+import { renderFoodTrucks } from './foodtrucks.js?v=20261023-9';
+import { renderFoodTruckApply } from './trucksapply.js?v=20261023-9';
+import { renderCheckin } from './checkin.js?v=20261023-9';
+import { renderAppRecovery } from './apprecovery.js?v=20261023-9';
+import { renderBilling } from './billing.js?v=20261023-9';
+import { renderExpenses } from './expenses.js?v=20261023-9';
+import { renderReports } from './reports.js?v=20261023-9';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -133,13 +134,18 @@ function navigate(name, params = {}) {
   if (location.hash === target) route();
   else location.hash = target;
 }
+// Legacy hash aliases (audit §20 Stage H — permanent): the classic app
+// and years of server-sent email link to /#admin, /#account and /#apply.
+// They deep-link to the v2 equivalents instead of falling back to home.
+const HASH_ALIASES = { admin: 'home', account: 'vbookings', apply: 'vapply' };
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '');
   const [path, qs] = raw.split('?');
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
+  if (HASH_ALIASES[path]) return { name: HASH_ALIASES[path], ...params };
   if (path.startsWith('section/')) return { name: 'section', section: path.slice(8) };
   if (['event-day', 'attendees', 'applications', 'waitlist', 'directory', 'moves', 'payments', 'invoices', 'flooredit', 'dates', 'categories', 'managers', 'connections', 'surveys', 'archive', 'tools', 'vendors', 'money', 'messages', 'more',
-    'rsvps', 'comms', 'threads', 'chat', 'social', 'manualbooking', 'cancelled', 'banned', 'foodtrucks', 'checkin', 'apprecovery', 'billing', 'expenses', 'reports',
+    'rsvps', 'comms', 'threads', 'chat', 'social', 'manualbooking', 'cancelled', 'banned', 'foodtrucks', 'checkin', 'apprecovery', 'billing', 'expenses', 'reports', 'vtrucks',
     'mhome', 'meventday', 'mattendees', 'mapplications', 'mwaitlist', 'mrsvps', 'mmoves', 'mthreads', 'mchat', 'mfloor', 'mmore',
     'vhome', 'vbookings', 'vapply', 'vprofile', 'vmessages', 'vthreads', 'vmore'].includes(path)) return { name: path, ...params };
   return { name: 'home', ...params };
@@ -416,6 +422,10 @@ const ctx = {
   closeSheet,
   navigate,
   bindGo,
+  // Public screens (food-truck form) send a signed-out visitor to the
+  // sign-in screen; the hash survives, so boot() returns them to the
+  // same public form once signed in.
+  showSignIn: () => signInScreen($('#screen')),
   refreshAdmin: async () => { await refreshAdmin(); renderChrome(); },
   // The role-aware refresh every Stage 3b screen mutates through:
   // re-fetch the signed-in role's payload, then refresh the chrome.
@@ -437,6 +447,9 @@ async function route() {
   const role = roleOf();
   renderChrome();
   try {
+    // The public food-truck form renders for every role (and, via boot,
+    // signed-out): it is a public page, not a role screen.
+    if (r.name === 'vtrucks') { renderFoodTruckApply(ctx, root); window.scrollTo(0, 0); return; }
     if (role === 'manager') return await routeManager(r, root);
     if (role === 'vendor') return await routeVendor(r, root);
     if (r.name === 'home') { await refreshAdmin(); renderChrome(); renderHome(ctx, root); }
@@ -525,10 +538,25 @@ async function routeVendor(r, root) {
   window.scrollTo(0, 0);
 }
 
+// Minimal chrome for public pages reached signed-out (Stage H): the
+// brand header with no role navigation, like the sign-in screen.
+function publicHead() {
+  $('#app-head').innerHTML = `<div class="wrap head-wrap"><div class="brand"><div class="brand-mark">T</div><div><h1>Trinity Crafters Market</h1><p>New app · ${STAGE}</p></div></div></div>`;
+  $('#tabbar').innerHTML = '';
+  $('#sidenav').innerHTML = '';
+}
+
 async function boot() {
   const root = $('#screen');
   $('#sheet-root').innerHTML = '';
-  if (!getToken()) { state.user = null; signInScreen(root); return; }
+  if (!getToken()) {
+    state.user = null;
+    // The public food-truck application form renders signed-out, like
+    // its classic page (Stage H): its GET is anonymous and the function
+    // itself requires sign-in at submit.
+    if (parseHash().name === 'vtrucks') { publicHead(); renderFoodTruckApply(ctx, root); return; }
+    signInScreen(root); return;
+  }
   try {
     state.user = await me();
   } catch {
@@ -548,6 +576,6 @@ async function boot() {
   route();
 }
 
-window.addEventListener('hashchange', () => { if (state.user) route(); });
+window.addEventListener('hashchange', () => { if (state.user) route(); else boot(); });
 getConfig(); // warm the OTP config so the sign-in form answers fast
 boot();

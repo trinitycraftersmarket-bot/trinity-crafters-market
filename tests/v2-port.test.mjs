@@ -170,6 +170,49 @@ test('stage F: application recovery screen keeps status rules and override actio
   assert.equal(keys.length, 1, 'exactly one food-trucks section entry');
 });
 
+test('stage H: public food-truck application form lives in v2 on the same contract', () => {
+  assert.ok(existsSync(join(v2js, 'trucksapply.js')), 'missing trucksapply.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("'vtrucks'"), 'router must accept the vtrucks route');
+  assert.ok(app.includes('renderFoodTruckApply'), 'app.js must dispatch to renderFoodTruckApply');
+  // Signed-out reachability: boot renders the public form without a token.
+  assert.ok(app.includes("parseHash().name === 'vtrucks'"), 'boot must special-case the public trucks route');
+  const t = read(v2js, 'trucksapply.js');
+  assert.ok(t.includes("/.netlify/functions/food-trucks"), 'must call the food-trucks function');
+  // The classic field/payload contract, mirrored exactly.
+  for (const s of ['name="event_id"', 'name="name"', 'name="email"', 'name="phone"', 'name="billing_address"',
+    'name="food_type"', 'name="wrapped"', 'name="propane"', 'name="rig_size"', 'name="permits"', 'name="insurance"',
+    'name="rig_photo"', 'name="food_photos"'])
+    assert.ok(t.includes(s), `trucksapply.js must render the classic field ${s}`);
+  for (const s of ['event_ids', 'p.photos = photos', 'x.rig = i === 0', '10485760', "p.wrapped = p.wrapped === 'yes'",
+    "p.permits = F('permits').checked", 'delete p.rig_photo', 'Submit Food Truck Application', 'Estimated invoice total',
+    'SOLD OUT', 'Application Received', 'submitted for review. Check your email for confirmation.'])
+    assert.ok(t.includes(s), `trucksapply.js must include ${s}`);
+});
+
+test('stage H: legacy hash aliases deep-link into v2 (permanent)', () => {
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes('HASH_ALIASES'), 'app.js must define the legacy hash aliases');
+  assert.ok(app.includes("admin: 'home'"), '#admin must land on the v2 home');
+  assert.ok(app.includes("account: 'vbookings'"), '#account must land on vendor bookings');
+  assert.ok(app.includes("apply: 'vapply'"), '#apply must land on the vendor application');
+});
+
+test('stage H: the four public paths redirect to v2; classic routing untouched', () => {
+  const toml = readFileSync(join(root, 'netlify.toml'), 'utf8');
+  for (const s of ['to = "/v2/#vapply"', 'to = "/v2/#vtrucks"'])
+    assert.ok(toml.includes(s), `netlify.toml must redirect ${s}`);
+  for (const p of ['/market-dates', '/vendor-opportunities-1', '/about-lutz-market', '/food-trucks'])
+    assert.ok(toml.includes(`from = "${p}"`), `netlify.toml must keep a rule for ${p}`);
+  for (const s of ['/market-dates/index.html', '/vendor-opportunities-1/index.html', '/about-lutz-market/index.html', '/food-trucks/index.html'])
+    assert.ok(!toml.includes(s), `netlify.toml must no longer serve the classic shell at ${s}`);
+  // The soak posture: /classic stays exactly as it was.
+  assert.ok(toml.includes('from = "/classic"') && toml.includes('to = "/classic/index.html"'), '/classic must stay reachable during the soak');
+  const sitemap = readFileSync(join(root, 'public', 'sitemap.xml'), 'utf8');
+  for (const p of ['market-dates', 'vendor-opportunities-1', 'about-lutz-market', 'food-trucks'])
+    assert.ok(sitemap.includes(`https://trinitylutzmarkets.com/${p}<`), `sitemap must keep the public URL ${p}`);
+});
+
 test('stage G: attendees gains the PDF import and the printable attendance list', () => {
   assert.ok(existsSync(join(v2js, 'pdfimport.js')), 'missing pdfimport.js');
   const p = read(v2js, 'pdfimport.js');

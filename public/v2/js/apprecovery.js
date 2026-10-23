@@ -11,7 +11,7 @@
 // public/category-conflicts.js — kept in step deliberately). The
 // server still blocks banned vendors, duplicates, closed areas,
 // sold-out markets and full physical inventory on recovery.
-import { api, fnq, esc, nice, marketName } from './api.js?v=20261023-8';
+import { api, fnq, esc, nice, marketName } from './api.js?v=20261023-9';
 
 // --- category fit (ported from public/category-conflicts.js) ---
 const cleanText = v => String(v || '').toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9&/' -]+/g, ' ').replace(/\s+/g, ' ').trim();

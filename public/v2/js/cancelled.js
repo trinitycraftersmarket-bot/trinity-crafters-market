@@ -6,7 +6,7 @@
 // reinstatement goes through the same 'reinstate-cancelled' action, whose
 // server side re-verifies capacity, category, duplicates and ban status
 // before restoring the record and emailing the vendor.
-import { api, esc, nice, todayKey } from './api.js?v=20261023-8';
+import { api, esc, nice, todayKey } from './api.js?v=20261023-9';
 
 let view = { q: '', date: '', period: 'all' };
 
