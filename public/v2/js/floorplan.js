@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261023-11';
+import { api, esc, nice } from './api.js?v=20261023-12';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -54,8 +54,20 @@ export function autoLabelPosition(area, index) {
 // default spot, which read as "the plan doesn't keep my cards" (§13.9).
 export const clampPct = (v, f) => { const n = Number(v); return v != null && Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : f; };
 
+// An assignment's vendor_id is normally the floor-attendees ROW id
+// (booking id / imported-attendee id). The attendee rows carry a second
+// id space, though — the master vendor id (row.vendor_id) — and any
+// assignment recorded against that space must resolve too: a lookup
+// that only tries the row id silently drops the pin, and the vendor's
+// name vanishes from the on-screen plan, the print, the Download image
+// and the setup email alike. Exact row-id match wins; the master-id
+// match is the fallback (ids are UUIDs from disjoint tables, so the
+// two spaces can never collide in practice).
 export const vendorLabel = (vendors, id) => {
-  const v = (vendors || []).find(x => String(x.id) === String(id));
+  if (id == null || id === '') return null;
+  const key = String(id);
+  const v = (vendors || []).find(x => String(x.id) === key)
+    || (vendors || []).find(x => x.vendor_id != null && String(x.vendor_id) === key);
   return v ? String(v.business || v.name || 'Vendor') : null;
 };
 

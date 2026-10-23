@@ -8,6 +8,7 @@ import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
 import {claimImported,ensureProfileSchema,upsertProfileFromApplication} from '../../server/profiles.mjs';
 import {vendorPaymentHistory,recordManualPayment,ensureVendorPaymentColumns} from '../../server/vendor-payments.mjs';
+import {pickAreaAttachment,allAreaAttachments,blockedRecipients} from '../../server/floorplan-mail.mjs';
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
 async function paypalToken(){
  if(!process.env.PAYPAL_CLIENT_ID||!process.env.PAYPAL_CLIENT_SECRET)throw Error('PayPal invoicing is not connected yet.');
@@ -825,19 +826,40 @@ trinitycraftersmarket@gmail.com`;
   const [event]=await sql`select e.*,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;if(!event)throw Error('Market date not found.');
   const rows=dedupeSetupRows(await loadSetupRows(sql,event.id)),subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
   const recipientMap=new Map();for(const row of rows){const email=setupEmail(row.email);if(!email)continue;const current=recipientMap.get(email)||{email,inside:false};current.inside=current.inside||['indoor','inside'].includes(String(row.space||'').toLowerCase());recipientMap.set(email,current);}
-  const recipients=[...recipientMap.values()];if(!recipients.length)throw Error('No active attendee email addresses are available for this date.');
+  const recipients=[...recipientMap.values()],testMode=p.test===true;if(!testMode&&!recipients.length)throw Error('No active attendee email addresses are available for this date.');
   // Owner decision (Oct 22, 2026): floor plans may be shared with vendors
   // at every venue, Hilton Garden Inn included — no venue gate. (This
   // replaces the former Hampton Inn / Trinity Yoga-only privacy rule.)
   const floorPlanSharingAllowed=true;
-  const customFloor=floorPlanSharingAllowed?await eventAreaMailPackages(sql,event.id,rows):null;
-  if(customFloor&&p.attach_floor_plan!==false){const missing=recipients.filter(r=>!customFloor.byEmail.get(r.email)?.attachments?.length);if(missing.length)throw Error(missing.length+' vendor email recipient(s) do not yet have an assigned spot with an uploaded area map. Assign the vendor spaces and upload area images before sending, or uncheck Attach Floor Plan to send instructions without any maps.');}
+  const customFloor=floorPlanSharingAllowed?await eventAreaMailPackages(sql,event.id,rows,p.area_images&&typeof p.area_images==='object'?p.area_images:{}):null;
   const layout=p.layout&&typeof p.layout==='object'?p.layout:(event.floor_plan||{}),inside=rows.filter(x=>['indoor','inside'].includes(String(x.space||'').toLowerCase())),attach=floorPlanSharingAllowed&&p.attach_floor_plan!==false&&inside.length>0&&!customFloor;if(attach&&!event.floor_plan_image)throw Error('Save the floor plan first. The setup email uses the exact saved floor plan image.');const filename=String(event.market_name||event.title||'Crafters Market').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')+'-Floor-Plan-'+marketDateOnly(event.date)+'.png',base64=attach?String(event.floor_plan_image).replace(/^data:image\/png;base64,/,''):null,attachment=attach?[{filename,content:base64}]:null,vendorOutboxIds=[];
   const indoorNote='\n\nFLOOR PLAN FOR INSIDE VENDORS:\nYour assigned floor plan is attached. Please locate your business name before arriving. Spaces are assigned; do not switch locations without organizer approval.';
   const snapshot={event:{id:event.id,date:event.date,title:event.title,market_name:event.market_name,location:event.location,address:event.address},inside:inside.map(x=>({id:x.id,name:x.name,business:x.business,category:x.category,products:x.products})),layout,custom_floor_areas:customFloor?.area_names||[]};
+  if(testMode){
+   // Preview send: exactly ONE email, to the organizer's own signed-in
+   // address, subject prefixed, with every area's plan attached the
+   // way vendors will receive them. No vendor is emailed, no
+   // setup_sent_at / snapshot bookkeeping is written, and the
+   // missing-attachment guard never blocks a test — attachment_count
+   // reports what was actually attached so gaps stay visible.
+   const testAttachments=p.attach_floor_plan===false?[]:(customFloor?allAreaAttachments(customFloor.area_attachments):(attach&&attachment?attachment:[]));
+   await sql.begin(async tx=>{
+    await queue(tx,u.email,'[TEST] '+subject,body,null,testAttachments.length?testAttachments:null);
+    await audit(tx,u,'setup instructions email (test)',{event_id:event.id,attachment_count:testAttachments.length,areas:customFloor?.area_names||[]});
+   });
+   await flushMail();
+   return json({ok:true,test:true,sent_to:u.email,attachment_count:testAttachments.length});
+  }
+  // Guard: a recipient blocks the send only when an area they are
+  // assigned to HAS a plan image available (saved, or a composed named
+  // plan was supplied for it) yet they would receive no attachment at
+  // all. Recipients in image-less areas (outdoor, say) or not yet
+  // placed on a plan no longer block the whole send.
+  if(customFloor&&p.attach_floor_plan!==false){const blocked=blockedRecipients(customFloor.byEmail);if(blocked.length)throw Error('The floor plan image for '+blocked.length+' vendor email recipient(s) could not be attached even though their assigned area has one saved. Reload the floor plan editor and resend, or uncheck Attach Floor Plan to send instructions without any maps.');}
+  const ccAttachments=customFloor?(p.attach_floor_plan!==false?allAreaAttachments(customFloor.area_attachments):[]):(attachment||[]);
   await sql.begin(async tx=>{
    for(const r of recipients){const assigned=customFloor?.byEmail.get(r.email),customAttachments=p.attach_floor_plan!==false?assigned?.attachments:null,customNote=assigned?'\n\nYOUR ASSIGNED FLOOR PLAN AREA AND SPACE:\n'+assigned.notes.join('\n')+'\nYour area floor plan is attached when available. Please use your assigned space.':'',selectedAttachments=customFloor?(customAttachments?.length?customAttachments:null):(r.inside&&attach?attachment:null);const q=await queue(tx,r.email,subject,body+customNote+(r.inside&&attach?indoorNote:''),null,selectedAttachments);if(q?.id)vendorOutboxIds.push(q.id);}
-   await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nACTIVE VENDOR EMAILS:\n'+recipients.map(r=>r.email).join('; ')+'\n\nActive vendors: '+rows.length+' • Recipient emails: '+recipients.length+(attach?' • Floor plan attached to inside-vendor messages: '+recipients.filter(r=>r.inside).length:''),null,attachment);
+   await queue(tx,'trinitycraftersmarket@gmail.com','CC COPY — '+subject,body+'\n\nACTIVE VENDOR EMAILS:\n'+recipients.map(r=>r.email).join('; ')+'\n\nActive vendors: '+rows.length+' • Recipient emails: '+recipients.length+(attach?' • Floor plan attached to inside-vendor messages: '+recipients.filter(r=>r.inside).length:''),null,ccAttachments.length?ccAttachments:null);
    await tx`update market.events set setup_sent_at=now(),floor_plan=${tx.json(layout)},setup_floor_plan_filename=${attach?filename:null},setup_floor_plan_image=${attach?event.floor_plan_image:null},setup_floor_plan_snapshot=${attach?tx.json(snapshot):null},setup_recipient_summary=${tx.json({vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,inside_attachment_recipients:customFloor?(p.attach_floor_plan!==false?customFloor.count:0):(attach?recipients.filter(r=>r.inside).length:0)})} where id=${event.id}`;
    await audit(tx,u,'setup instructions email',{event_id:event.id,vendors:rows.length,recipients:recipients.length,inside:inside.length,outside:rows.length-inside.length,floor_plan_attached:attach||(floorPlanSharingAllowed&&p.attach_floor_plan!==false&&customFloor?.count>0),area_count:customFloor?.area_count||0});
   });
@@ -1470,11 +1492,22 @@ export async function deleteAreaPlan(sql,p,u){
  });
 }
 
-async function eventAreaMailPackages(sql,eventId,rows){
+// Per-recipient floor-plan packages for the setup email. Each area's
+// attachment is the client's composed NAMED plan when one was supplied
+// for that area in the payload (areaImages, keyed by area_key) and the
+// raw saved image otherwise — the server cannot draw names itself, so
+// without the composed image vendors only ever received the blank
+// layout. Packages also record `available_areas` (assigned areas that
+// have an image available, saved or composed) for the send guard.
+async function eventAreaMailPackages(sql,eventId,rows,areaImages={}){
  const areas=await sql`select area_key,title,prefix,capacity,space_type,image_data_url,assignments from market.floor_plan_areas where event_id=${eventId} order by sort_order,area_key`;
  if(!areas.length)return null;
- const valid=new Map(rows.map(r=>[String(r.id),r])),byEmail=new Map();let count=0;
+ const valid=new Map(rows.map(r=>[String(r.id),r])),byEmail=new Map();let count=0;const area_attachments=[];
  for(const area of areas){
+  const composed=typeof areaImages?.[area.area_key]==='string'?areaImages[area.area_key]:'';
+  const attachment=pickAreaAttachment(area,composed);
+  if(attachment)area_attachments.push(attachment);
+  const imageAvailable=!!(attachment||composed||String(area.image_data_url||''));
   const rowsForArea=new Map();
   for(const [spot,assignment] of Object.entries(area.assignments||{})){
    const vendor=valid.get(String(assignment?.vendor_id||''));
@@ -1485,16 +1518,11 @@ async function eventAreaMailPackages(sql,eventId,rows){
    list.push(spot);rowsForArea.set(email,list);
   }
   for(const [email,spots] of rowsForArea){
-   let pkg=byEmail.get(email);if(!pkg){pkg={attachments:[],notes:[]};byEmail.set(email,pkg);}
+   let pkg=byEmail.get(email);if(!pkg){pkg={attachments:[],notes:[],available_areas:[]};byEmail.set(email,pkg);}
    pkg.notes.push(area.title+': '+spots.join(', '));
-   if(area.image_data_url){
-    const m=String(area.image_data_url).match(/^data:image\/(png|jpeg|webp);base64,(.*)$/s);
-    if(m){
-     const filename=String(area.title).replace(/[^a-z0-9]+/gi,'-')+'-Floor-Plan.'+(m[1]==='jpeg'?'jpg':m[1]);
-     pkg.attachments.push({filename,content:m[2]});count++;
-    }
-   }
+   if(imageAvailable)pkg.available_areas.push(area.title);
+   if(attachment){pkg.attachments.push(attachment);count++;}
   }
  }
- return {byEmail,count,area_count:areas.length,area_names:areas.map(x=>x.title)};
+ return {byEmail,count,area_count:areas.length,area_names:areas.map(x=>x.title),area_attachments};
 }
