@@ -737,29 +737,34 @@ function fitSavedPlanPins(host){
   });
 }
 
-export async function showSavedFloorPlans({host,eventId,api,esc}){
+export async function showSavedFloorPlans({host,eventId,api,esc,hideWhenEmpty=false}){
   if(!host||!eventId)return;
   const safe=s=>esc(String(s==null?'':s));
   const serial=(host._fpSerial=(host._fpSerial||0)+1);
   const stale=()=>host._fpSerial!==serial;
-  host.innerHTML='<section class="card"><h2>Floor plan</h2><p class="muted">Loading saved floor plan…</p></section>';
+  host.innerHTML=hideWhenEmpty?'':'<section class="card"><h2>Floor plan</h2><p class="muted">Loading saved floor plan…</p></section>';
   try{
     const [result,rows]=await Promise.all([
       api('floor-area-plans&event_id='+encodeURIComponent(eventId)),
-      api('floor-attendees&event_id='+encodeURIComponent(eventId))
+      // floor-attendees is staff-only; public/vendor viewers get pin names
+      // from the plans payload (vendor_names) instead, so a denied
+      // attendee fetch must not sink the whole render.
+      api('floor-attendees&event_id='+encodeURIComponent(eventId)).catch(()=>null)
     ]);
     if(stale())return;
     const vendors=rows||[];
     const vendorName=id=>{
       const v=vendors.find(x=>String(x.id)===String(id));
-      return v?String(v.business||v.name||'Vendor'):null;
+      if(v)return String(v.business||v.name||'Vendor');
+      const named=(result.vendor_names||{})[String(id)];
+      return named?String(named):null;
     };
     const areas=(result.areas||[]).map(standardize).filter(area=>{
       const assigned=Object.values(area.assignments||{}).some(e=>e&&e.vendor_id);
       return imageAllowed(area.image_data_url)||assigned;
     });
     if(!areas.length){
-      host.innerHTML='<section class="card"><h2>Floor plan</h2><p class="muted">No floor plan saved for this market yet.</p></section>';
+      host.innerHTML=hideWhenEmpty?'':'<section class="card"><h2>Floor plan</h2><p class="muted">No floor plan saved for this market yet.</p></section>';
       return;
     }
     const clampPct=(v,f)=>{const n=Number(v);return v!=null&&Number.isFinite(n)?Math.max(0,Math.min(100,n)):f;};
@@ -792,6 +797,6 @@ export async function showSavedFloorPlans({host,eventId,api,esc}){
     });
   }catch(e){
     if(stale())return;
-    host.innerHTML='<section class="card"><h2>Floor plan</h2><p class="muted">Floor plan could not be loaded.</p></section>';
+    host.innerHTML=hideWhenEmpty?'':'<section class="card"><h2>Floor plan</h2><p class="muted">Floor plan could not be loaded.</p></section>';
   }
 }

@@ -310,6 +310,15 @@ ${description}`;
   const reports=await sql`select id,reporter,description,page,app_version,user_agent,created_at from market.bug_reports order by created_at desc limit 100`;
   return json({reports});
  }
+ if(action==='floor-area-plans'){
+  // Owner decision (Oct 22, 2026): saved floor plans are readable by
+  // vendors and the public at every venue — no venue gate. Handled here,
+  // ahead of the identity wall, so anonymous visitors on the public
+  // market-date page can load them too; getAreaPlans still gives staff
+  // callers (floor_plans permission) the full editor payload.
+  const who=await identity(req).catch(()=>null);
+  return await getAreaPlans(db(),url,who);
+ }
  const u=await identity(req),sql=db();
  if(action==='me')return json(u);
  if(req.method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin)return json({error:'Invalid request origin'},403);
@@ -431,7 +440,6 @@ ${description}`;
   const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
   return json(dedupeSetupRows(await loadSetupRows(sql,eventId)));
  }
- if(action==='floor-area-plans')return await getAreaPlans(sql,url,u);
  if(action==='floor-plan-last-sent'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   const eventId=url.searchParams.get('event_id');if(!eventId)throw Error('Market date is required.');
@@ -711,9 +719,10 @@ trinitycraftersmarket@gmail.com`;
   const rows=dedupeSetupRows(await loadSetupRows(sql,event.id)),subject=String(p.subject||'').trim(),body=String(p.body||'').trim();if(!subject||!body)throw Error('Subject and email message are required.');
   const recipientMap=new Map();for(const row of rows){const email=setupEmail(row.email);if(!email)continue;const current=recipientMap.get(email)||{email,inside:false};current.inside=current.inside||['indoor','inside'].includes(String(row.space||'').toLowerCase());recipientMap.set(email,current);}
   const recipients=[...recipientMap.values()];if(!recipients.length)throw Error('No active attendee email addresses are available for this date.');
-  // Venue-specific privacy rule: only Hampton Inn and Trinity Yoga may include floor plans in vendor emails.
-  // Hilton Garden Inn plans, spot assignments, and overflow details always remain organizer-only.
-  const floorPlanSharingAllowed=/hampton inn|trinity yoga/i.test(String(event.location||''));
+  // Owner decision (Oct 22, 2026): floor plans may be shared with vendors
+  // at every venue, Hilton Garden Inn included — no venue gate. (This
+  // replaces the former Hampton Inn / Trinity Yoga-only privacy rule.)
+  const floorPlanSharingAllowed=true;
   const customFloor=floorPlanSharingAllowed?await eventAreaMailPackages(sql,event.id,rows):null;
   if(customFloor&&p.attach_floor_plan!==false){const missing=recipients.filter(r=>!customFloor.byEmail.get(r.email)?.attachments?.length);if(missing.length)throw Error(missing.length+' vendor email recipient(s) do not yet have an assigned spot with an uploaded area map. Assign the vendor spaces and upload area images before sending, or uncheck Attach Floor Plan to send instructions without any maps.');}
   const layout=p.layout&&typeof p.layout==='object'?p.layout:(event.floor_plan||{}),inside=rows.filter(x=>['indoor','inside'].includes(String(x.space||'').toLowerCase())),attach=floorPlanSharingAllowed&&p.attach_floor_plan!==false&&inside.length>0&&!customFloor;if(attach&&!event.floor_plan_image)throw Error('Save the floor plan first. The setup email uses the exact saved floor plan image.');const filename=String(event.market_name||event.title||'Crafters Market').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')+'-Floor-Plan-'+marketDateOnly(event.date)+'.png',base64=attach?String(event.floor_plan_image).replace(/^data:image\/png;base64,/,''):null,attachment=attach?[{filename,content:base64}]:null,vendorOutboxIds=[];
@@ -1220,17 +1229,28 @@ trinitycraftersmarket@gmail.com`;
 
 
 async function getAreaPlans(sql,url,u){
- if(!hasStaffPermission(u,'floor_plans'))return json({error:'Access denied'},403);
  const id=url.searchParams.get('event_id');if(!id)throw Error('Market date is required.');
  const [event]=await sql`select e.id,e.location_id from market.events e where e.id=${id}`;
  if(!event)throw Error('Market date not found.');
  const areas=await sql`select area_key,title,prefix,capacity,space_type,image_data_url,assignments,updated_at from market.floor_plan_areas where event_id=${id} order by sort_order,area_key`;
- let template=[];
- if(!areas.length){
-  const [prior]=await sql`select e.id from market.events e where e.location_id=${event.location_id} and e.id<>${id} and exists(select 1 from market.floor_plan_areas a where a.event_id=e.id) order by e.date desc limit 1`;
-  if(prior)template=await sql`select area_key,title,prefix,capacity,space_type,image_data_url from market.floor_plan_areas where event_id=${prior.id} order by sort_order,area_key`;
+ if(hasStaffPermission(u,'floor_plans')){
+  // Staff (floor-plan editor / organizer views): full payload, including
+  // the prior-date template the editor offers when this date has no areas.
+  let template=[];
+  if(!areas.length){
+   const [prior]=await sql`select e.id from market.events e where e.location_id=${event.location_id} and e.id<>${id} and exists(select 1 from market.floor_plan_areas a where a.event_id=e.id) order by e.date desc limit 1`;
+   if(prior)template=await sql`select area_key,title,prefix,capacity,space_type,image_data_url from market.floor_plan_areas where event_id=${prior.id} order by sort_order,area_key`;
+  }
+  return json({areas,template});
  }
- return json({areas,template});
+ // Public / vendor read (owner decision, Oct 22, 2026): saved floor plans
+ // are visible at every venue, so the public market-date page renders them
+ // for anyone. Only this event's saved areas go out (never the editor
+ // template), plus vendor display names for the pins — floor-attendees
+ // itself stays staff-only, so names ride along here instead.
+ const rows=dedupeSetupRows(await loadSetupRows(sql,id)),vendor_names={};
+ for(const r of rows)vendor_names[String(r.id)]=String(r.business||r.name||'Vendor');
+ return json({areas,template:[],vendor_names});
 }
 
 async function saveAreaPlans(sql,p,u){
