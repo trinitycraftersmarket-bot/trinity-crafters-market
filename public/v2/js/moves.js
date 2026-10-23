@@ -5,7 +5,7 @@
 // the 48-hour-cutoff flag. Approving re-checks capacity on the server — if
 // the target filled up, the server refuses with the reason and the request
 // stays pending; that error is shown on the card, never swallowed.
-import { fn, esc, money, nice } from './api.js?v=20261022-4';
+import { fn, esc, money, nice } from './api.js?v=20261022-5';
 
 export function renderMoves(ctx, root) {
   root.innerHTML = `

@@ -4,4 +4,4 @@
 // literals in index.html / module imports together — tests/v2-frontend
 // verifies they agree.
 export const VERSION = '20261022-5';
-export const STAGE = 'Stage 3b + cutover';
+export const STAGE = 'Stage 3b';
