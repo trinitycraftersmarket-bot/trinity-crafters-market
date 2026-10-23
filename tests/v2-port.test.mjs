@@ -127,3 +127,17 @@ test('stage D: reports screen keeps P&L, A/R and the payment report math', () =>
   const p = read(v2js, 'print.js');
   assert.ok(p.includes('export function printTable') && p.includes('export function printExpenseReport'), 'print.js must export both classic print builders');
 });
+
+test('stage E: food trucks organizer screen uses the food-trucks function contract', () => {
+  assert.ok(existsSync(join(v2js, 'foodtrucks.js')), 'missing foodtrucks.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("live: 'foodtrucks'"), 'section registry must wire live: foodtrucks');
+  assert.ok(app.includes('renderFoodTrucks'), 'app.js must dispatch to renderFoodTrucks');
+  const f = read(v2js, 'foodtrucks.js');
+  assert.ok(f.includes("/.netlify/functions/food-trucks"), 'must call the food-trucks function');
+  assert.ok(f.includes("'?admin=1'"), 'the organizer list must use the admin view');
+  assert.ok(f.includes("'PATCH'"), 'decisions must PATCH');
+  assert.ok(f.includes('approved_products'), 'approving must name approved products (server requires it)');
+  assert.ok(f.includes('decline reason is required') || f.includes('decline reason is required.'), 'declining must require a reason (server requires it)');
+  assert.ok(f.includes("status: 'paid'"), 'mark-paid must use the paid status');
+});
