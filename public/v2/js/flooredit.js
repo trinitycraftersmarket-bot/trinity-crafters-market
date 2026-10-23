@@ -601,15 +601,12 @@ export function renderFloorEditor(ctx, root, params = {}) {
   function renderEmail() {
     const host = body.querySelector('#fe-email');
     if (!host) return;
-    const canShare = /hampton inn|trinity yoga/i.test(String(location?.name || ''));
-    const isHilton = /hilton garden inn/i.test(String(location?.name || ''));
+    // Owner ruling Oct 22, 2026: floor plans are shareable at EVERY venue
+    // (the Hampton/Trinity-Yoga-only restriction was lifted, Hilton included).
+    const canShare = true;
     host.innerHTML = `
       <h3 class="section-title first">Setup instructions email</h3>
-      <p class="note">${canShare
-        ? 'Floor plan sharing is permitted for this venue. You may uncheck the attachment option before sending.'
-        : isHilton
-          ? 'Hilton Garden Inn: all floor plans, vendor placements and assigned spaces are organizer-only and are NEVER emailed to vendors. The button below sends instructions without floor plans.'
-          : 'This venue is not on the floor-plan sharing list, so setup emails go out without floor plan attachments.'}</p>
+      <p class="note">Floor plan sharing is permitted for this venue. You may uncheck the attachment option before sending.</p>
       <label class="sheet-field">Email subject<input id="fe-subject" value="${esc((location?.market_name || event.title || 'Crafters Market') + ' Setup Instructions — ' + nice(event.date))}"></label>
       <label class="sheet-field">Setup instructions<textarea id="fe-body-text" rows="16">${esc(setupTemplate(event, location))}</textarea></label>
       <label class="checkline"><input type="checkbox" id="fe-attach" ${canShare ? 'checked' : 'disabled'}> Attach the saved floor plan image to inside-vendor emails</label>

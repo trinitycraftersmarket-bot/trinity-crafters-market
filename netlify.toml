@@ -55,6 +55,21 @@ to = "/food-trucks/index.html"
 status = 200
 force = true
 [[redirects]]
+from = "/"
+to = "/v2/"
+status = 302
+force = true
+[[redirects]]
+from = "/classic"
+to = "/classic/index.html"
+status = 200
+force = true
+[[redirects]]
+from = "/classic/"
+to = "/classic/index.html"
+status = 200
+force = true
+[[redirects]]
 from = "/*"
 to = "/index.html"
 status = 200
