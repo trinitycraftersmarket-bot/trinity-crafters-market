@@ -6,8 +6,15 @@
  const authHeader=()=>{const t=sessionStorage.getItem('market-token');return t?{Authorization:'Bearer '+t}:{}};
  const api=async payload=>{const r=await fetch('/.netlify/functions/vendor-credit',{method:'POST',headers:{...authHeader(),'Content-Type':'application/json'},body:JSON.stringify(payload)});const v=await r.json().catch(()=>({}));if(!r.ok)throw Error(v.error||'Could not process vendor credit.');return v;};
  let mePromise=null,sourcesPromise=null,accountLoading=false;
- const me=()=>mePromise ||= fetch('/.netlify/functions/api?action=me',{headers:authHeader()}).then(r=>r.ok?r.json():null).catch(()=>null);
- async function sources(force=false){if(force)sourcesPromise=null;return sourcesPromise ||= api({action:'admin-sources'}).then(v=>v.sources||[]);}
+ // Never cache a failed/anonymous identity or a rejected sources fetch.
+ // This script runs at page parse — usually BEFORE the organizer signs in
+ // (sign-in is an in-page flow, no reload) — so the first me() call goes out
+ // with no token and fails. Caching that null (or a rejected sources
+ // promise) permanently disabled every credit control for the session,
+ // while the other injector scripts, which have no async gate, kept
+ // working. Only a successful result may stick.
+ const me=()=>{if(!sessionStorage.getItem('market-token'))return Promise.resolve(null);return mePromise ||= fetch('/.netlify/functions/api?action=me',{headers:authHeader()}).then(r=>r.ok?r.json():null).then(u=>{if(!u)mePromise=null;return u;}).catch(()=>{mePromise=null;return null;});};
+ async function sources(force=false){if(force)sourcesPromise=null;if(!sourcesPromise){const p=api({action:'admin-sources'}).then(v=>v.sources||[]);p.catch(()=>{if(sourcesPromise===p)sourcesPromise=null;});sourcesPromise=p;}return sourcesPromise;}
  const key=(id,imported)=>(imported?'i:':'b:')+id;
 
  async function issue(id,imported,button){
