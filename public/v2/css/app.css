@@ -372,3 +372,8 @@ button.stat-btn:active{transform:scale(.99)}
 .tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted,#5c665f);border-bottom:2px solid var(--border)}
 .bill-events{border:1px solid var(--border);border-radius:12px;padding:8px 12px;margin:0 0 10px}
 .bill-item-edit{border-top:1px solid var(--border);padding-top:10px;margin-top:10px}
+
+/* Application Recovery (full-port Stage F) */
+.cat-alert{border:2px solid #b42318;background:#fff1f0;color:#7a271a;border-radius:12px;padding:10px 12px}
+.attempt-photo-img{max-width:100%;border-radius:12px;display:block}
+.recover-date{margin:0 0 10px}
