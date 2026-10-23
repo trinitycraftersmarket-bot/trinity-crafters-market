@@ -163,6 +163,8 @@ async function ensureApplicationAttempts(sql){
   reviewed_by text
  )`;
  await sql`create index if not exists application_attempts_status_seen_idx on market.application_attempts(status,last_seen_at desc)`;
+ // §22: when the organizer emailed the vendor a completion link.
+ await sql`alter table market.application_attempts add column if not exists emailed_at timestamptz, add column if not exists emailed_by text`;
 }
 function cleanAttemptSnapshot(raw={}){
  const s=v=>String(v??'').trim(),clip=(v,n)=>s(v).slice(0,n),uuid=v=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s(v))?s(v):'';
@@ -171,6 +173,33 @@ function cleanAttemptSnapshot(raw={}){
  const photo_names=Array.isArray(raw.photo_names)?raw.photo_names.slice(0,5).map(x=>clip(x,200)).filter(Boolean):[];
  const agreements={};for(const k of ['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','paymentready','contract'])agreements[k]=raw.agreements?.[k]===true;
  const cs=raw.category_scan&&typeof raw.category_scan==='object'?raw.category_scan:null,category_scan=cs?{matched_categories:Array.isArray(cs.matched_categories)?cs.matched_categories.slice(0,50).map(x=>clip(x,200)).filter(Boolean):[],selected_category:clip(cs.selected_category,200),selected_category_match:cs.selected_category_match===true,requires_review:cs.requires_review===true,summary:clip(cs.summary,500),source:clip(cs.source,50),conflicts:Array.isArray(cs.conflicts)?cs.conflicts.slice(0,50).map(x=>({event_id:uuid(x?.event_id)||null,category:clip(x?.category,200),used:Number.isFinite(Number(x?.used))?Number(x.used):0,limit:Number.isFinite(Number(x?.limit))?Number(x.limit):1,reason:clip(x?.reason,300)})).filter(x=>x.category):[]}:null;return {name:clip(raw.name,200),business:clip(raw.business,200),phone:clip(raw.phone,40),billing_address:clip(raw.billing_address,500),description:clip(raw.description,5000),category:uuid(raw.category),exception:clip(raw.exception,2000),referral_source:clip(raw.referral_source,200),referral_group:clip(raw.referral_group,200),signature:clip(raw.signature,200),dates,photos,photo_names,agreements,category_scan};
+}
+// Recovery upgrades (audit §22): the agreements error below is the
+// signature of the Oct 22–23 v2 'nolm'/'nomlm' form bug — every attempt
+// whose technical history carries it failed through no fault of the
+// vendor. The recovery UI badge and the completion-email apology both
+// key off this one test.
+const AGREEMENTS_ERROR_TEXT='Read and accept every required agreement';
+function attemptHasAgreementsError(attempt){
+ const inLog=(Array.isArray(attempt?.error_log)?attempt.error_log:[]).some(e=>String(e?.message||'').includes(AGREEMENTS_ERROR_TEXT));
+ return inLog||String(attempt?.error_message||'').includes(AGREEMENTS_ERROR_TEXT);
+}
+// What a completion email lists as still missing, computed from the
+// cleaned snapshot with the same field rules the apply handler enforces
+// (phone = 10–15 digits, agreements = all eight accepted, signature =
+// the typed legal name). Labels are vendor-facing sentences.
+function attemptMissingItems(snap){
+ const s=snap||{},missing=[];
+ if(!s.name)missing.push('your name');
+ if(!s.business)missing.push('your business name');
+ if(String(s.phone||'').replace(/[^0-9]/g,'').length<10)missing.push('a valid phone number');
+ if(!s.description)missing.push('a description of what you sell');
+ if(!s.category)missing.push('your product category');
+ if(!(s.dates||[]).length)missing.push('at least one market date');
+ if(!(s.photos||[]).length)missing.push('at least one product photo');
+ const ag=s.agreements||{};if(!['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','paymentready','contract'].every(k=>ag[k]===true))missing.push('reviewing and accepting the vendor agreements');
+ if(!String(s.signature||'').trim())missing.push('typing your full legal name as your signature');
+ return missing;
 }
 
 function responseText(v){
@@ -462,7 +491,19 @@ ${description}`;
   return json({ok:true,id});
  }
  if(action==='attempt-photo'){
-  if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const path=url.searchParams.get('path');if(!path)return json({error:'Photo not found'},404);const [owner]=await sql`select id from market.application_attempts where snapshot->'photos' @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});
+  if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const path=url.searchParams.get('path');if(!path)return json({error:'Photo not found'},404);const [owner]=await sql`select id from market.application_attempts where snapshot->'photos' @> ${sql.json([path])}::jsonb limit 1`;if(!owner)return json({error:'Photo not found'},404);const {data,error}=await supa().storage.from('vendor-photos').createSignedUrl(path,120);if(error)throw Error('Could not open photo.');return json({url:data.signedUrl});}
+ if(action==='application-attempt-mine'){
+  // Vendor-self (§22): the signed-in vendor's own latest unfinished
+  // attempt, so the completion-link email lands them back in their
+  // partially-completed form. Only their own rows, never dismissed or
+  // completed ones. Photo paths are re-signed for display; agreements
+  // and the signature deliberately do NOT carry over (the form starts
+  // them unchecked — the vendor must re-accept).
+  await ensureApplicationAttempts(sql);const [row]=await sql`select id,snapshot,status,last_seen_at from market.application_attempts where user_id=${u.id} and status in ('draft','submitting','failed') order by last_seen_at desc limit 1`;
+  if(!row)return json({attempt:null});
+  const snap=cleanAttemptSnapshot(row.snapshot||{});snap.signature='';snap.agreements={};
+  const photoUrls=[];for(const path of snap.photos){if(!String(path).startsWith(u.id+'/'))continue;const {data}=await supa().storage.from('vendor-photos').createSignedUrl(path,3600);if(data?.signedUrl)photoUrls.push({path,url:data.signedUrl});}
+  return json({attempt:{id:row.id,status:row.status,last_seen_at:row.last_seen_at,snapshot:snap,photo_urls:photoUrls}});
  }
  if(!staffActionAllowed(u,action))return json({error:'Access denied'},403);
  if(action==='staff-list')return json(await sql`
@@ -651,6 +692,49 @@ trinitycraftersmarket@gmail.com`;
  }
  if(action==='application-attempt-dismiss'){
   if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const id=String(p.id||'');const [row]=await sql`update market.application_attempts set status='dismissed',reviewed_at=now(),reviewed_by=${u.email},last_seen_at=now() where id=${id} and status<>'completed' returning id`;if(!row)throw Error('Application attempt not found.');await audit(sql,u,'application attempt dismissed',{attempt_id:id});return json({ok:true});
+ }
+ if(action==='application-attempt-reinstate'){
+  if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const id=String(p.id||'');const [attempt]=await sql`select id,status,error_message,error_log from market.application_attempts where id=${id}`;if(!attempt)throw Error('Application attempt not found.');if(attempt.status!=='dismissed')throw Error('Only a dismissed attempt can be reinstated.');
+  // Back to the working queue in the state its history supports: a
+  // recorded failure returns as 'failed'; a quiet attempt returns as a
+  // draft (stale ones immediately read as Abandoned again). last_seen_at
+  // is deliberately untouched — it stays the vendor's real last activity.
+  const failed=String(attempt.error_message||'').trim()!==''||(Array.isArray(attempt.error_log)&&attempt.error_log.length>0),status=failed?'failed':'draft';
+  const [row]=await sql`update market.application_attempts set status=${status},reviewed_at=null,reviewed_by=null where id=${id} and status='dismissed' returning id`;if(!row)throw Error('Application attempt not found.');await audit(sql,u,'application attempt reinstated',{attempt_id:id,status});return json({ok:true,status});
+ }
+ if(action==='application-attempt-email'){
+  if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const id=String(p.id||''),note=String(p.note||'').trim().slice(0,1000);const [attempt]=await sql`select * from market.application_attempts where id=${id}`;if(!attempt)throw Error('Application attempt not found.');if(attempt.status==='completed'||attempt.status==='overridden')throw Error('This application already came through — no completion email is needed.');const email=String(attempt.email||'').trim();if(!email)throw Error('No email address was captured for this attempt.');
+  const snap=cleanAttemptSnapshot(attempt.snapshot||{}),missing=attemptMissingItems(snap),ourBug=attemptHasAgreementsError(attempt),subject='Complete your Trinity Crafters Market application';
+  const body=`Hi ${snap.name||'there'},
+
+You started an application to vend with Trinity Crafters Market, but it never came through to us — so you are not booked yet. The good news: what you already entered was saved, and finishing only takes a few minutes.
+${ourBug?`
+First, an apology: if you saw an error message about the agreements and your signature when you tried to submit, that was a bug in our form — not anything you did wrong. It is fixed now.
+`:''}
+Finish your application here:
+https://trinitylutzmarkets.com/#apply
+
+Sign in with this email address (${email}) and the form will reload what you already entered.
+${missing.length?`
+Still needed:
+${missing.map(m=>'• '+m[0].toUpperCase()+m.slice(1)).join('\n')}
+`:'Everything we need was captured — just open the link, review it, re-check the agreements, type your signature, and press submit.'}
+${note?`
+A note from the organizer:
+${note}
+`:''}
+Questions? Just reply to this email and we will be glad to help.
+
+Trinity Crafters Market
+trinitycraftersmarket@gmail.com`;
+  const emailedAt=new Date().toISOString();
+  await sql.begin(async tx=>{await queue(tx,email,subject,body);await tx`update market.application_attempts set emailed_at=now(),emailed_by=${u.email} where id=${id}`;await audit(tx,u,'application completion email sent',{attempt_id:id,email,missing,our_bug:ourBug,note:note||null});});
+  await flushMail();
+  // Never report the email as sent unless the outbox row for this exact
+  // message was actually accepted (same honesty rule as manual booking).
+  let [delivery]=await sql`select sent_at,error from market.outbox where recipient=${email} and subject=${subject} order by created_at desc limit 1`;
+  for(let n=0;n<3&&!delivery?.sent_at&&!delivery?.error;n++){await flushMail();[delivery]=await sql`select sent_at,error from market.outbox where recipient=${email} and subject=${subject} order by created_at desc limit 1`;}
+  return json({ok:true,emailed_at:emailedAt,emailed_by:u.email,missing,email_delivery:{sent:!!delivery?.sent_at,sent_at:delivery?.sent_at||null,error:delivery?.error||null}});
  }
  if(action==='recover-application'){
   if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const attemptId=String(p.id||''),override=p.data||{};const [attempt]=await sql`select * from market.application_attempts where id=${attemptId} and status in ('failed','draft','submitting','dismissed')`;if(!attempt)throw Error('This application attempt is no longer available for recovery.');

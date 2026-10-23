@@ -344,6 +344,7 @@ button.stat-btn:active{transform:scale(.99)}
 .photo-thumbs{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
 .thumb{position:relative;display:inline-block}
 .thumb img{width:84px;height:84px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block}
+.thumb-saved{width:84px;height:84px;border-radius:10px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;color:var(--muted);padding:6px}
 .thumb button{position:absolute;top:-8px;right:-8px;width:26px;height:26px;border-radius:50%;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:15px;line-height:1;cursor:pointer}
 .contract{margin:10px 0}
 .contract summary{cursor:pointer;font-weight:700;font-size:14px;padding:8px 0}
