@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fnq, esc, nice, money } from './api.js?v=20261023-9';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261023-9';
+import { api, fnq, esc, nice, money } from './api.js?v=20261023-10';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261023-10';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -210,7 +210,7 @@ export function renderVendorHome(ctx, root) {
 const AGREEMENTS = [
   ['nonrefundable', 'I understand booth fees are non-refundable.'],
   ['rain', 'I understand indoor markets continue rain or shine. For outdoor markets, I must check in by the required time or my space may be reassigned, and I must remain set up until 3:00 PM even if weather becomes unfavorable.'],
-  ['nolm', 'I understand NO MLM or direct-sales products are allowed to be sold at the market. I agree to inform the organizer immediately if I see a violation.'],
+  ['nomlm', 'I understand NO MLM or direct-sales products are allowed to be sold at the market. I agree to inform the organizer immediately if I see a violation.'],
   ['facebook', 'I understand the market Facebook Event and organizer reserves booth placement and all final decisions concerning booth placement.'],
   ['stayuntil3', 'I understand I MUST remain set up and present until 3:00 PM and will be responsible for any damage caused by an early departure.'],
   ['hurricane', 'I understand that during hurricane season, events will continue as scheduled unless a state of emergency is declared.'],

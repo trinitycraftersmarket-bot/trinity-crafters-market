@@ -307,3 +307,15 @@ test('stage-3b vendor floor plan: multi-area, original image, own booth highligh
   for (const cls of ['.fp-pin.mine', '.fp-booth.mine', '.fp-mine-note', '.msg-thread', '.msg.mine', '.offer-box', '.checkin-box', '.comm-recipients', '.channel-row.off', '.apply-date', '.photo-thumbs', '.social-preview-img', '.chat-attachment-img'])
     assert.ok(css.includes(cls), `app.css must style ${cls} (stage-3b components)`);
 });
+
+test('apply agreement keys match the server contract (nomlm regression)', () => {
+  const v = readFileSync(join(v2, 'js', 'vendor.js'), 'utf8');
+  const apiSrc = readFileSync(join(root, 'netlify', 'functions', 'api.mjs'), 'utf8');
+  const serverKeys = [...apiSrc.match(/every\(k=>p\.agreements/) ? apiSrc.match(/\['nonrefundable'[^\]]*\]/) : []][0];
+  assert.ok(serverKeys, 'server agreement key list must be findable');
+  for (const k of ['nonrefundable', 'rain', 'nomlm', 'facebook', 'stayuntil3', 'hurricane', 'paymentready', 'contract']) {
+    assert.ok(serverKeys.includes(`'${k}'`), `server must require ${k}`);
+    assert.ok(v.includes(`['${k}',`), `vendor.js AGREEMENTS must define ${k} with the exact server key`);
+  }
+  assert.ok(!/\['nolm',/.test(v), "the misspelled 'nolm' key must never return");
+});
