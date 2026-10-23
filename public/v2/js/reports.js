@@ -7,8 +7,8 @@
 // late fee), same printed documents via the shared printTable builder.
 // The per-date vendor/event report itself lives in Attendees — one
 // place per job, as everywhere else in v2.
-import { esc, nice, marketName } from './api.js?v=20261023-11';
-import { printTable } from './print.js?v=20261023-11';
+import { esc, nice, marketName } from './api.js?v=20261023-12';
+import { printTable } from './print.js?v=20261023-12';
 
 // The classic reports format money with cents; keep that exact format.
 const usd = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(n) || 0) / 100);

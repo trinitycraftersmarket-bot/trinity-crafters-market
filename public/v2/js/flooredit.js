@@ -14,11 +14,11 @@
 // organizer's concurrent edits instead of overwriting them, the canvas
 // composite print, and the setup instructions email. Native confirm()
 // dialogs are replaced by the shared sheet system (§6.2).
-import { api, esc, nice, clock, marketName } from './api.js?v=20261023-11';
+import { api, esc, nice, clock, marketName } from './api.js?v=20261023-12';
 import {
   imageAllowed, standardizeArea, spotId, spotIds, clampPct, vendorLabel,
-  resolvePinPosition, fitPins, composePlanCanvas, printFloorPlan, printBoothList
-} from './floorplan.js?v=20261023-11';
+  resolvePinPosition, resolvePins, fitPins, composePlanCanvas, printFloorPlan, printBoothList
+} from './floorplan.js?v=20261023-12';
 
 let view = { eventId: '' };
 const clone = data => JSON.parse(JSON.stringify(data));
@@ -597,6 +597,14 @@ export function renderFloorEditor(ctx, root, params = {}) {
   async function onDownload() {
     const area = current();
     if (!area || !imageAllowed(area.image_data_url)) { ctx.toast('Upload and save a floor plan image before downloading.', true); return; }
+    // Never hand over a silently nameless image: when vendors are
+    // assigned to spots but not one name resolves against the attendee
+    // list, the composed file would be the bare layout — say so instead.
+    const assigned = Object.values(area.assignments || {}).some(e => e && e.vendor_id);
+    if (assigned && !resolvePins(area, state.vendors).length) {
+      ctx.toast('Vendor names could not be matched to the spots on this plan, so no file was downloaded. Reload the editor and try again.', true);
+      return;
+    }
     try {
       const canvas = await composePlanCanvas(area, state.vendors);
       const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
@@ -613,6 +621,26 @@ export function renderFloorEditor(ctx, root, params = {}) {
   }
 
   // --- setup instructions email (built once per event load) ------------------
+  // Compose every area's COMPLETED floor plan — the saved layout image
+  // with each assigned vendor's name pinned at their spot, drawn by the
+  // same shared composer as Download and Print — as JPEG at the upload
+  // pipeline's quality steps and size ceiling. The setup email attaches
+  // these named plans (the server cannot draw names itself; it falls
+  // back to the saved raw image for any area missing here).
+  async function composeAreaImages() {
+    const images = {};
+    for (const a of state.areas) {
+      if (!imageAllowed(a.image_data_url)) continue;
+      try {
+        const canvas = await composePlanCanvas(a, state.vendors);
+        let url = canvas.toDataURL('image/jpeg', 0.83);
+        if (url.length > 2800000) url = canvas.toDataURL('image/jpeg', 0.67);
+        if (url.length <= 2800000) images[a.area_key] = url;
+      } catch { /* omitted on purpose: the server falls back to the saved image */ }
+    }
+    return images;
+  }
+
   function renderEmail() {
     const host = body.querySelector('#fe-email');
     if (!host) return;
@@ -624,22 +652,41 @@ export function renderFloorEditor(ctx, root, params = {}) {
       <p class="note">Floor plan sharing is permitted for this venue. You may uncheck the attachment option before sending.</p>
       <label class="sheet-field">Email subject<input id="fe-subject" value="${esc((location?.market_name || event.title || 'Crafters Market') + ' Setup Instructions — ' + nice(event.date))}"></label>
       <label class="sheet-field">Setup instructions<textarea id="fe-body-text" rows="16">${esc(setupTemplate(event, location))}</textarea></label>
-      <label class="checkline"><input type="checkbox" id="fe-attach" ${canShare ? 'checked' : 'disabled'}> Attach the saved floor plan image to inside-vendor emails</label>
-      <div class="vendor-actions"><button class="btn primary small" id="fe-send">${canShare ? 'Send Setup Instructions + Floor Plan' : 'Send Setup Instructions (no floor plans)'}</button></div>
+      <label class="checkline"><input type="checkbox" id="fe-attach" ${canShare ? 'checked' : 'disabled'}> Attach the completed floor plan (with vendor names) for each vendor's assigned area</label>
+      <div class="vendor-actions"><button class="btn primary small" id="fe-send">${canShare ? 'Send Setup Instructions + Floor Plan' : 'Send Setup Instructions (no floor plans)'}</button><button class="btn small" id="fe-send-test">Send test email</button></div>
       <p class="note">${event.setup_sent_at ? 'Setup email already sent for this market on ' + esc(new Date(event.setup_sent_at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) + '. Sending again re-emails every active vendor.' : 'Not sent yet for this market.'}</p>`;
-    host.querySelector('#fe-send').onclick = async () => {
-      const subject = host.querySelector('#fe-subject').value.trim();
-      const text = host.querySelector('#fe-body-text').value.trim();
-      const attach = host.querySelector('#fe-attach').checked;
+    const sendBtn = host.querySelector('#fe-send'), testBtn = host.querySelector('#fe-send-test');
+    const readForm = () => ({
+      subject: host.querySelector('#fe-subject').value.trim(),
+      text: host.querySelector('#fe-body-text').value.trim(),
+      attach: host.querySelector('#fe-attach').checked && canShare
+    });
+    const setBusy = busy => { sendBtn.disabled = busy; testBtn.disabled = busy; };
+    sendBtn.onclick = async () => {
+      const { subject, text, attach } = readForm();
       if (!subject || !text) { ctx.toast('Subject and email message are required.', true); return; }
-      if (!(await confirmSheet('Send setup instructions?', 'This emails every active vendor for ' + nice(event.date) + (attach && canShare ? ', with their assigned floor plan area attached where one is saved.' : ', without floor plan attachments.'), 'Send email'))) return;
+      if (!(await confirmSheet('Send setup instructions?', 'This emails every active vendor for ' + nice(event.date) + (attach ? ', with the completed floor plan (vendor names included) for their assigned area attached.' : ', without floor plan attachments.'), 'Send email'))) return;
+      setBusy(true);
       try {
-        const r = await api('setup-email', { event_id: state.eventId, subject, body: text, attach_floor_plan: attach && canShare });
+        const r = await api('setup-email', { event_id: state.eventId, subject, body: text, attach_floor_plan: attach, area_images: attach ? await composeAreaImages() : {} });
         ctx.toast(r.failed_count
           ? 'Setup email queued for ' + r.count + ' vendors — ' + r.failed_count + ' failed to send. Check Connections for details.'
           : 'Setup instructions sent to ' + r.count + ' vendor email(s)' + (r.attachment_count ? ' · ' + r.attachment_count + ' floor plan attachment(s)' : '') + '.');
         await ctx.refreshAdmin();
       } catch (e) { ctx.toast(e.message, true); }
+      finally { setBusy(false); }
+    };
+    testBtn.onclick = async () => {
+      const { subject, text, attach } = readForm();
+      if (!subject || !text) { ctx.toast('Subject and email message are required.', true); return; }
+      setBusy(true);
+      const oldLabel = testBtn.textContent;
+      testBtn.textContent = 'Sending test…';
+      try {
+        const r = await api('setup-email', { event_id: state.eventId, subject, body: text, attach_floor_plan: attach, area_images: attach ? await composeAreaImages() : {}, test: true });
+        ctx.toast('Test setup email sent to ' + (r.sent_to || 'your email address') + ' with ' + (r.attachment_count || 0) + ' floor plan attachment(s). No vendors were emailed.');
+      } catch (e) { ctx.toast(e.message, true); }
+      finally { setBusy(false); testBtn.textContent = oldLabel; }
     };
   }
 
