@@ -364,3 +364,11 @@ button.stat-btn:active{transform:scale(.99)}
 .mb-rate{min-width:64px;text-align:right;font-size:13.5px;color:var(--muted,#5c665f)}
 .mb-results{margin:0 0 6px}
 .mb-result-btn{display:block;width:100%;text-align:left;margin:0 0 6px}
+
+/* Money trio (full-port Stage D): plain data tables + billing bits */
+.tbl-wrap{overflow-x:auto;margin:10px 0}
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl th,.tbl td{text-align:left;vertical-align:top;border-bottom:1px solid var(--border);padding:7px 8px;overflow-wrap:anywhere}
+.tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted,#5c665f);border-bottom:2px solid var(--border)}
+.bill-events{border:1px solid var(--border);border-radius:12px;padding:8px 12px;margin:0 0 10px}
+.bill-item-edit{border-top:1px solid var(--border);padding-top:10px;margin-top:10px}
