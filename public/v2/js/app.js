@@ -17,26 +17,26 @@
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261022-8';
-import { VERSION, STAGE } from './version.js?v=20261022-8';
-import { renderHome } from './home.js?v=20261022-8';
-import { renderEventDay } from './eventday.js?v=20261022-8';
-import { renderAttendees } from './attendees.js?v=20261022-8';
-import { renderApplications } from './applications.js?v=20261022-8';
-import { renderWaitlist } from './waitlist.js?v=20261022-8';
-import { renderMoves } from './moves.js?v=20261022-8';
-import { renderVendors } from './vendors.js?v=20261022-8';
-import { renderPayments } from './payments.js?v=20261022-8';
-import { renderInvoices } from './invoices.js?v=20261022-8';
-import { renderFloorEditor } from './flooredit.js?v=20261022-8';
-import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261022-8';
-import { renderComms } from './comms.js?v=20261022-8';
-import { renderThreads } from './threads.js?v=20261022-8';
-import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261022-8';
-import { renderSocial } from './social.js?v=20261022-8';
-import { renderRsvps } from './rsvps.js?v=20261022-8';
-import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261022-8';
-import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261022-8';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261023-1';
+import { VERSION, STAGE } from './version.js?v=20261023-1';
+import { renderHome } from './home.js?v=20261023-1';
+import { renderEventDay } from './eventday.js?v=20261023-1';
+import { renderAttendees } from './attendees.js?v=20261023-1';
+import { renderApplications } from './applications.js?v=20261023-1';
+import { renderWaitlist } from './waitlist.js?v=20261023-1';
+import { renderMoves } from './moves.js?v=20261023-1';
+import { renderVendors } from './vendors.js?v=20261023-1';
+import { renderPayments } from './payments.js?v=20261023-1';
+import { renderInvoices } from './invoices.js?v=20261023-1';
+import { renderFloorEditor } from './flooredit.js?v=20261023-1';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-1';
+import { renderComms } from './comms.js?v=20261023-1';
+import { renderThreads } from './threads.js?v=20261023-1';
+import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-1';
+import { renderSocial } from './social.js?v=20261023-1';
+import { renderRsvps } from './rsvps.js?v=20261023-1';
+import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-1';
+import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-1';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -261,7 +261,7 @@ function moreScreen(root) {
     <div class="card account-card">
       <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">${state.user.admin ? 'Organizer' : 'Manager'} · the new app and the current app share this sign-in.</span></p>
       <div class="vendor-actions">
-        <a class="btn small" href="/">Open the current app</a>
+        <a class="btn small" href="/classic/">Open the classic app</a>
         <button class="btn small ghost" id="v2-signout-2">Sign out</button>
       </div>
       <p class="note">Trinity Crafters Market — new organizer app · ${STAGE} · build ${VERSION}</p>
@@ -282,7 +282,7 @@ function sectionScreen(root, key) {
       <p><strong>Coming in the next stage of the rebuild.</strong></p>
       <p class="muted">This section is being rebuilt with the same rules as Market Day — server-fresh data, one screen per job, no patch layers. Nothing is missing in the meantime: it works exactly as today in the current app.</p>
       <div class="vendor-actions">
-        <a class="btn primary small" href="/#admin">Open it in the current app</a>
+        <a class="btn primary small" href="/classic/#admin">Open it in the classic app</a>
         <button class="btn small" data-go-home>Back to Market Day</button>
       </div>
     </div>`;
@@ -300,7 +300,7 @@ function managerMoreScreen(root) {
     <div class="card account-card">
       <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">Staff · the new app and the current app share this sign-in.</span></p>
       <div class="vendor-actions">
-        <a class="btn small" href="/">Open the current app</a>
+        <a class="btn small" href="/classic/">Open the classic app</a>
         <button class="btn small ghost" id="v2-signout-m">Sign out</button>
       </div>
       <p class="note">Trinity Crafters Market — staff app · ${STAGE} · build ${VERSION}</p>
@@ -323,7 +323,7 @@ function vendorMoreScreen(root) {
     <div class="card account-card">
       <p><strong>Signed in as ${esc(state.user.email)}</strong><br><span class="muted">Vendor · the new app and the current app share this sign-in.</span></p>
       <div class="vendor-actions">
-        <a class="btn small" href="/">Open the current app</a>
+        <a class="btn small" href="/classic/">Open the classic app</a>
         <button class="btn small ghost" id="v2-signout-v">Sign out</button>
       </div>
       <p class="note">Trinity Crafters Market — vendor app · ${STAGE} · build ${VERSION}</p>
@@ -352,7 +352,7 @@ function signInScreen(root) {
         <button class="btn primary btn-block">Verify &amp; sign in</button>
       </form>
       <p class="note" id="v2-login-note"></p>
-      <p class="note">Just looking? <a href="/">Open the current app</a> — nothing there has changed.</p>
+      <p class="note">Just looking? <a href="/classic/">Open the classic app</a> — nothing there has changed.</p>
     </section>`;
   const note = msg => { root.querySelector('#v2-login-note').textContent = msg; };
   let email = '';
@@ -457,7 +457,7 @@ async function route() {
     else if (r.name === 'section') sectionScreen(root, r.section);
     else renderHome(ctx, root);
   } catch (e) {
-    root.innerHTML = `<div class="card empty-card"><h3>Something went wrong loading this screen.</h3><p class="muted">${esc(e.message)}</p><div class="vendor-actions"><button class="btn small" onclick="location.reload()">Reload</button><a class="btn small" href="/">Open the current app</a></div></div>`;
+    root.innerHTML = `<div class="card empty-card"><h3>Something went wrong loading this screen.</h3><p class="muted">${esc(e.message)}</p><div class="vendor-actions"><button class="btn small" onclick="location.reload()">Reload</button><a class="btn small" href="/classic/">Open the classic app</a></div></div>`;
   }
   window.scrollTo(0, 0);
 }
