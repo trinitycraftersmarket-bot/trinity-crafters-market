@@ -5,8 +5,8 @@
 // Day (Stage 1) so there is one place that runs the day — here they are
 // shown as read-only chips. Same server-is-truth rule: every action is a
 // server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261023-6';
-import { attendeeRows, eventStats } from './data.js?v=20261023-6';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261023-7';
+import { attendeeRows, eventStats } from './data.js?v=20261023-7';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_CLASS = { not_inspected: 'warn', approved: 'ok', needs_correction: 'bad', refused: 'bad' };

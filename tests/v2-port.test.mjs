@@ -141,3 +141,31 @@ test('stage E: food trucks organizer screen uses the food-trucks function contra
   assert.ok(f.includes('decline reason is required') || f.includes('decline reason is required.'), 'declining must require a reason (server requires it)');
   assert.ok(f.includes("status: 'paid'"), 'mark-paid must use the paid status');
 });
+
+test('stage F: online check-in organizer screen uses the setup-checkin function', () => {
+  assert.ok(existsSync(join(v2js, 'checkin.js')), 'missing checkin.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("live: 'checkin'"), 'section registry must wire live: checkin');
+  assert.ok(app.includes('renderCheckin'), 'app.js must dispatch to renderCheckin');
+  const c = read(v2js, 'checkin.js');
+  assert.ok(c.includes('/.netlify/functions/setup-checkin'), 'must call the setup-checkin function');
+  assert.ok(c.includes("action: 'remind'"), 'the reminder must use the remind action');
+  assert.ok(c.includes("'08:15'") && c.includes("'09:00'"), 'the arrival slots must match the classic ones');
+});
+
+test('stage F: application recovery screen keeps status rules and override actions', () => {
+  assert.ok(existsSync(join(v2js, 'apprecovery.js')), 'missing apprecovery.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("live: 'apprecovery'"), 'section registry must wire live: apprecovery');
+  assert.ok(app.includes('renderAppRecovery'), 'app.js must dispatch to renderAppRecovery');
+  const r = read(v2js, 'apprecovery.js');
+  assert.ok(r.includes('600000'), 'staleness must use the classic 10-minute rule');
+  assert.ok(r.includes("'application-attempt-dismiss'"), 'dismiss must use the existing action');
+  assert.ok(r.includes("'recover-application'"), 'recovery must use the existing action');
+  assert.ok(r.includes("'attempt-photo'"), 'photo viewing must use the existing action');
+  assert.ok(r.includes('analyzeCategoryFit'), 'the category-fit alert must be ported');
+  assert.ok(r.includes('confirm_override'), 'the override confirmation checkbox is required');
+  // The duplicate placeholder food-trucks entry from Stage 3b must be gone.
+  const keys = [...app.matchAll(/key: 'food-trucks'/g)];
+  assert.equal(keys.length, 1, 'exactly one food-trucks section entry');
+});
