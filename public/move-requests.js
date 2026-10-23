@@ -92,4 +92,95 @@
   observer.observe(document.body, {childList: true, subtree: true});
   window.addEventListener('hashchange', install);
   install();
+
+  // ---- Organizer: move a booking directly from its attendee card --------
+  // The organizer is the approver, so the move happens immediately (no
+  // request, no 48-hour cutoff); the server still refuses a target that
+  // genuinely cannot take the booking, with the reason.
+  window.openOrganizerMoveDialog = async (sourceType, sourceId) => {
+    openModal('<h2>Move date</h2><p>Checking which dates this booking can move to…</p>');
+    try {
+      const v = await post({action: 'organizer-options', source_type: sourceType, source_id: sourceId});
+      const who = v.source?.business || v.source?.name || 'this vendor';
+      const spaceName = s => s === 'indoor' ? 'Indoor' : 'Outdoor';
+      if (!v.movable) {
+        $('#modal-content').innerHTML = `<h2>Move date — ${esc(who)}</h2><p>${esc(v.reason || 'This booking cannot be moved.')}</p><div class="actions"><button type="button" class="quiet" id="org-move-close">Close</button></div>`;
+        $('#org-move-close').onclick = closeModal;
+        return;
+      }
+      const targets = v.targets || [], excluded = v.excluded || [];
+      $('#modal-content').innerHTML = `<h2>Move date — ${esc(who)}</h2>
+        <p>Currently booked as ${spaceName(v.source.space)}. The move happens right away: payment stays on the booking, the old date's check-in and booth assignment are cleared, and the vendor is emailed the new date. There is no 48-hour cutoff for organizer moves, but a date that is full for the vendor still refuses.</p>
+        ${targets.length ? `<form id="org-move-form">
+          <fieldset style="border:0;padding:0;margin:0 0 12px"><legend><strong>Move to</strong></legend>
+          ${targets.map(t => `<div style="padding:6px 0">
+            <label style="display:block"><input type="radio" name="to" value="${esc(t.event.id)}" data-space="${esc(t.spaces[0].space)}" required> ${nice(t.event.date)} — ${esc(t.event.location || '')}</label>
+            ${t.spaces.length > 1
+              ? `<label style="display:block;margin:4px 0 0 24px">Space <select name="space-${esc(t.event.id)}">${t.spaces.map(s => `<option value="${s.space}" ${s.space === v.source.space ? 'selected' : ''}>${spaceName(s.space)} ${money(s.price)}</option>`).join('')}</select></label>`
+              : `<span class="muted" style="margin-left:24px">${spaceName(t.spaces[0].space)} ${money(t.spaces[0].price)}</span>`}
+          </div>`).join('')}
+          </fieldset>
+          <div class="actions"><button type="submit">Move booking</button><button type="button" class="quiet" id="org-move-close">Never mind</button></div>
+        </form>` : '<p><strong>No other dates can take this booking right now.</strong></p>'}
+        ${excluded.length ? `<div class="note"><p><strong>Why some dates aren't listed:</strong></p><ul>${excluded.map(x => `<li>${nice(x.event?.date)} — ${esc((x.problems || [])[0] || 'Not available')}</li>`).join('')}</ul></div>` : ''}`;
+      const close = $('#org-move-close'); if (close) close.onclick = closeModal;
+      const form = $('#org-move-form');
+      if (form) form.onsubmit = async e => {
+        e.preventDefault();
+        const radio = form.querySelector('input[name="to"]:checked');
+        if (!radio) return;
+        const space = form.querySelector(`[name="space-${radio.value}"]`)?.value || radio.dataset.space;
+        const btn = form.querySelector('button[type="submit"]');
+        if (btn) btn.disabled = true;
+        try {
+          const out = await post({action: 'organizer-move', source_type: sourceType, source_id: sourceId, to_event_id: radio.value, space});
+          $('#modal-content').innerHTML = `<h2>Moved ✓</h2><p><strong>${esc(who)}</strong> is now booked for <strong>${nice(out.to?.date)}</strong>${out.to?.location ? ` — ${esc(out.to.location)}` : ''} (${spaceName(out.space)}). The vendor has been emailed the new date.</p>${out.resolved_request ? '<p>The vendor\'s pending move request was resolved as approved.</p>' : ''}<div class="actions"><button type="button" id="org-move-done">Done</button></div>`;
+          $('#org-move-done').onclick = () => { closeModal(); window.dispatchEvent(new HashChangeEvent('hashchange')); };
+        } catch (err) { alert(err.message); if (btn) btn.disabled = false; }
+      };
+    } catch (e) {
+      $('#modal-content').innerHTML = `<h2>Move date</h2><p>${esc(e.message)}</p><div class="actions"><button type="button" class="quiet" id="org-move-close">Close</button></div>`;
+      $('#org-move-close').onclick = closeModal;
+    }
+  };
+
+  // Button injection: visibility comes from the server (organizer-movable)
+  // — only confirmed records on an upcoming date get a button, mirroring
+  // the vendor-side rules; booking status is not rendered on the card, so
+  // the client cannot judge it locally. The append pass is fully
+  // synchronous: existence check and DOM write happen in the same task, so
+  // overlapping passes can never double-insert (no await between them).
+  const movableCache = new Map();
+  const movableSet = eventId => {
+    if (!movableCache.has(eventId)) {
+      movableCache.set(eventId, post({action: 'organizer-movable', event_id: eventId})
+        .then(v => new Set((v.sources || []).map(s => `${s.source_type}:${s.source_id}`)))
+        .catch(e => { movableCache.delete(eventId); throw e; }));
+    }
+    return movableCache.get(eventId);
+  };
+  function appendMoveButtons(set) {
+    document.querySelectorAll('.report-actions').forEach(actions => {
+      const anchor = actions.querySelector('[data-cancel-vendor]');
+      if (!anchor || actions.querySelector('[data-org-move]')) return;
+      const sourceType = anchor.dataset.imported === '1' ? 'imported' : 'booking';
+      const sourceId = anchor.dataset.cancelVendor;
+      if (!set.has(`${sourceType}:${sourceId}`)) return;
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'secondary'; b.dataset.orgMove = sourceId; b.dataset.imported = anchor.dataset.imported;
+      b.textContent = '📅 Move date';
+      b.onclick = () => window.openOrganizerMoveDialog(sourceType, sourceId);
+      actions.insertBefore(b, anchor);
+    });
+  }
+  function enhanceMoveButtons() {
+    const eventId = document.querySelector('#report-date')?.value || '';
+    if (!eventId || !document.querySelector('.report-actions [data-cancel-vendor]')) return;
+    movableSet(eventId).then(set => appendMoveButtons(set)).catch(() => {});
+  }
+  let moveBtnBusy = false;
+  const moveBtnObserver = new MutationObserver(() => { if (!moveBtnBusy) { moveBtnBusy = true; requestAnimationFrame(() => { moveBtnBusy = false; enhanceMoveButtons(); }); } });
+  moveBtnObserver.observe(document.body, {childList: true, subtree: true});
+  window.addEventListener('hashchange', enhanceMoveButtons);
+  enhanceMoveButtons();
 })();

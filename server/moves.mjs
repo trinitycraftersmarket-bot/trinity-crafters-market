@@ -166,6 +166,27 @@ async function clearFloorAssignments(tx, eventId, recordId) {
   }
 }
 
+// The transfer itself, shared by approval and organizer-initiated moves:
+// point the record at the target event, clear the old date's check-in /
+// attendance state, re-seat the imported category reservation, and drop the
+// old date's floor-plan pin (the vendor gets a fresh assignment). Payment
+// fields are never touched. `space` is the (normalized) space the vendor
+// will occupy on the target date; the stored space is only rewritten when
+// it actually changes (bookings store 'indoor'/'outdoor'; imported rows
+// store 'Inside'/'Outside', matching server/twins.mjs).
+async function performTransfer(tx, {source, target, space}) {
+  if (source.source_type === 'booking') {
+    await tx`update market.bookings set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, checked_in = false, no_show = false where id = ${source.source_id}`;
+    if (space !== source.space) await tx`update market.bookings set space = ${space} where id = ${source.source_id}`;
+  } else {
+    await tx`update market.imported_attendees set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, attendance_state = 'not_marked' where id = ${source.source_id}`;
+    if (space !== source.space) await tx`update market.imported_attendees set space = ${space === 'indoor' ? 'Inside' : 'Outside'} where id = ${source.source_id}`;
+    await tx`delete from market.imported_category_reservations where imported_attendee_id = ${source.source_id}`;
+    if (source.category_id) await tx`insert into market.imported_category_reservations(imported_attendee_id, event_id, category_id, space) values(${source.source_id}, ${target.id}, ${source.category_id}, ${space}) on conflict(imported_attendee_id, category_id) do nothing`;
+  }
+  await clearFloorAssignments(tx, source.event_id, source.source_id);
+}
+
 // Approve: re-run ALL checks; on any failure throw (the caller's transaction
 // rolls back, the request stays pending, and the organizer sees the reason).
 export async function approveMoveRequest(tx, {requestId, actor, overrideCutoff = false}) {
@@ -183,14 +204,7 @@ export async function approveMoveRequest(tx, {requestId, actor, overrideCutoff =
   const problems = await targetProblems(tx, source, target);
   if (problems.length) throw Error(`Cannot approve: ${problems[0]} The request stays pending.`);
   // All checks passed — perform the move. Payment fields are never touched.
-  if (source.source_type === 'booking') {
-    await tx`update market.bookings set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, checked_in = false, no_show = false where id = ${source.source_id}`;
-  } else {
-    await tx`update market.imported_attendees set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, attendance_state = 'not_marked' where id = ${source.source_id}`;
-    await tx`delete from market.imported_category_reservations where imported_attendee_id = ${source.source_id}`;
-    if (source.category_id) await tx`insert into market.imported_category_reservations(imported_attendee_id, event_id, category_id, space) values(${source.source_id}, ${target.id}, ${source.category_id}, ${source.space}) on conflict(imported_attendee_id, category_id) do nothing`;
-  }
-  await clearFloorAssignments(tx, req.from_event_id, source.source_id);
+  await performTransfer(tx, {source, target, space: req.space});
   const [updated] = await tx`update market.move_requests set status = 'approved', decided_at = now(), decided_by = ${actor.email || String(actor)} where id = ${req.id} returning *`;
   await audit(tx, actor, 'booking date moved (requested)', {request_id: req.id, source_type: source.source_type, source_id: source.source_id, vendor: source.business || source.name, email: source.email, from_event: req.from_event_id, to_event: target.id, from: dateOnly(from?.date), to: dateOnly(target.date)});
   await queue(tx, source.email, `Date changed — you're now booked for ${fmtDate(target.date)}`,
@@ -226,4 +240,88 @@ export async function cancelMoveRequest(tx, {requestId, user}) {
   const [updated] = await tx`update market.move_requests set status = 'cancelled', decided_at = now() where id = ${req.id} returning *`;
   await audit(tx, user, 'move request cancelled', {request_id: req.id, source_type: source.source_type, source_id: source.source_id, email: req.vendor_email});
   return {request: updated};
+}
+
+// ---- Organizer-initiated moves -------------------------------------------
+// The organizer moves a booking directly (no vendor request needed): the
+// organizer IS the approver, so there is no 48-hour cutoff, but every other
+// approval pre-check still runs — capacity/category truth is not overridden,
+// and a target that genuinely cannot take the booking refuses with the
+// specific reason (the same strings targetProblems produces for approvals).
+
+// Sources on `eventId` the organizer could move right now — confirmed
+// records only, mirroring loadMoveSource's `confirmed` (bookings:
+// approved/paid; imported: not cancelled) and the vendor-side rule that the
+// current date must be upcoming. Drives the attendee-card button: booking
+// status is not rendered anywhere on the card, so visibility comes from
+// this server set, matched by id on the client.
+export async function movableSources(sql, eventId) {
+  const [e] = await sql`select ((date + coalesce(end_time, time '15:00') + interval '1 minute') <= (now() at time zone 'America/New_York')) as ended from market.events where id = ${eventId}`;
+  if (!e || e.ended) return [];
+  const bookings = await sql`select id from market.bookings where event_id = ${eventId} and status in ('approved', 'paid')`;
+  const imported = await sql`select id from market.imported_attendees where event_id = ${eventId} and not cancelled`;
+  return [...bookings.map(b => ({source_type: 'booking', source_id: b.id})), ...imported.map(i => ({source_type: 'imported', source_id: i.id}))];
+}
+
+// Target dates for the organizer dialog: every other open, unended date,
+// evaluated for BOTH spaces via targetProblems, so the organizer can also
+// switch the vendor's space when the target has room the other way.
+// Returns targets (dates with at least one workable space, each listing the
+// spaces that fit) and excluded dates (with the first blocking reason).
+export async function organizerMoveTargets(tx, source) {
+  const ordered = await tx`select ev.id from market.events ev where ev.open and ev.id <> ${source.event_id}
+    and (ev.date + coalesce(ev.end_time, time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by ev.date`;
+  const orderOf = new Map(ordered.map((r, i) => [String(r.id), i]));
+  const perSpace = {};
+  for (const space of ['indoor', 'outdoor']) perSpace[space] = await eligibleTargets(tx, {...source, space});
+  const byId = new Map();
+  for (const space of ['indoor', 'outdoor']) {
+    for (const e of perSpace[space].eligible) {
+      if (!byId.has(e.id)) byId.set(e.id, {event: e, spaces: []});
+      byId.get(e.id).spaces.push({space, price: e[space + '_price']});
+    }
+    for (const x of perSpace[space].excluded) {
+      if (!byId.has(x.event.id)) byId.set(x.event.id, {event: x.event, spaces: [], problems: x.problems});
+      else if (!byId.get(x.event.id).problems) byId.get(x.event.id).problems = x.problems;
+    }
+  }
+  const targets = [], excluded = [];
+  for (const entry of byId.values()) (entry.spaces.length ? targets : excluded).push(entry.spaces.length ? {event: entry.event, spaces: entry.spaces} : {event: entry.event, problems: entry.problems || ['Not available.']});
+  const byDate = (a, b) => (orderOf.get(String(a.event.id)) ?? 0) - (orderOf.get(String(b.event.id)) ?? 0);
+  return {targets: targets.sort(byDate), excluded: excluded.sort(byDate)};
+}
+
+// Perform an organizer-initiated move immediately. Refusals reuse the
+// approval path's checks and wording; on success the transfer is the shared
+// performTransfer, the vendor is emailed the new date, the vacated spot is
+// offered to the waitlist, and a pending vendor request for the same
+// booking (if any) is resolved as approved — the booking did move.
+export async function organizerMove(tx, {sourceType, sourceId, targetEventId, space = null, actor}) {
+  await ensureMoveSchema(tx);
+  const source = await loadMoveSource(tx, sourceType, sourceId);
+  if (!source) throw Error('That booking could not be found.');
+  if (!source.confirmed) throw Error(`The booking is not confirmed (status: ${source.status}), so it cannot be moved.`);
+  const from = await eventRow(tx, source.event_id);
+  if (!from) throw Error('The current market date could not be found.');
+  if (from.ended) throw Error('That market has already ended.');
+  const target = await eventRow(tx, targetEventId);
+  const effSpace = space == null || space === '' ? source.space : normalizeSpace(space);
+  if (!effSpace) throw Error('Choose an indoor or outdoor space.');
+  const problems = await targetProblems(tx, effSpace === source.space ? source : {...source, space: effSpace}, target);
+  if (problems.length) throw Error(`Cannot move: ${problems[0]}`);
+  const [pending] = await tx`select * from market.move_requests where source_type = ${source.source_type} and source_id = ${source.source_id} and status = 'pending' for update`;
+  await performTransfer(tx, {source, target, space: effSpace});
+  let resolvedRequest = null;
+  if (pending) {
+    const note = pending.to_event_id === target.id
+      ? 'Approved — organizer moved this booking directly.'
+      : `Superseded — organizer moved this booking to ${fmtDate(target.date)} directly.`;
+    [resolvedRequest] = await tx`update market.move_requests set status = 'approved', decided_at = now(), decided_by = ${actor.email || String(actor)}, decision_note = ${note} where id = ${pending.id} returning *`;
+  }
+  await audit(tx, actor, 'booking date moved (organizer)', {organizer_initiated: true, request_id: pending?.id || null, source_type: source.source_type, source_id: source.source_id, vendor: source.business || source.name, email: source.email, from_event: source.event_id, to_event: target.id, from: dateOnly(from.date), to: dateOnly(target.date), space: effSpace});
+  await queue(tx, source.email, `Date changed — you're now booked for ${fmtDate(target.date)}`,
+    `Hi ${source.name},\n\nWe moved your booking to a new date.\n\nYour booking moved from ${fmtDate(from.date)} to:\n\n${fmtDate(target.date)}\n10 AM–3 PM Eastern\n${target.location}\n${target.address}\n${spaceLabel(effSpace)} space — ${money(source.amount_due)}\n\nYour payment stays on the booking — there is nothing more to pay for the date change. Your old date's check-in and booth assignment were cleared; you'll get a fresh booth assignment for the new date.\n\nWe operate rain or shine. Please don't pack up before 3 PM, and please advertise the market on Facebook.\n\nTrinity Crafters Market\n${ORGANIZER_EMAIL}`);
+  // The vacated old-date spot may open a waitlist offer.
+  await scanWaitlist(tx, source.event_id, {space: source.space, actor});
+  return {source, from, to: target, space: effSpace, request: resolvedRequest};
 }
