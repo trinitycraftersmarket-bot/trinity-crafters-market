@@ -266,8 +266,17 @@ create table if not exists market.vendor_payments(
   paid_at timestamptz,
   note text,
   recorded_by text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Added Oct 22, 2026 (server/vendor-payments.mjs): manual past-payment
+  -- entries link an optional market date and flag themselves manual;
+  -- receipt_sent_at historically existed only in the live DB.
+  event_id uuid references market.events,
+  manual_entry boolean not null default false,
+  receipt_sent_at timestamptz
 );
+alter table market.vendor_payments add column if not exists event_id uuid references market.events;
+alter table market.vendor_payments add column if not exists manual_entry boolean not null default false;
+alter table market.vendor_payments add column if not exists receipt_sent_at timestamptz;
 create index if not exists vendor_payments_booking_idx on market.vendor_payments(booking_id);
 create index if not exists vendor_payments_imported_idx on market.vendor_payments(imported_attendee_id);
 alter table market.vendor_payments enable row level security;

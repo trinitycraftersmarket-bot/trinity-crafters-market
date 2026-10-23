@@ -7,6 +7,7 @@ import {acceptOffer,declineOffer,ensureWaitlistSchema,offerAnyway,resolveOffers,
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
 import {claimImported,ensureProfileSchema,upsertProfileFromApplication} from '../../server/profiles.mjs';
+import {vendorPaymentHistory,recordManualPayment,ensureVendorPaymentColumns} from '../../server/vendor-payments.mjs';
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
 async function paypalToken(){
  if(!process.env.PAYPAL_CLIENT_ID||!process.env.PAYPAL_CLIENT_SECRET)throw Error('PayPal invoicing is not connected yet.');
@@ -499,7 +500,7 @@ ${description}`;
  if(action==='vendor-list'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   await ensureProfileSchema(sql);
-  return json(await sql`select a.id,a.user_id,a.name,a.email,a.phone,a.business,a.billing_address,a.description,a.referral_source,a.referral_group,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,a.created_at,c.name category,'application' source,(select json_build_object('business',p.business,'name',p.name,'category_id',p.category_id,'description',p.description,'phone',p.phone,'address',p.address,'space_preference',p.space_preference,'website',p.website,'social_links',p.social_links) from market.vendor_profiles p where p.email=lower(trim(a.email))) profile,
+  const rows=await sql`select a.id,a.user_id,a.name,a.email,a.phone,a.business,a.billing_address,a.description,a.referral_source,a.referral_group,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,a.created_at,c.name category,'application' source,(select json_build_object('business',p.business,'name',p.name,'category_id',p.category_id,'description',p.description,'phone',p.phone,'address',p.address,'space_preference',p.space_preference,'website',p.website,'social_links',p.social_links) from market.vendor_profiles p where p.email=lower(trim(a.email))) profile,
   coalesce((select count(*) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int shows,
   coalesce((select sum(b.price) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int booking_spend,
   coalesce((select sum(vp.amount) from market.vendor_payments vp where vp.application_id=a.id),0)::int recorded_payments,
@@ -522,7 +523,20 @@ ${description}`;
        or (nullif(trim(i.phone),'') is not null and regexp_replace(a2.phone,'[^0-9]','','g')=regexp_replace(i.phone,'[^0-9]','','g'))
        or (nullif(trim(i.business),'') is not null and lower(trim(a2.business))=lower(trim(i.business)))
   )
-  order by business,name`);
+  order by business,name`;
+  // Complete payment history per vendor (server/vendor-payments.mjs):
+  // the SQL above still totals from the single representative application
+  // / identity partition, which undercounts vendors with several
+  // applications or imported rows. Recompute the totals from the unified,
+  // twin-deduped history lines so the card numbers match the lines, and
+  // ship the lines with the payload (legacy Vendors panel + v2 Directory
+  // share this action).
+  await ensureVendorPaymentColumns(sql);
+  for(const r of rows){
+   const h=await vendorPaymentHistory(sql,r);
+   r.shows=h.totals.shows;r.booking_spend=h.totals.booking_spend;r.recorded_payments=h.totals.recorded_payments;r.payment_history=h.lines;
+  }
+  return json(rows);
  }
  if(action==='survey-report'){
   if(!u.admin)return json({error:'Organizer access only'},403);
@@ -689,6 +703,11 @@ trinitycraftersmarket@gmail.com`;
    }
    return [saved];
   });
+  return json({ok:true,payment:pay});
+ }
+ if(action==='vendor-payment-manual'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const pay=await recordManualPayment(sql,u,p);
   return json({ok:true,payment:pay});
  }
  if(action==='vendor-receipt'){

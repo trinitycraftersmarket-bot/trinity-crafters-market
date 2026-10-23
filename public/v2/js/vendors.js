@@ -5,7 +5,7 @@
 // profile, market dates and recorded payments). Writes go through
 // vendor-profile organizer-save / vendor-save / vendor-payment /
 // vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
-import { api, fn, esc, money, nice } from './api.js?v=20261022-5';
+import { api, fn, esc, money, nice } from './api.js?v=20261022-6';
 
 let rows = null;          // vendor-list payload for this screen session
 let view = { q: '', filter: 'all' };
@@ -58,6 +58,11 @@ export function renderVendors(ctx, root) {
     } catch (e) { ctx.toast(e.message, true); }
   };
 
+  function historyLine(x) {
+    const amount = x.amount_recorded ? money(x.amount) : 'amount not recorded';
+    const sub = [x.reference ? 'Ref ' + x.reference : '', x.note && x.note !== x.label ? x.note : ''].filter(Boolean).join(' · ');
+    return `<div class="mini-row"><span>${esc(x.label)}${sub ? `<br><span class="muted">${esc(sub)}</span>` : ''}</span><span>${amount}${x.method ? ' · ' + esc(x.method) : ''} · ${esc(x.kind)}${x.payment_id ? ` <button class="btn small" data-receipt="${esc(x.payment_id)}">${x.receipt_sent_at ? 'Resend receipt' : 'Email receipt'}</button>` : ''}</span></div>`;
+  }
   function profileSummary(v) {
     const p = v.profile;
     if (!p) return '<p class="note"><strong>Saved profile:</strong> none yet — it starts the first time they apply or you save one here.</p>';
@@ -82,6 +87,8 @@ export function renderVendors(ctx, root) {
         ${v.referral_source ? `<p class="note"><strong>Referral:</strong> ${esc(v.referral_source)}${v.referral_group ? ' — ' + esc(v.referral_group) : ''}</p>` : ''}
         <h4 class="mini-title">Market dates</h4>
         ${(v.dates || []).map(x => `<div class="mini-row"><span>${esc(nice(x.date))} · ${esc(x.space || '')}</span><span>${esc(x.status || '')} · ${money(x.price || 0)}${x.payment_method ? ' · ' + esc(x.payment_method) : ''}</span></div>`).join('') || '<p class="note">No market history.</p>'}
+        <h4 class="mini-title">Payment history — all records</h4>
+        ${(v.payment_history || []).map(historyLine).join('') || '<p class="note">No payments on record.</p>'}
         <h4 class="mini-title">Recorded payments / receipts</h4>
         ${(v.payments || []).map(x => `<div class="mini-row"><span>${esc(new Date(x.paid_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' }))} · ${money(x.amount)} · ${esc(x.payment_method || '')}</span><span>${x.receipt_sent_at ? 'Receipt sent ' + esc(new Date(x.receipt_sent_at).toLocaleDateString('en-US')) + ' ' : ''}<button class="btn small" data-receipt="${esc(x.id)}">${x.receipt_sent_at ? 'Resend receipt' : 'Email receipt'}</button></span></div>`).join('') || '<p class="note">No separately recorded payments.</p>'}
       </details>
@@ -161,28 +168,52 @@ export function renderVendors(ctx, root) {
   }
   function paySheet(v) {
     const dates = [...(v.dates || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const events = [...(ctx.state.admin?.events || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const today = new Date().toLocaleDateString('en-CA');
     ctx.openSheet(`
       <h3 class="sheet-title">Record payment</h3>
       <p><strong>${esc(v.business || v.name || 'Vendor')}</strong></p>
       <form id="v2-vendor-pay-form">
         ${v.source === 'pdf' ? `<label class="sheet-field">Market date<select name="imported_attendee_id" required>${dates.map(x => `<option value="${esc(x.id)}">${esc(nice(x.date))} — ${esc(x.space || '')} — ${esc(x.status || '')}</option>`).join('')}</select></label>` : ''}
         <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" required></label>
+        <label class="sheet-field">Date paid<input name="paid_at" type="date" value="${today}" required></label>
         <label class="sheet-field">Method<select name="method"><option>cash</option><option>check</option><option>GoDaddy Payments</option><option>PayPal</option><option>other</option></select></label>
-        <label class="sheet-field">Note<input name="note" placeholder="Optional note"></label>
+        <label class="checkline"><input type="checkbox" name="manual"> Manual entry — a past payment that isn't tied to ${v.source === 'pdf' ? 'a market date above' : 'a booking'} (no booking needed)</label>
+        <label class="sheet-field">Market date for the manual entry (optional)<select name="event_id"><option value="">No specific market date</option>${events.map(x => `<option value="${esc(x.id)}">${esc(nice(x.date))}${x.title || x.location ? ' — ' + esc(x.title || x.location) : ''}</option>`).join('')}</select></label>
+        <label class="sheet-field">What was it for / note<input name="note" placeholder="e.g. Booth fee, October market — paid cash at the door"></label>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Record payment</button></div>
       </form>`);
-    ctx.sheetEl.querySelector('#v2-vendor-pay-form').onsubmit = e => {
+    const form = ctx.sheetEl.querySelector('#v2-vendor-pay-form');
+    const manualBox = form.querySelector('[name="manual"]');
+    const dateSelect = form.querySelector('[name="imported_attendee_id"]');
+    const syncManual = () => { if (dateSelect) { dateSelect.disabled = manualBox.checked; dateSelect.required = !manualBox.checked; } };
+    manualBox.onchange = syncManual; syncManual();
+    form.onsubmit = e => {
       e.preventDefault();
       const f = new FormData(e.target);
+      const paidDate = String(f.get('paid_at') || today);
       ctx.closeSheet();
-      mutate(() => api('vendor-payment', {
-        application_id: v.id,
-        source: v.source,
-        imported_attendee_id: v.source === 'pdf' ? f.get('imported_attendee_id') : null,
-        amount: f.get('amount'),
-        payment_method: f.get('method'),
-        note: f.get('note')
-      }), 'Payment recorded. You can now email the receipt.');
+      if (f.get('manual') === 'on') {
+        mutate(() => api('vendor-payment-manual', {
+          application_id: v.source === 'pdf' ? null : v.id,
+          imported_attendee_id: v.source === 'pdf' ? v.id : null,
+          amount: f.get('amount'),
+          paid_at: paidDate,
+          payment_method: f.get('method'),
+          event_id: f.get('event_id') || null,
+          note: f.get('note')
+        }), 'Past payment recorded in the vendor history.');
+      } else {
+        mutate(() => api('vendor-payment', {
+          application_id: v.id,
+          source: v.source,
+          imported_attendee_id: v.source === 'pdf' ? f.get('imported_attendee_id') : null,
+          amount: f.get('amount'),
+          paid_at: new Date(paidDate + 'T16:00:00').toISOString(),
+          payment_method: f.get('method'),
+          note: f.get('note')
+        }), 'Payment recorded. You can now email the receipt.');
+      }
     };
   }
 
