@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261023-20';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261023-20';
+import { api, fn, esc, nice, money } from './api.js?v=20261023-21';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261023-21';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -264,6 +264,7 @@ export function renderVendorApply(ctx, root) {
     <p class="eyebrow">Apply</p>
     <h2 class="display">Vendor application</h2>
     <p class="lede">One application can cover several market dates. Applying as <strong>${esc(ctx.state.user.email)}</strong>.</p>
+    <p class="apply-banner"><strong>We do not hold space without payment</strong> — please only select dates you can pay for.</p>
     <form id="v2-apply" novalidate>
       <section class="card">
         <h3 class="section-title">Your details</h3>

@@ -9,8 +9,8 @@
 // from a legacy module. v2 cannot import legacy modules, so the flag here
 // uses the scan SAVED on the application at submit time
 // (agreements.category_scan) — the same data the legacy review reads first.
-import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261023-20';
-import { normalizeSpace } from './data.js?v=20261023-20';
+import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261023-21';
+import { normalizeSpace } from './data.js?v=20261023-21';
 
 const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', held: 'Payment due', paid: 'Paid', waitlist: 'Wait-list', declined: 'Declined', cancelled: 'Cancelled', expired: 'Expired' };
 const STATUS_CLASS = { pending: 'warn', approved: 'neutral', held: 'warn', paid: 'ok', waitlist: 'neutral', declined: 'bad', cancelled: 'bad', expired: 'bad' };
@@ -183,6 +183,8 @@ export function renderApplications(ctx, root) {
       ${creditFlagHtml(b)}
       ${conflictPanelHtml(b)}
       ${b.status === 'held' && b.hold_until ? `<p class="note"><strong>Payment deadline:</strong> ${esc(new Date(b.hold_until).toLocaleString('en-US', { timeZone: 'America/New_York' }))} Eastern</p>` : ''}
+      ${b.status === 'held' && b.invoice_reference ? `<p class="note"><strong>${/^INV2-/i.test(String(b.invoice_reference)) ? 'PayPal invoice' : 'Invoice sent manually'} · Ref ${esc(b.invoice_reference)}</strong></p>` : ''}
+      ${b.status === 'paid' && b.payment_reference ? `<p class="note"><strong>Payment ref:</strong> ${esc(b.payment_reference)}</p>` : ''}
       ${b.status === 'declined' && b.decision_reason ? `<p class="note"><strong>Decline reason:</strong> ${esc(b.decision_reason)}</p>` : ''}
       <div class="vendor-actions">
         ${primaryActions(b)}
