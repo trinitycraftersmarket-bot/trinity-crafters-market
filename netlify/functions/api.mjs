@@ -469,9 +469,17 @@ ${description}`;
  const p=await req.json();required(p.name,'name');required(p.referral_source,'how you heard about us');
  if(p.referral_source==='Facebook')required(p.referral_group,'Facebook group');
  if(!Number.isInteger(p.party_size)||p.party_size<1||p.party_size>20)throw Error('Choose 1–20 guests.');
- const [e]=await sql`select id from market.events where id=${p.event_id} and (date + coalesce(end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;
+ const [e]=await sql`select e.id,e.date,l.name location from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;
  if(!e)throw Error('Choose an upcoming market.');
- await sql`insert into market.shopper_rsvps(event_id,user_id,name,email,party_size,referral_source,referral_group) values(${e.id},${u.id},${p.name.trim()},${u.email},${p.party_size},${p.referral_source.trim()},${String(p.referral_group||'').slice(0,200)}) on conflict(event_id,user_id) do update set name=excluded.name,party_size=excluded.party_size,referral_source=excluded.referral_source,referral_group=excluded.referral_group`;
+ await sql.begin(async tx=>{
+ await tx`insert into market.shopper_rsvps(event_id,user_id,name,email,party_size,referral_source,referral_group) values(${e.id},${u.id},${p.name.trim()},${u.email},${p.party_size},${p.referral_source.trim()},${String(p.referral_group||'').slice(0,200)}) on conflict(event_id,user_id) do update set name=excluded.name,party_size=excluded.party_size,referral_source=excluded.referral_source,referral_group=excluded.referral_group`;
+ // §35: the organizer hears about every RSVP submit. The insert above
+ // upserts, so a resubmit re-notifies — the body says "new or updated"
+ // rather than guessing whether this submit created the row.
+ const heard=p.referral_source.trim()+(String(p.referral_group||'').trim()?` (${String(p.referral_group).trim()})`:'');
+ await queue(tx,'trinitycraftersmarket@gmail.com',`New shopper RSVP — ${marketDateLabel(e.date)} · ${e.location}`,`RSVP received (new or updated)\n\nName: ${p.name.trim()}\nEmail: ${u.email}\nParty size: ${p.party_size}\nHow they heard: ${heard}\n\nMarket: ${marketDateLabel(e.date)}\nLocation: ${e.location}`);
+ });
+ await flushMail();
  return json({ok:true});
  }
  if(action==='messages'){
