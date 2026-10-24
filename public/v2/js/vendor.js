@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fnq, esc, nice, money } from './api.js?v=20261023-17';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261023-17';
+import { api, fn, esc, nice, money } from './api.js?v=20261023-18';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261023-18';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -117,13 +117,13 @@ export function renderVendorBookings(ctx, root) {
   });
   root.querySelectorAll('[data-move-cancel]').forEach(b => b.onclick = async () => {
     if (!confirm('Cancel this date-change request?')) return;
-    try { await fnq('move-requests', 'cancel', { id: b.dataset.moveCancel }); ctx.toast('Date-change request cancelled.'); await ctx.refreshData(); rerender(); }
+    try { await fn('move-requests', { action: 'cancel', id: b.dataset.moveCancel }); ctx.toast('Date-change request cancelled.'); await ctx.refreshData(); rerender(); }
     catch (e) { ctx.toast(e.message, true); }
   });
   root.querySelectorAll('[data-redeem]').forEach(b => b.onclick = async () => {
     if (!confirm('Book this date with your vendor credit?')) return;
     try {
-      await fnq('vendor-credit', 'redeem', { credit_id: b.dataset.redeem, event_id: b.dataset.event, space: b.dataset.space });
+      await fn('vendor-credit', { action: 'redeem', credit_id: b.dataset.redeem, event_id: b.dataset.event, space: b.dataset.space });
       ctx.toast('Booked with credit — see it in your list above.');
       await ctx.refreshData(); rerender();
     } catch (e) { ctx.toast(e.message, true); }
@@ -145,7 +145,7 @@ async function openMoveSheet(ctx, r, rerender) {
   const boxEl = ctx.sheetEl.querySelector('#v2-move-box');
   let data;
   try {
-    data = await fnq('move-requests', 'options', { source_type: r.source, source_id: r.id });
+    data = await fn('move-requests', { action: 'options', source_type: r.source, source_id: r.id });
   } catch (e) { boxEl.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
   const eligible = data.eligible || [], excluded = data.excluded || [];
   boxEl.innerHTML = `
@@ -156,7 +156,7 @@ async function openMoveSheet(ctx, r, rerender) {
   boxEl.querySelectorAll('[data-move-to]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try {
-      await fnq('move-requests', 'create', { source_type: r.source, source_id: r.id, to_event_id: b.dataset.moveTo, reason: boxEl.querySelector('#v2-move-reason').value });
+      await fn('move-requests', { action: 'create', source_type: r.source, source_id: r.id, to_event_id: b.dataset.moveTo, reason: boxEl.querySelector('#v2-move-reason').value });
       ctx.toast('Date-change request sent — the organizer will decide.');
       ctx.closeSheet();
       await ctx.refreshData();
@@ -497,7 +497,7 @@ export function renderVendorApply(ctx, root) {
   drawDates(); drawCategory();
   // Profile prefill (§13.7): the saved profile fills the form so a
   // returning vendor mostly just picks dates and photos.
-  fnq('vendor-profile', 'get').then(r => {
+  fn('vendor-profile', { action: 'get' }).then(r => {
     const p = r?.prefill || {};
     if (p.name && !FV('name')) F('name').value = p.name;
     if (p.business && !FV('business')) F('business').value = p.business;
@@ -514,7 +514,7 @@ export function renderVendorApply(ctx, root) {
   // attempt row is adopted (attemptId) so further edits keep updating
   // the same recovery record. Agreements and the signature are NOT
   // restored (the server strips them): the vendor must re-accept.
-  fnq('application-attempt-mine').then(r => {
+  api('application-attempt-mine').then(r => {
     const att = r?.attempt, s = att?.snapshot;
     if (!att || !s) return;
     attemptId = att.id;
@@ -556,7 +556,7 @@ export function renderVendorProfile(ctx, root) {
   async function load(note = '') {
     let r;
     try {
-      r = await fnq('vendor-profile', 'get');
+      r = await fn('vendor-profile', { action: 'get' });
     } catch (e) {
       box.innerHTML = `<div class="card empty-card"><p><strong>Your profile couldn't load.</strong></p><p class="muted">${esc(e.message)}</p></div>`;
       return;
@@ -592,7 +592,7 @@ export function renderVendorProfile(ctx, root) {
       const body = { action: 'save' };
       for (const k of ['business', 'name', 'category_id', 'phone', 'address', 'description', 'space_preference', 'website', 'social_links']) body[k] = fd.get(k) ?? '';
       try {
-        const v = await fnq('vendor-profile', 'save', body);
+        const v = await fn('vendor-profile', body);
         ctx.toast('Profile saved.');
         // Re-render from the server's saved profile (state rule).
         await load('Profile saved — this is what the server has now.');

@@ -3,7 +3,7 @@
 // checks pin the wiring per stage, in the style of tests/v2-frontend.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -449,4 +449,61 @@ test('stage G: attendees gains the PDF import and the printable attendance list'
   const pr = read(v2js, 'print.js');
   assert.ok(pr.includes('export function printAttendance'), 'print.js must export the attendance print builder');
   assert.ok(pr.includes('break-before:page'), 'floor plans must print one per page');
+});
+
+test('§29: vendor screens use the body-action transport for vendor-profile / move-requests / vendor-credit', () => {
+  // The three sibling functions are POST-only and read their action from
+  // the JSON body; the fnq query-action transport against them 405s (GET)
+  // or falls through to "Unknown action" (POST without an action key).
+  // Pin the server contracts so the mismatch can never silently return.
+  const vp = readFileSync(join(root, 'netlify', 'functions', 'vendor-profile.mjs'), 'utf8');
+  assert.ok(vp.includes("req.method !== 'POST'"), 'vendor-profile must stay POST-only');
+  assert.ok(vp.includes("p.action === 'get'"), 'vendor-profile must read the action from the body');
+  const mr = readFileSync(join(root, 'netlify', 'functions', 'move-requests.mjs'), 'utf8');
+  assert.ok(mr.includes("req.method !== 'POST'"), 'move-requests must stay POST-only');
+  assert.ok(mr.includes("p.action === 'options'"), 'move-requests must read the action from the body');
+  const vc = readFileSync(join(root, 'netlify', 'functions', 'vendor-credit.mjs'), 'utf8');
+  assert.ok(vc.includes('action=clean(p.action,60)'), 'vendor-credit must read the action from the body');
+
+  const v = read(v2js, 'vendor.js');
+  assert.ok(!v.includes('fnq('), 'vendor.js must not use the query-action transport at all');
+  assert.ok(v.includes("fn('vendor-profile', { action: 'get' })"), 'profile reads must post {action:get} in the body');
+  assert.equal(v.split("fn('vendor-profile', { action: 'get' })").length - 1, 2, 'both profile reads (apply prefill + My Profile) must use fn');
+  assert.ok(v.includes("fn('vendor-profile', body)"), 'profile save must post its {action:save,...} body via fn');
+  assert.ok(v.includes("fn('move-requests', { action: 'options'"), 'move options must ride fn with the action in the body');
+  assert.ok(v.includes("fn('move-requests', { action: 'create'"), 'move create must ride fn with the action in the body');
+  assert.ok(v.includes("fn('move-requests', { action: 'cancel'"), 'move cancel must ride fn with the action in the body');
+  assert.ok(v.includes("fn('vendor-credit', { action: 'redeem'"), 'credit redeem must ride fn with the action in the body');
+  assert.ok(v.includes("api('application-attempt-mine')"), 'draft restore is an api action, not a function call');
+});
+
+test('§29: fnq remains only on the query-action functions (communications, live-chat)', () => {
+  // Those two functions genuinely read ?action= from the query string.
+  const comms = readFileSync(join(root, 'netlify', 'functions', 'communications.mjs'), 'utf8');
+  assert.ok(comms.includes("url.searchParams.get('action')"), 'communications must keep the query-action contract');
+  const chat = readFileSync(join(root, 'netlify', 'functions', 'live-chat.mjs'), 'utf8');
+  assert.ok(chat.includes("url.searchParams.get('action')"), 'live-chat must keep the query-action contract');
+  for (const f of readdirSync(v2js).filter(x => x.endsWith('.js') && x !== 'api.js')) {
+    const src = read(v2js, f);
+    if (src.includes('fnq(')) assert.ok(['chat.js', 'comms.js'].includes(f), `fnq( found in ${f} — only chat.js/comms.js may use the query-action transport`);
+  }
+  // Recovery's attempt photo is an api action (GET with a path param),
+  // not a sibling function — it rides api() with query params.
+  const rec = read(v2js, 'apprecovery.js');
+  assert.ok(!rec.includes('fnq('), 'apprecovery.js must not use fnq');
+  assert.ok(rec.includes("api('attempt-photo', undefined, { path:"), 'attempt photos must load through the api action');
+});
+
+test("§29: 'mine' parity — v2 and classic share the one bookings payload, imported rows included by email match", () => {
+  // Classic is the spec: its account page loads the same api('mine').
+  const classic = readFileSync(join(root, 'public', 'app.js'), 'utf8');
+  assert.ok(classic.includes("api('mine')"), 'classic account page must load api mine');
+  const apiSrc = readFileSync(join(root, 'netlify', 'functions', 'api.mjs'), 'utf8');
+  const mine = apiSrc.slice(apiSrc.indexOf("action==='mine'"), apiSrc.indexOf("action==='vendor-setup-checkin'"));
+  assert.ok(mine.includes('from market.bookings b'), 'mine must include the vendor\'s own bookings');
+  assert.ok(mine.includes('from market.imported_attendees i'), 'mine must include imported attendee rows');
+  assert.ok(mine.includes("lower(trim(both ' ,' from i.email))=lower("), 'imported inclusion must key on the verified account email');
+  // Claiming annotates the rows (profile_linked); it never gates them.
+  assert.ok(mine.includes('claimImported'), 'mine must still run the §13.5 claim annotation');
+  assert.ok(mine.indexOf('from market.imported_attendees i') < mine.indexOf('claimImported'), 'imported rows must be selected before/regardless of the claim');
 });
