@@ -119,6 +119,55 @@ trinitycraftersmarket@gmail.com`;
  }
 }
 
+const displayTime=v=>{
+ const m=String(v||'').slice(0,5).match(/^(\d{1,2}):(\d{2})$/);
+ if(!m)return '';
+ let h=Number(m[1]);const suffix=h>=12?'PM':'AM';h=h%12||12;
+ return h+':'+m[2]+' '+suffix;
+};
+
+async function sendDayBeforeShopperReminders(){
+ const sql=db();
+ // §35: the reminder stamp lives on the RSVP row (codified in
+ // database/codify-live-schema.sql section 13); the runtime ALTER keeps
+ // deploys that predate the column safe, the monthly-invoices pattern.
+ await sql`alter table market.shopper_rsvps add column if not exists reminder_sent_at timestamptz`;
+ const rows=await sql`
+  select r.id,r.name,r.email,r.party_size,e.date,e.start_time,e.end_time,l.name location,l.address
+  from market.shopper_rsvps r
+  join market.events e on e.id=r.event_id
+  join market.locations l on l.id=e.location_id
+  where r.reminder_sent_at is null
+    and e.date=((now() at time zone 'America/New_York')::date+1)`;
+ for(const r of rows){
+  const day=displayDate(r.date),start=displayTime(r.start_time)||'10:00 AM',end=displayTime(r.end_time)||'3:00 PM';
+  const body=`Hi ${r.name||'there'},
+
+We're looking forward to seeing you at Trinity Crafters Market tomorrow, ${day}!
+
+Market: ${r.location}
+Address: ${r.address||''}
+Hours: ${start}–${end}
+Party size: ${r.party_size}
+
+Your free shopper RSVP helps us plan the day — thank you. Just reply to this email if your plans change.
+
+See you there!
+Trinity Crafters Market
+trinitycraftersmarket@gmail.com`;
+  // The stamp is the send-once guard: claim the row (only while the stamp
+  // is still null), queue and stamp in one transaction — if anything
+  // fails the whole thing rolls back and the next sweep retries, and an
+  // hourly re-run or a racing sweep finds the stamp set and sends nothing.
+  await sql.begin(async tx=>{
+   const claimed=await tx`update market.shopper_rsvps set reminder_sent_at=now() where id=${r.id} and reminder_sent_at is null returning id`;
+   if(!claimed.length)return;
+   await queue(tx,r.email,'See you tomorrow at Trinity Crafters Market!',body);
+   await audit(tx,'system','day-before shopper reminder sent',{id:r.id,event_date:String(r.date)});
+  });
+ }
+}
+
 async function sendPostMarketSurveys(){
  const sql=db(),site=(process.env.SITE_URL||'https://trinitylutzmarkets.com').replace(/\/$/,'');
  // Create survey invitations only for vendors actually marked as attended, on the morning after the market.
@@ -178,6 +227,7 @@ export default async()=>{
  await handleHeldPayments();
  await handleWaitlistOffers();
  await sendDayBeforeVendorReminders();
+ await sendDayBeforeShopperReminders();
  await sendPostMarketSurveys();
  await applyMonthlyLateFees();
  await dailySystemBackup();

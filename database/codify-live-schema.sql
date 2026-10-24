@@ -484,6 +484,12 @@ alter table market.outbox add column if not exists html_body text;
 -- read — server/core.mjs:56 and throughout).
 alter table market.locations add column if not exists market_name text not null default '';
 
+-- market.shopper_rsvps: day-before reminder stamp (§35, Oct 24 2026 —
+-- runtime ALTER + read/write in the maintenance sweep,
+-- netlify/functions/maintenance.mjs sendDayBeforeShopperReminders; the
+-- stamp is the send-once guard for the shopper reminder email).
+alter table market.shopper_rsvps add column if not exists reminder_sent_at timestamptz;
+
 
 -- categories.vendor_limit: 0 means NO per-category cap (owner decision,
 -- Oct 22 2026). setup.sql historically declared check(vendor_limit>0), but
