@@ -1,8 +1,8 @@
 // Market Day home screen: the next market, its live numbers, and the
 // daily-driver quick actions. Everything renders from the freshly fetched
 // admin payload (ctx.state.admin) — no cached copies (audit §5 state rule).
-import { esc, money, nice, niceShort, clock, marketName, isToday, dateOf } from './api.js?v=20261023-14';
-import { eventStats } from './data.js?v=20261023-14';
+import { esc, money, nice, niceShort, clock, marketName, isToday, dateOf } from './api.js?v=20261023-15';
+import { eventStats } from './data.js?v=20261023-15';
 
 // Standing setup rule from the market's vendor setup instructions (the
 // current app's setup email template states the same times for every date).

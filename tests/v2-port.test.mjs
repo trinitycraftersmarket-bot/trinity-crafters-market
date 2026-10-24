@@ -290,6 +290,38 @@ test('§25: invite-back email can go to the whole shown group, not just ticked v
   assert.ok(v.includes("'Return invitation emailed to the selected vendor(s).'"), 'ticked mode toast must be unchanged');
 });
 
+test('§26: tapping send with nothing ticked offers the shown group instead of a dead end', () => {
+  const v = read(v2js, 'vendors.js');
+  // The dead-end toast is gone from the v2 directory (the legacy classic
+  // app keeps its own copy — out of scope here).
+  assert.ok(!v.includes('Select at least one vendor first.'), 'the empty-selection dead end must be removed');
+  // The empty-selection branch lives in the ticked path, after the tick
+  // set is read, and offers the group on screen.
+  const tickAt = v.indexOf('const ids = [...selected];');
+  const offerAt = v.indexOf("'No vendors ticked'");
+  assert.ok(tickAt >= 0 && offerAt > tickAt, 'the nothing-ticked offer must sit in the ticked path');
+  assert.ok(v.includes('if (!ids.length)'), 'the offer must trigger on an empty tick selection');
+  // The confirm names the current view (Show-filter group label) and the
+  // search narrowing, with exact counts, and asks the question.
+  assert.ok(v.includes("shownRows.length + ' vendor(s) shown in ' + groupName"), 'the confirm must state how many vendors are shown, in the named group');
+  assert.ok(v.includes("' with an email address. Email all '"), 'the confirm must state the emailable count and ask to email them all');
+  assert.ok(v.includes('narrowed by your search'), 'the confirm must say when the search narrows the list');
+  assert.ok(v.includes("'Email the group'"), 'the fallback confirm button must be Email the group');
+  // The fallback runs the SAME group send as §25's group audience: one
+  // shared path collecting the shown rows' ids for vendor-reengage.
+  assert.ok(v.includes('const sendGroup = async'), 'both entry points must share the one group-send path');
+  assert.ok(v.includes('shownRows.filter(v => usableEmail(v))'), 'the shared path must collect the shown emailable rows');
+  assert.ok(v.includes('targets.map(v => String(v.id))'), 'the shared path must send the shown rows\' ids');
+  // Empty views stay explanatory toasts, never a confirm to nobody.
+  assert.ok(v.includes('No vendors are shown right now'), 'an empty view must explain itself');
+  assert.ok(v.includes('Nobody in the group on screen has an email address.'), 'a group with no emailable rows must explain itself');
+  // §25 group mode is unchanged: its confirm keeps its own wording and
+  // button, still reached through the audience branch.
+  assert.ok(v.includes('Nobody outside this group will get it'), 'the group-mode confirm must keep its scoping promise');
+  assert.ok(v.includes("'Email this group'"), 'the group-mode confirm button must be unchanged');
+  assert.ok(v.includes("audience === 'group'"), 'the audience branch must still come first');
+});
+
 test('stage H: legacy hash aliases deep-link into v2 (permanent)', () => {
   const app = read(v2js, 'app.js');
   assert.ok(app.includes('HASH_ALIASES'), 'app.js must define the legacy hash aliases');

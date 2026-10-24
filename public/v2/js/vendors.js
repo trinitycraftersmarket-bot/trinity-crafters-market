@@ -5,7 +5,7 @@
 // profile, market dates and recorded payments). Writes go through
 // vendor-profile organizer-save / vendor-save / vendor-payment /
 // vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
-import { api, fn, esc, money, nice } from './api.js?v=20261023-14';
+import { api, fn, esc, money, nice } from './api.js?v=20261023-15';
 
 let rows = null;          // vendor-list payload for this screen session
 let creditSources = null; // vendor-credit admin-sources: paid records a credit can be issued from
@@ -364,25 +364,39 @@ export function renderVendors(ctx, root) {
   root.querySelector('#v2-return-send').onclick = async () => {
     const subject = root.querySelector('#v2-return-subject').value;
     const body = root.querySelector('#v2-return-body').value;
-    if (audience === 'group') {
-      // Everyone in the group below: exactly the rows on screen (Show
-      // filter + search) that have a usable email — nobody outside the
-      // group is collected, so nobody outside it can be emailed.
+    // The one group send (§25), shared by both entry points below:
+    // exactly the rows on screen (Show filter + search) that have a
+    // usable email — nobody outside the group is collected, so nobody
+    // outside it can be emailed. textFor(count, groupName) builds the
+    // confirm body once the emailable count is known.
+    const sendGroup = async (title, textFor, confirmLabel) => {
       const targets = shownRows.filter(v => usableEmail(v));
       if (!targets.length) { ctx.toast('Nobody in the group on screen has an email address.', true); return; }
       const groupName = FILTER_LABELS[view.filter] || 'All vendors';
-      const ok = await confirmSheet('Email ' + groupName + '?',
-        'This sends the return invitation to ' + targets.length + ' vendor(s) in ' + groupName + (view.q ? ' matching your search' : '') + ' — exactly the list on screen. Nobody outside this group will get it.',
-        'Email this group');
+      const ok = await confirmSheet(title, textFor(targets.length, groupName), confirmLabel);
       if (!ok) return;
       try {
         const r = await api('vendor-reengage', { ids: targets.map(v => String(v.id)), subject, body });
         ctx.toast('Return invitation emailed to ' + (r && r.count != null ? r.count : targets.length) + ' vendor(s) in ' + groupName + '.');
       } catch (e) { ctx.toast(e.message, true); }
+    };
+    if (audience === 'group') {
+      // Everyone in the group below.
+      await sendGroup('Email ' + (FILTER_LABELS[view.filter] || 'All vendors') + '?',
+        (count, groupName) => 'This sends the return invitation to ' + count + ' vendor(s) in ' + groupName + (view.q ? ' matching your search' : '') + ' — exactly the list on screen. Nobody outside this group will get it.',
+        'Email this group');
       return;
     }
     const ids = [...selected];
-    if (!ids.length) { ctx.toast('Select at least one vendor first.', true); return; }
+    if (!ids.length) {
+      // Nothing ticked (§26): instead of dead-ending, offer the group
+      // on screen — the same sendGroup path as the group audience.
+      if (!shownRows.length) { ctx.toast('No vendors are shown right now — adjust the Show filter or search, then tap send again.', true); return; }
+      await sendGroup('No vendors ticked',
+        (count, groupName) => shownRows.length + ' vendor(s) shown in ' + groupName + (view.q ? ', narrowed by your search' : '') + ' — ' + count + ' with an email address. Email all ' + count + ' instead?',
+        'Email the group');
+      return;
+    }
     mutate(() => api('vendor-reengage', { ids, subject, body }),
       'Return invitation emailed to the selected vendor(s).');
   };
