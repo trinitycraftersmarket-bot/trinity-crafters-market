@@ -5,12 +5,20 @@
 // profile, market dates and recorded payments). Writes go through
 // vendor-profile organizer-save / vendor-save / vendor-payment /
 // vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
-import { api, fn, esc, money, nice } from './api.js?v=20261023-13';
+import { api, fn, esc, money, nice } from './api.js?v=20261023-14';
 
 let rows = null;          // vendor-list payload for this screen session
 let creditSources = null; // vendor-credit admin-sources: paid records a credit can be issued from
 let view = { q: '', filter: 'all' };
 const selected = new Set();  // invite-back selections survive re-renders
+let audience = 'selected';   // invite-back audience: 'selected' (ticked only) or 'group' (rows on screen)
+let shownRows = [];          // rows currently on screen (Show filter + search), refreshed by draw()
+// The Show filter's display names — the same words as the picker options.
+const FILTER_LABELS = { all: 'All vendors', regular: 'Regular vendors only', inactive: "Haven't attended recently", pdf: 'PDF imported vendors' };
+// A row counts as emailable when it carries a usable address (the same
+// normalization the vendor cards use; vendor-reengage also skips
+// email-less rows server-side and reports the true count).
+const usableEmail = v => { const e = String(v.email || '').replace(/,+\s*$/, '').trim(); return e.includes('@') ? e : ''; };
 
 const RETURN_SUBJECT = 'We would love to have you back at Trinity Crafters Market';
 const RETURN_BODY = `Hi {{name}},
@@ -26,6 +34,10 @@ trinitycraftersmarket@gmail.com`;
 
 export function renderVendors(ctx, root) {
   const year = new Date().getFullYear();
+  // The invite card always re-renders with ticked-only chosen (the radio
+  // markup below), so the audience choice resets with the screen — the
+  // visible radio and the send mode can never disagree.
+  audience = 'selected';
   root.innerHTML = `
     <p class="eyebrow">Vendors</p>
     <h2 class="display">Vendor Directory</h2>
@@ -39,10 +51,13 @@ export function renderVendors(ctx, root) {
     </div>
     <div class="card invite-card">
       <h3 class="section-title first">Invite vendors back</h3>
-      <p class="note">Tick vendors in the list below, then send them a friendly invitation to return.</p>
+      <p class="note">Send a friendly invitation to return — either to the vendors you tick below, or to everyone in the group you're viewing (the Show filter plus your search: exactly the list on screen).</p>
       <label class="sheet-field">Subject<input id="v2-return-subject" value="${esc(RETURN_SUBJECT)}"></label>
       <label class="sheet-field">Message<textarea id="v2-return-body" rows="6">${esc(RETURN_BODY)}</textarea></label>
-      <div class="vendor-actions"><button class="btn primary small" id="v2-return-send">Email selected vendors</button><span class="note" id="v2-return-count"></span></div>
+      <p class="note"><strong>Send to</strong></p>
+      <label class="checkline"><input type="radio" name="v2-return-audience" value="selected" checked> <span>Ticked vendors only <span class="note" id="v2-return-count"></span></span></label>
+      <label class="checkline"><input type="radio" name="v2-return-audience" value="group"> <span>Everyone in the group below — <span id="v2-return-group"></span></span></label>
+      <div class="vendor-actions"><button class="btn primary small" id="v2-return-send">Email selected vendors</button></div>
     </div>
     <div id="v2-vendor-list"><div class="card empty-card">Loading vendors…</div></div>`;
 
@@ -72,6 +87,33 @@ export function renderVendors(ctx, root) {
       if (okMsg) ctx.toast(okMsg);
     } catch (e) { ctx.toast(e.message, true); }
   };
+
+  // Confirm before a consequential send (the flooredit.js sheet pattern).
+  const confirmSheet = (title, text, confirmLabel) => new Promise(resolve => {
+    ctx.openSheet(`
+      <h3 class="sheet-title">${esc(title)}</h3>
+      <p class="note">${esc(text)}</p>
+      <div class="sheet-actions">
+        <button class="btn" id="v2-cf-no">Cancel</button>
+        <button class="btn primary" id="v2-cf-yes">${esc(confirmLabel)}</button>
+      </div>`);
+    ctx.sheetEl.querySelector('#v2-cf-no').onclick = () => { ctx.closeSheet(); resolve(false); };
+    ctx.sheetEl.querySelector('#v2-cf-yes').onclick = () => { ctx.closeSheet(); resolve(true); };
+  });
+
+  // Keep the group audience line and the send button honest: in group
+  // mode the audience is whatever is on screen right now (Show filter +
+  // search), so the label and recipient count are recomputed on every
+  // draw, and the button names the mode it will send in.
+  function syncInvite() {
+    const groupEl = root.querySelector('#v2-return-group');
+    if (groupEl) {
+      const emailable = shownRows.filter(v => usableEmail(v)).length;
+      groupEl.textContent = (FILTER_LABELS[view.filter] || 'All vendors') + (view.q ? ' (with your search)' : '') + ' — ' + emailable + ' of ' + shownRows.length + ' have an email';
+    }
+    const btn = root.querySelector('#v2-return-send');
+    if (btn) btn.textContent = audience === 'group' ? 'Email this group' : 'Email selected vendors';
+  }
 
   function historyLine(x) {
     const amount = x.amount_recorded ? money(x.amount) : 'amount not recorded';
@@ -290,6 +332,8 @@ export function renderVendors(ctx, root) {
       }
       return true;
     });
+    shownRows = shown;
+    syncInvite();
     root.querySelector('#v2-return-count').textContent = selected.size ? selected.size + ' selected' : '';
     listEl.innerHTML = `<p class="note">${shown.length} of ${rows.length} vendors shown.</p><div class="vendor-list">${shown.map(cardHtml).join('') || '<div class="card empty-card">No matching vendors.</div>'}</div>`;
     listEl.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => {
@@ -316,10 +360,30 @@ export function renderVendors(ctx, root) {
   root.querySelector('#v2-vendor-filter').value = view.filter;
   root.querySelector('#v2-vendor-search').oninput = e => { view.q = e.target.value.toLowerCase().trim(); draw(); };
   root.querySelector('#v2-vendor-filter').onchange = e => { view.filter = e.target.value; draw(); };
-  root.querySelector('#v2-return-send').onclick = () => {
+  root.querySelectorAll('[name="v2-return-audience"]').forEach(r => r.onchange = () => { audience = r.value; syncInvite(); });
+  root.querySelector('#v2-return-send').onclick = async () => {
+    const subject = root.querySelector('#v2-return-subject').value;
+    const body = root.querySelector('#v2-return-body').value;
+    if (audience === 'group') {
+      // Everyone in the group below: exactly the rows on screen (Show
+      // filter + search) that have a usable email — nobody outside the
+      // group is collected, so nobody outside it can be emailed.
+      const targets = shownRows.filter(v => usableEmail(v));
+      if (!targets.length) { ctx.toast('Nobody in the group on screen has an email address.', true); return; }
+      const groupName = FILTER_LABELS[view.filter] || 'All vendors';
+      const ok = await confirmSheet('Email ' + groupName + '?',
+        'This sends the return invitation to ' + targets.length + ' vendor(s) in ' + groupName + (view.q ? ' matching your search' : '') + ' — exactly the list on screen. Nobody outside this group will get it.',
+        'Email this group');
+      if (!ok) return;
+      try {
+        const r = await api('vendor-reengage', { ids: targets.map(v => String(v.id)), subject, body });
+        ctx.toast('Return invitation emailed to ' + (r && r.count != null ? r.count : targets.length) + ' vendor(s) in ' + groupName + '.');
+      } catch (e) { ctx.toast(e.message, true); }
+      return;
+    }
     const ids = [...selected];
     if (!ids.length) { ctx.toast('Select at least one vendor first.', true); return; }
-    mutate(() => api('vendor-reengage', { ids, subject: root.querySelector('#v2-return-subject').value, body: root.querySelector('#v2-return-body').value }),
+    mutate(() => api('vendor-reengage', { ids, subject, body }),
       'Return invitation emailed to the selected vendor(s).');
   };
 
