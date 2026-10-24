@@ -204,7 +204,7 @@ test('§22: recovery reinstate + completion-link email actions are organizer-onl
   const email = apiSrc.slice(apiSrc.indexOf("action==='application-attempt-email'"), apiSrc.indexOf("action==='recover-application'"));
   assert.ok(email.includes("if(!u.admin)return json({error:'Organizer access only'},403)"), 'email must be organizer-only');
   assert.ok(email.includes("'Complete your Trinity Crafters Market application'"), 'email subject must be the completion subject');
-  assert.ok(email.includes('https://trinitylutzmarkets.com/#apply'), 'email must link the apply form');
+  assert.ok(email.includes('https://trinitylutzmarkets.com/v2/#apply'), 'email must link the apply form (direct /v2/ path since §24, so the #apply fragment survives)');
   assert.ok(email.includes('attemptMissingItems(snap)'), 'the missing list must be computed server-side from the snapshot');
   assert.ok(email.includes('attemptHasAgreementsError(attempt)'), 'the apology must key off the agreements-error test');
   assert.ok(email.includes('emailed_at=now()'), 'the send must stamp emailed_at on the attempt');
@@ -239,6 +239,25 @@ test('§22: apply form restores the vendor\'s own unfinished attempt', () => {
   assert.ok(v.includes('thumb-saved'), 'restored photos without a display URL must still render a chip');
   const css = readFileSync(join(root, 'public', 'v2', 'css', 'app.css'), 'utf8');
   assert.ok(css.includes('.thumb-saved'), 'app.css must style the saved-photo chip');
+});
+
+test('§24: completion email reopens dismissed attempts; restore honors emailed dismissed attempts', () => {
+  const apiSrc = readFileSync(join(root, 'netlify', 'functions', 'api.mjs'), 'utf8');
+  const email = apiSrc.slice(apiSrc.indexOf("action==='application-attempt-email'"), apiSrc.indexOf("action==='recover-application'"));
+  // Emailing a dismissed attempt reopens it in the same transaction,
+  // mirroring the reinstate rule, so the emailed link restores the form.
+  assert.ok(email.includes("attempt.status==='dismissed'"), 'email must detect a dismissed attempt');
+  assert.ok(email.includes("?'failed':'draft'"), 'reopen must reuse the reinstate state rule (failure → failed, quiet → draft)');
+  assert.ok(email.includes('reviewed_at=null,reviewed_by=null'), 'reopen must clear the review stamp');
+  assert.ok(email.includes('reopened_from_dismissed:true'), 'the audit entry must record the reopening');
+  assert.ok(email.includes('https://trinitylutzmarkets.com/v2/#apply'), 'the link must go straight to /v2/ so the fragment survives');
+  assert.ok(!email.includes('trinitylutzmarkets.com/#apply'), 'the root-redirect link must be gone');
+  // Restore: a dismissed attempt the organizer already emailed (links
+  // sent before the reopen-on-send fix) must come back; a dismissed
+  // attempt that was never emailed stays invisible.
+  const mine = apiSrc.slice(apiSrc.indexOf("action==='application-attempt-mine'"), apiSrc.indexOf('if(!staffActionAllowed'));
+  assert.ok(mine.includes("status='dismissed' and emailed_at is not null"), 'mine must include dismissed attempts whose completion link was emailed');
+  assert.ok(mine.includes('order by last_seen_at desc'), 'mine must keep latest-activity ordering');
 });
 
 test('stage H: legacy hash aliases deep-link into v2 (permanent)', () => {

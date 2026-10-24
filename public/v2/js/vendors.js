@@ -5,7 +5,7 @@
 // profile, market dates and recorded payments). Writes go through
 // vendor-profile organizer-save / vendor-save / vendor-payment /
 // vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
-import { api, fn, esc, money, nice } from './api.js?v=20261023-12';
+import { api, fn, esc, money, nice } from './api.js?v=20261023-13';
 
 let rows = null;          // vendor-list payload for this screen session
 let creditSources = null; // vendor-credit admin-sources: paid records a credit can be issued from
