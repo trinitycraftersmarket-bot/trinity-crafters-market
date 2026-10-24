@@ -260,6 +260,36 @@ test('§24: completion email reopens dismissed attempts; restore honors emailed 
   assert.ok(mine.includes('order by last_seen_at desc'), 'mine must keep latest-activity ordering');
 });
 
+test('§25: invite-back email can go to the whole shown group, not just ticked vendors', () => {
+  const v = read(v2js, 'vendors.js');
+  // Audience control in the invite card: ticked-only stays the default,
+  // group mode targets the rows on screen.
+  assert.ok(v.includes('name="v2-return-audience"'), 'the invite card must offer the audience choice');
+  assert.ok(v.includes('Ticked vendors only'), 'ticked mode must be offered');
+  assert.ok(v.includes('Everyone in the group below'), 'group mode must be offered');
+  assert.ok(v.includes("let audience = 'selected'"), 'ticked-only must be the default audience');
+  assert.ok(v.includes('id="v2-return-group"'), 'the group option must carry the live group label/count');
+  // The label names the Show filter group (same words as the picker) and
+  // counts how many of the shown rows have a usable email.
+  assert.ok(v.includes('FILTER_LABELS'), 'group names must come from the filter label map');
+  assert.ok(v.includes("inactive: \"Haven't attended recently\""), 'the inactive group must use the picker wording');
+  assert.ok(v.includes("' have an email'"), 'the group label must report the emailable count');
+  assert.ok(v.includes('usableEmail'), 'emailable rows must be decided by the shared usable-email test');
+  assert.ok(v.includes('shownRows = shown'), 'draw() must publish the on-screen rows for the send');
+  assert.ok(v.includes('syncInvite()'), 'the audience label/count and button must refresh as the list changes');
+  // Group send: ids come from the shown rows with a usable email only,
+  // through the unchanged vendor-reengage action, after a confirm that
+  // names the group and promises nobody outside it is emailed.
+  assert.ok(v.includes('shownRows.filter(v => usableEmail(v))'), 'group mode must collect the shown emailable rows');
+  assert.ok(v.includes('targets.map(v => String(v.id))'), 'group mode must send those rows\' ids');
+  assert.ok(v.includes('Nobody outside this group will get it'), 'the confirm must scope the send to the group');
+  assert.ok(v.includes("'Email this group'"), 'the send button must name group mode');
+  assert.ok(v.includes("audience === 'group'"), 'the send handler must branch on the chosen audience');
+  // Ticked mode is untouched: same selection set, same call, same toast.
+  assert.ok(v.includes('const ids = [...selected];'), 'ticked mode must keep sending the tick set');
+  assert.ok(v.includes("'Return invitation emailed to the selected vendor(s).'"), 'ticked mode toast must be unchanged');
+});
+
 test('stage H: legacy hash aliases deep-link into v2 (permanent)', () => {
   const app = read(v2js, 'app.js');
   assert.ok(app.includes('HASH_ALIASES'), 'app.js must define the legacy hash aliases');

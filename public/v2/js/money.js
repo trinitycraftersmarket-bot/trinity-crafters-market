@@ -4,7 +4,7 @@
 // with three totals). Pure functions over the admin payload, ported from the
 // legacy invoiceCenter() math: same rows, same amounts, same due rules.
 // No fetching, no DOM, no mutation of the payload.
-import { dateOf } from './api.js?v=20261023-13';
+import { dateOf } from './api.js?v=20261023-14';
 
 // One invoice row per owed/payable record, across the three legacy sources:
 // regular bookings (approved/held/paid), imported-attendee invoices, and
