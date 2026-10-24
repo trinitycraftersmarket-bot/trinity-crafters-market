@@ -393,6 +393,48 @@ test('§27: Registered Users section is registered in the Vendors group and rend
   assert.ok(!r.includes('Last active'), 'the UI must not relabel last sign-in as last active');
 });
 
+test('§28: app-usage-ping stamps signed-in Android app use in api.mjs', () => {
+  const apiSrc = readFileSync(join(root, 'netlify', 'functions', 'api.mjs'), 'utf8');
+  const idx = apiSrc.indexOf("action==='app-usage-ping'");
+  assert.ok(idx > 0, 'api.mjs must implement app-usage-ping');
+  // Any signed-in role may ping: the action sits before the staff gate.
+  assert.ok(idx < apiSrc.indexOf('staffActionAllowed(u,action)'), 'the ping must not be staff-gated — vendors stamp their own accounts');
+  const block = apiSrc.slice(idx, apiSrc.indexOf("if(action==='category-scan'"));
+  assert.ok(block.includes("req.method==='POST'"), 'the ping must be POST-only');
+  assert.ok(block.includes('ensureAppUsage'), 'the ping must ensure the app_usage table');
+  assert.ok(block.includes('insert into market.app_usage'), 'the ping must upsert into market.app_usage');
+  assert.ok(block.includes("'android-app'"), 'the stamp must record the android-app platform');
+  assert.ok(block.includes('on conflict (user_id) do update set platform=excluded.platform,last_seen_at=now()'), 'repeat pings must move last_seen_at (and platform) only — first_seen_at never moves');
+  assert.ok(block.includes("at time zone 'America/New_York'"), 'the write must be day-bounded in the market timezone — at most one stamp move per market day');
+  assert.ok(apiSrc.includes('create table if not exists market.app_usage'), 'ensureAppUsage must create the table in the ensure pattern');
+  // Registered Users carries the stamp per account.
+  const regBlock = apiSrc.slice(apiSrc.indexOf("action==='registered-users'"), apiSrc.indexOf("action==='survey-report'"));
+  assert.ok(regBlock.includes('from market.app_usage'), 'registered-users must read market.app_usage');
+  assert.ok(regBlock.includes('app_usage:'), 'registered rows must carry app_usage');
+  assert.ok(regBlock.includes('usageByUser.get(String(acct.id))||null'), 'accounts never seen in the app must carry app_usage: null');
+});
+
+test('§28: the v2 shell pings from inside the Android app; Registered Users shows use, never downloads', () => {
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes('function insideAndroidApp()'), 'app.js must define the Android-shell detection');
+  assert.ok(app.includes('window.Capacitor'), 'detection must use the Capacitor bridge first');
+  assert.ok(app.includes('isNativePlatform'), 'detection must check isNativePlatform()');
+  assert.ok(app.includes("getPlatform() === 'android'"), 'detection must confirm the android platform');
+  assert.ok(app.includes('/;\\s*wv\\)/'), 'detection must keep the WebView user-agent fallback');
+  assert.ok(app.includes("api('app-usage-ping', {})"), 'boot must ping the app-usage-ping action');
+  assert.ok(app.includes('pingAppUsage();'), 'boot must call the ping once the session exists');
+  assert.ok(app.includes('APP_USAGE_PING_KEY'), 'the ping must be throttled per day per device');
+  assert.ok(app.includes('sessionStorage'), 'the throttle must live in sessionStorage (v2 keeps nothing in localStorage)');
+  assert.ok(!app.includes('localStorage'), 'v2 must never reference localStorage (frontend rule)');
+  const r = read(v2js, 'registered.js');
+  assert.ok(r.includes('use the Android app'), 'the header stat must say "use the Android app"');
+  assert.ok(r.includes('data-reg-tab="app"'), 'the Android app list needs its own toggle chip');
+  assert.ok(r.includes('First used'), 'Android rows must show when the account was first seen in the app');
+  assert.ok(r.includes('Last used'), 'Android rows must show when the account was last seen in the app');
+  assert.ok(r.includes("'<span class=\"badge inside\">Android app</span>'"), 'registered rows must badge app users');
+  assert.ok(!r.includes('downloaded'), 'the UI observes use — it must never claim a download');
+});
+
 test('stage G: attendees gains the PDF import and the printable attendance list', () => {
   assert.ok(existsSync(join(v2js, 'pdfimport.js')), 'missing pdfimport.js');
   const p = read(v2js, 'pdfimport.js');

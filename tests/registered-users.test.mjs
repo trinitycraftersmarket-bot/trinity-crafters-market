@@ -24,9 +24,10 @@ const expire=async()=>{}; const audit=async()=>{}; const queue=async()=>({});
   ({ default: handler } = await import('data:text/javascript;base64,' + Buffer.from(mock + source).toString('base64')));
 });
 
-const makeSql = ({ staff = [], apps = [], profiles = [], imported = [] } = {}) => {
+const makeSql = ({ staff = [], apps = [], profiles = [], imported = [], usage = [] } = {}) => {
   const sql = async (strings, ...values) => {
     const text = strings.join(' ');
+    if (text.includes('market.app_usage')) return usage;
     if (text.includes('market.staff')) return staff;
     if (text.includes('market.applications')) return apps;
     if (text.includes('market.vendor_profiles')) return profiles;
@@ -81,6 +82,9 @@ test('registered-users links accounts to vendor records and lists the unregister
       { email: 'b@example.com', name: 'Bee', business: 'Bee Goods', created_at: '2026-04-01T00:00:00Z' },
       { email: 'ghost@example.com', name: 'Ghost', business: 'Ghost Imported', created_at: '2026-03-01T00:00:00Z' },
       { email: 'pdf@example.com', name: 'Pdf', business: 'Pdf Crafts', created_at: '2026-02-01T00:00:00Z' }
+    ],
+    usage: [
+      { user_id: 'u3', platform: 'android-app', first_seen_at: '2026-10-10T00:00:00Z', last_seen_at: '2026-10-21T00:00:00Z' }
     ]
   });
   globalThis.__who = { id: 'u1', email: 'org@example.com', admin: true, manager: false, permissions: [] };
@@ -108,6 +112,11 @@ test('registered-users links accounts to vendor records and lists the unregister
   assert.equal(byEmail['org@example.com'].has_vendor_record, false);
   assert.equal(byEmail['stray@example.com'].has_vendor_record, false);
   assert.equal(byEmail['stray@example.com'].matched_via, null);
+  // §28: the usage stamp rides along by account id — present for the
+  // account seen in the Android app, null for everyone else.
+  assert.deepEqual(byEmail['b@example.com'].app_usage, { platform: 'android-app', first_seen_at: '2026-10-10T00:00:00Z', last_seen_at: '2026-10-21T00:00:00Z' });
+  assert.equal(byEmail['a@example.com'].app_usage, null);
+  assert.equal(byEmail['org@example.com'].app_usage, null);
   // Flip side: deduped by email, applications win over imported twins,
   // account holders are excluded, sorted by business.
   assert.deepEqual(body.not_registered, [

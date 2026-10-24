@@ -17,37 +17,37 @@
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName } from './api.js?v=20261023-16';
-import { VERSION, STAGE } from './version.js?v=20261023-16';
-import { renderHome } from './home.js?v=20261023-16';
-import { renderEventDay } from './eventday.js?v=20261023-16';
-import { renderAttendees } from './attendees.js?v=20261023-16';
-import { renderApplications } from './applications.js?v=20261023-16';
-import { renderWaitlist } from './waitlist.js?v=20261023-16';
-import { renderMoves } from './moves.js?v=20261023-16';
-import { renderVendors } from './vendors.js?v=20261023-16';
-import { renderPayments } from './payments.js?v=20261023-16';
-import { renderInvoices } from './invoices.js?v=20261023-16';
-import { renderFloorEditor } from './flooredit.js?v=20261023-16';
-import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-16';
-import { renderComms } from './comms.js?v=20261023-16';
-import { renderThreads } from './threads.js?v=20261023-16';
-import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-16';
-import { renderSocial } from './social.js?v=20261023-16';
-import { renderRsvps } from './rsvps.js?v=20261023-16';
-import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-16';
-import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-16';
-import { renderManualBooking } from './manualbooking.js?v=20261023-16';
-import { renderCancelled } from './cancelled.js?v=20261023-16';
-import { renderBanned } from './banned.js?v=20261023-16';
-import { renderRegistered } from './registered.js?v=20261023-16';
-import { renderFoodTrucks } from './foodtrucks.js?v=20261023-16';
-import { renderFoodTruckApply } from './trucksapply.js?v=20261023-16';
-import { renderCheckin } from './checkin.js?v=20261023-16';
-import { renderAppRecovery } from './apprecovery.js?v=20261023-16';
-import { renderBilling } from './billing.js?v=20261023-16';
-import { renderExpenses } from './expenses.js?v=20261023-16';
-import { renderReports } from './reports.js?v=20261023-16';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName, todayKey } from './api.js?v=20261023-17';
+import { VERSION, STAGE } from './version.js?v=20261023-17';
+import { renderHome } from './home.js?v=20261023-17';
+import { renderEventDay } from './eventday.js?v=20261023-17';
+import { renderAttendees } from './attendees.js?v=20261023-17';
+import { renderApplications } from './applications.js?v=20261023-17';
+import { renderWaitlist } from './waitlist.js?v=20261023-17';
+import { renderMoves } from './moves.js?v=20261023-17';
+import { renderVendors } from './vendors.js?v=20261023-17';
+import { renderPayments } from './payments.js?v=20261023-17';
+import { renderInvoices } from './invoices.js?v=20261023-17';
+import { renderFloorEditor } from './flooredit.js?v=20261023-17';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-17';
+import { renderComms } from './comms.js?v=20261023-17';
+import { renderThreads } from './threads.js?v=20261023-17';
+import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-17';
+import { renderSocial } from './social.js?v=20261023-17';
+import { renderRsvps } from './rsvps.js?v=20261023-17';
+import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-17';
+import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-17';
+import { renderManualBooking } from './manualbooking.js?v=20261023-17';
+import { renderCancelled } from './cancelled.js?v=20261023-17';
+import { renderBanned } from './banned.js?v=20261023-17';
+import { renderRegistered } from './registered.js?v=20261023-17';
+import { renderFoodTrucks } from './foodtrucks.js?v=20261023-17';
+import { renderFoodTruckApply } from './trucksapply.js?v=20261023-17';
+import { renderCheckin } from './checkin.js?v=20261023-17';
+import { renderAppRecovery } from './apprecovery.js?v=20261023-17';
+import { renderBilling } from './billing.js?v=20261023-17';
+import { renderExpenses } from './expenses.js?v=20261023-17';
+import { renderReports } from './reports.js?v=20261023-17';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -549,6 +549,53 @@ function publicHead() {
   $('#sidenav').innerHTML = '';
 }
 
+// Android-app detection (§28). The Android app is a Capacitor shell
+// (appId com.trinitylutzmarkets.app) whose server.url loads THIS site,
+// so "in the app" has to be detected from inside the page. Signals, in
+// order of trust:
+//  1. The Capacitor bridge — window.Capacitor is injected into the
+//     shell's WebView and reaches remote-served pages like this one
+//     (the classic UI's in-app controls script already relies on
+//     exactly this). isNativePlatform() + getPlatform()==='android'
+//     is the strongest signal available.
+//  2. User-Agent fallback for a shell whose bridge is missing: an
+//     Android WebView UA carries the '; wv)' token, which a regular
+//     Chrome tab never sends — so plain browser visits on an Android
+//     phone never count as app use.
+function insideAndroidApp() {
+  try {
+    const cap = window.Capacitor;
+    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
+      if (typeof cap.getPlatform === 'function') return cap.getPlatform() === 'android';
+      return /Android/i.test(navigator.userAgent || '');
+    }
+  } catch { /* a broken bridge must never break boot — fall through to the UA */ }
+  const ua = navigator.userAgent || '';
+  return /Android/i.test(ua) && /;\s*wv\)/.test(ua);
+}
+
+// Usage ping (§28): when a signed-in session boots inside the Android
+// app, stamp the account server-side (Registered Users shows who uses
+// the app). Fire-and-forget: every failure — offline, signed out, not
+// in the app — is silent, and signed-out boots return before this is
+// called, so nothing is ever stamped anonymously. Throttled to at
+// most one ping per day per device: a sessionStorage day key (the v2
+// codebase stores nothing persistently in the browser — audit §1)
+// skips repeat boots in the same app session, and the server write
+// is day-bounded as well, so a fresh app session later the same day
+// still cannot move the stamp twice.
+const APP_USAGE_PING_KEY = 'tcm-app-usage-ping-day';
+function pingAppUsage() {
+  try {
+    if (!insideAndroidApp()) return;
+    const day = todayKey();
+    if (sessionStorage.getItem(APP_USAGE_PING_KEY) === day) return;
+    api('app-usage-ping', {}).then(() => {
+      try { sessionStorage.setItem(APP_USAGE_PING_KEY, day); } catch { /* storage unavailable */ }
+    }).catch(() => {});
+  } catch { /* usage tracking must never break the shell */ }
+}
+
 async function boot() {
   const root = $('#screen');
   $('#sheet-root').innerHTML = '';
@@ -568,6 +615,7 @@ async function boot() {
     signInScreen(root);
     return;
   }
+  pingAppUsage();
   // Every role lands in the same shell now (Stage 3b): route() dispatches
   // to the organizer, manager, or vendor screens by role.
   try {

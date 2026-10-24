@@ -405,6 +405,23 @@ alter table market.vendor_communications enable row level security;
 revoke all on market.vendor_communications from anon,authenticated;
 
 -- ----------------------------------------------------------------------------
+-- 12a. market.app_usage — accounts SEEN using the Android app (audit
+--     section 28, Oct 23 2026). The v2 shell pings 'app-usage-ping'
+--     when it detects the Capacitor Android shell around a signed-in
+--     session; the row records observed USE, never a download (the APK
+--     release counter is anonymous). Reproduced from the runtime
+--     CREATE TABLE in ensureAppUsage(), netlify/functions/api.mjs.
+-- ----------------------------------------------------------------------------
+create table if not exists market.app_usage(
+  user_id uuid primary key,
+  platform text not null,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+alter table market.app_usage enable row level security;
+revoke all on market.app_usage from anon,authenticated;
+
+-- ----------------------------------------------------------------------------
 -- 13. Columns that exist in the live DB on tables defined in setup.sql
 --     (additive ALTERs only — the same columns the runtime DDL in the
 --     functions adds today, audit section 5 pattern R-6, plus columns that

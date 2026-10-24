@@ -167,6 +167,18 @@ async function ensureApplicationAttempts(sql){
  // §22: when the organizer emailed the vendor a completion link.
  await sql`alter table market.application_attempts add column if not exists emailed_at timestamptz, add column if not exists emailed_by text`;
 }
+// §28: one row per account ever SEEN using the Android app (the client
+// pings 'app-usage-ping' from inside the Capacitor shell). This records
+// observed use, never a download — GitHub's release counter is anonymous
+// and the shell is only visible once it loads the site signed-in.
+async function ensureAppUsage(sql){
+ await sql`create table if not exists market.app_usage(
+  user_id uuid primary key,
+  platform text not null,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+ )`;
+}
 function cleanAttemptSnapshot(raw={}){
  const s=v=>String(v??'').trim(),clip=(v,n)=>s(v).slice(0,n),uuid=v=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s(v))?s(v):'';
  const dates=Array.isArray(raw.dates)?raw.dates.slice(0,50).map(d=>({id:uuid(d?.id),space:['indoor','outdoor'].includes(d?.space)?d.space:''})).filter(d=>d.id):[];
@@ -355,6 +367,20 @@ ${description}`;
  }
  const u=await identity(req),sql=db();
  if(action==='me')return json(u);
+ if(action==='app-usage-ping'&&req.method==='POST'){
+  // §28: the v2 shell pings this when it detects it is running inside
+  // the Android app. Any signed-in role may ping — the stamp is about
+  // the account, not a permission. The client only sends it from the
+  // Android shell, so the platform is fixed here. A first ping inserts;
+  // later pings move last_seen_at (and platform) only — first_seen_at
+  // never moves. The write itself is day-bounded in the market's
+  // timezone: once an account is stamped for a market day, further
+  // pings that day are no-ops, so "last seen" advances at most once
+  // per day no matter how often the app is opened.
+  await ensureAppUsage(sql);
+  await sql`insert into market.app_usage(user_id,platform,first_seen_at,last_seen_at) values(${u.id},'android-app',now(),now()) on conflict (user_id) do update set platform=excluded.platform,last_seen_at=now() where (market.app_usage.last_seen_at at time zone 'America/New_York')::date<(now() at time zone 'America/New_York')::date`;
+  return json({ok:true});
+ }
  if(req.method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin)return json({error:'Invalid request origin'},403);
  if(action==='category-scan'&&req.method==='POST'){
   const p=await req.json();required(p.description,'product description',5000);
@@ -598,8 +624,12 @@ ${description}`;
   //
   // Response: { registered: [{id, email, registered_at,
   // last_sign_in_at, business, name, matched_via, has_vendor_record,
-  // organizer, staff}], not_registered: [{email, business, name}],
-  // counts: {registered, not_registered, with_vendor_record} }.
+  // organizer, staff, app_usage}], not_registered: [{email, business,
+  // name}], counts: {registered, not_registered, with_vendor_record} }.
+  // app_usage (§28) is the account's market.app_usage row —
+  // {platform, first_seen_at, last_seen_at} — or null when the account
+  // has never been seen in the Android app. It records observed USE of
+  // the app, never a download.
   // last_sign_in_at is the account's last SIGN-IN (Supabase Auth) —
   // not a general "last active" signal, and the UI labels it as such.
   //
@@ -628,6 +658,9 @@ ${description}`;
   for(const r of profileRows){if(r.user_id&&!profileByUser.has(r.user_id))profileByUser.set(r.user_id,r);const e=setupEmail(r.email);if(e&&!profileByEmail.has(e))profileByEmail.set(e,r);}
   for(const r of importedRows){const e=setupEmail(r.email);if(e&&!importedByEmail.has(e))importedByEmail.set(e,r);}
   const adminEmail=setupEmail(process.env.ADMIN_EMAIL||'');
+  await ensureAppUsage(sql);
+  const usageRows=await sql`select user_id,platform,first_seen_at,last_seen_at from market.app_usage`;
+  const usageByUser=new Map(usageRows.map(r=>[String(r.user_id),{platform:r.platform,first_seen_at:r.first_seen_at,last_seen_at:r.last_seen_at}]));
   const accountEmails=new Set();
   const registered=accounts.map(acct=>{
    const email=setupEmail(acct.email||'');if(email)accountEmails.add(email);
@@ -637,7 +670,7 @@ ${description}`;
    else if(email&&appByEmail.has(email)){link=appByEmail.get(email);via='application-email';}
    else if(email&&profileByEmail.has(email)){link=profileByEmail.get(email);via='profile-email';}
    else if(email&&importedByEmail.has(email)){link=importedByEmail.get(email);via='imported-email';}
-   return {id:acct.id,email:email||String(acct.email||''),registered_at:acct.created_at||null,last_sign_in_at:acct.last_sign_in_at||null,business:link?.business||'',name:link?.name||'',matched_via:via,has_vendor_record:!!link,organizer:!!email&&email===adminEmail,staff:!!email&&staffEmails.has(email)};
+   return {id:acct.id,email:email||String(acct.email||''),registered_at:acct.created_at||null,last_sign_in_at:acct.last_sign_in_at||null,business:link?.business||'',name:link?.name||'',matched_via:via,has_vendor_record:!!link,organizer:!!email&&email===adminEmail,staff:!!email&&staffEmails.has(email),app_usage:usageByUser.get(String(acct.id))||null};
   }).sort((a,b)=>String(b.registered_at||'').localeCompare(String(a.registered_at||'')));
   // Flip side: vendor emails from applications + imported attendees,
   // deduped by email (the newest application wins over an imported
