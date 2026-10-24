@@ -6,7 +6,7 @@
 // in the shared sheet system, every mutation re-fetches, and a save only
 // ever sends the fields it means to change (§5 R-7: the event-capacity
 // floor now bites only when capacity is actually reduced, server-side).
-import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261023-20';
+import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261023-21';
 
 const stamp = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 const intOr = (v, f) => { const n = parseInt(v, 10); return Number.isInteger(n) && n >= 0 ? n : f; };
@@ -197,6 +197,19 @@ export function renderCategories(ctx, root) {
     };
   };
 
+  // Same confirm-sheet pattern as flooredit.js / vendors.js.
+  const confirmSheet = (title, text, confirmLabel) => new Promise(resolve => {
+    ctx.openSheet(`
+      <h3 class="sheet-title">${esc(title)}</h3>
+      <p class="note">${esc(text)}</p>
+      <div class="sheet-actions">
+        <button class="btn" id="su-cf-no">Cancel</button>
+        <button class="btn primary" id="su-cf-yes">${esc(confirmLabel)}</button>
+      </div>`);
+    ctx.sheetEl.querySelector('#su-cf-no').onclick = () => { ctx.closeSheet(); resolve(false); };
+    ctx.sheetEl.querySelector('#su-cf-yes').onclick = () => { ctx.closeSheet(); resolve(true); };
+  });
+
   function categorySheet(c = {}) {
     ctx.openSheet(`
       <h3 class="sheet-title">${c.id ? 'Edit' : 'Add'} category</h3>
@@ -251,6 +264,11 @@ export function renderCategories(ctx, root) {
         </form>
       </div>
       <div class="vendor-actions"><button class="btn small" id="su-add-category">Add category</button></div>
+      <div class="card">
+        <h3 class="section-title">One vendor per category</h3>
+        <p class="note">Owner rule: every open (active) category allows <strong>1 vendor per date</strong>. A category with a booking on a date then shows 0 left for that date; all others show 1 left. This sets the global defaults in one go — categories already at 1 are skipped, inactive categories are untouched, per-date overrides still apply on their dates, and existing bookings are never changed.</p>
+        <div class="vendor-actions"><button class="btn primary small" id="su-cats-one">Set all open categories to 1 per date</button></div>
+      </div>
       <h3 class="section-title">Global default category limits — all dates</h3>
       <p class="note">These are DEFAULT values, not the availability for the date selected above. Changing them can affect other events.</p>
       <div class="vendor-list">${(a.allCategories || []).map(c => `
@@ -278,6 +296,21 @@ export function renderCategories(ctx, root) {
       } catch (err) { ctx.toast(err.message, true); }
     };
     root.querySelector('#su-add-category').onclick = () => categorySheet();
+    root.querySelector('#su-cats-one').onclick = async () => {
+      const changing = (admin().allCategories || []).filter(c => c.active && Number(c.vendor_limit) !== 1).length;
+      if (!changing) { ctx.toast('All open categories are already at 1 per date.'); return; }
+      const ok = await confirmSheet(
+        'Set all open categories to 1 per date?',
+        'This sets the global default to 1 vendor per date for ' + changing + ' open categor' + (changing === 1 ? 'y' : 'ies') + ' that are not already at 1. Per-date overrides, where set, still apply on their dates. Existing bookings are never changed.',
+        'Set to 1 per date');
+      if (!ok) return;
+      try {
+        const r = await api('categories-set-limit-one', {});
+        ctx.toast('Done — ' + r.count + ' open categor' + (r.count === 1 ? 'y' : 'ies') + ' set to 1 per date.');
+        await ctx.refreshAdmin();
+        draw();
+      } catch (err) { ctx.toast(err.message, true); }
+    };
     root.querySelectorAll('[data-edit-category]').forEach(b => b.onclick = () => categorySheet((admin().allCategories || []).find(c => String(c.id) === String(b.dataset.editCategory)) || {}));
   }
   draw();
