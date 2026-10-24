@@ -496,11 +496,15 @@ ${description}`;
  if(action==='application-attempt-mine'){
   // Vendor-self (§22): the signed-in vendor's own latest unfinished
   // attempt, so the completion-link email lands them back in their
-  // partially-completed form. Only their own rows, never dismissed or
-  // completed ones. Photo paths are re-signed for display; agreements
-  // and the signature deliberately do NOT carry over (the form starts
-  // them unchecked — the vendor must re-accept).
-  await ensureApplicationAttempts(sql);const [row]=await sql`select id,snapshot,status,last_seen_at from market.application_attempts where user_id=${u.id} and status in ('draft','submitting','failed') order by last_seen_at desc limit 1`;
+  // partially-completed form. Only their own rows, never completed
+  // ones. A dismissed attempt stays invisible UNLESS the organizer has
+  // emailed its completion link (emailed_at set, §24) — those links
+  // must restore too, including ones sent before the email action
+  // learned to reopen dismissed attempts on send. Photo paths are
+  // re-signed for display; agreements and the signature deliberately
+  // do NOT carry over (the form starts them unchecked — the vendor
+  // must re-accept).
+  await ensureApplicationAttempts(sql);const [row]=await sql`select id,snapshot,status,last_seen_at from market.application_attempts where user_id=${u.id} and (status in ('draft','submitting','failed') or (status='dismissed' and emailed_at is not null)) order by last_seen_at desc limit 1`;
   if(!row)return json({attempt:null});
   const snap=cleanAttemptSnapshot(row.snapshot||{});snap.signature='';snap.agreements={};
   const photoUrls=[];for(const path of snap.photos){if(!String(path).startsWith(u.id+'/'))continue;const {data}=await supa().storage.from('vendor-photos').createSignedUrl(path,3600);if(data?.signedUrl)photoUrls.push({path,url:data.signedUrl});}
@@ -713,7 +717,7 @@ ${ourBug?`
 First, an apology: if you saw an error message about the agreements and your signature when you tried to submit, that was a bug in our form — not anything you did wrong. It is fixed now.
 `:''}
 Finish your application here:
-https://trinitylutzmarkets.com/#apply
+https://trinitylutzmarkets.com/v2/#apply
 
 Sign in with this email address (${email}) and the form will reload what you already entered.
 ${missing.length?`
@@ -729,7 +733,15 @@ Questions? Just reply to this email and we will be glad to help.
 Trinity Crafters Market
 trinitycraftersmarket@gmail.com`;
   const emailedAt=new Date().toISOString();
-  await sql.begin(async tx=>{await queue(tx,email,subject,body);await tx`update market.application_attempts set emailed_at=now(),emailed_by=${u.email} where id=${id}`;await audit(tx,u,'application completion email sent',{attempt_id:id,email,missing,our_bug:ourBug,note:note||null});});
+  // §24: emailing a DISMISSED attempt reopens it in the same send, so
+  // the completion link lands the vendor back in their saved form
+  // (application-attempt-mine restores working-queue attempts; a
+  // still-dismissed one would read as a blank new application). Same
+  // state rule as application-attempt-reinstate: a recorded failure
+  // reopens as 'failed', a quiet attempt as 'draft'; the review stamp
+  // is cleared, last_seen_at stays the vendor's real last activity.
+  const reopened=attempt.status==='dismissed',reopenStatus=(String(attempt.error_message||'').trim()!==''||(Array.isArray(attempt.error_log)&&attempt.error_log.length>0))?'failed':'draft';
+  await sql.begin(async tx=>{await queue(tx,email,subject,body);if(reopened)await tx`update market.application_attempts set status=${reopenStatus},reviewed_at=null,reviewed_by=null,emailed_at=now(),emailed_by=${u.email} where id=${id}`;else await tx`update market.application_attempts set emailed_at=now(),emailed_by=${u.email} where id=${id}`;await audit(tx,u,'application completion email sent',{attempt_id:id,email,missing,our_bug:ourBug,note:note||null,...(reopened?{reopened_from_dismissed:true,reopened_status:reopenStatus}:{})});});
   await flushMail();
   // Never report the email as sent unless the outbox row for this exact
   // message was actually accepted (same honesty rule as manual booking).
