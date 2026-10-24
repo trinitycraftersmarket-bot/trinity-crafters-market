@@ -17,37 +17,37 @@
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName, todayKey } from './api.js?v=20261023-18';
-import { VERSION, STAGE } from './version.js?v=20261023-18';
-import { renderHome } from './home.js?v=20261023-18';
-import { renderEventDay } from './eventday.js?v=20261023-18';
-import { renderAttendees } from './attendees.js?v=20261023-18';
-import { renderApplications } from './applications.js?v=20261023-18';
-import { renderWaitlist } from './waitlist.js?v=20261023-18';
-import { renderMoves } from './moves.js?v=20261023-18';
-import { renderVendors } from './vendors.js?v=20261023-18';
-import { renderPayments } from './payments.js?v=20261023-18';
-import { renderInvoices } from './invoices.js?v=20261023-18';
-import { renderFloorEditor } from './flooredit.js?v=20261023-18';
-import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-18';
-import { renderComms } from './comms.js?v=20261023-18';
-import { renderThreads } from './threads.js?v=20261023-18';
-import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-18';
-import { renderSocial } from './social.js?v=20261023-18';
-import { renderRsvps } from './rsvps.js?v=20261023-18';
-import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-18';
-import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-18';
-import { renderManualBooking } from './manualbooking.js?v=20261023-18';
-import { renderCancelled } from './cancelled.js?v=20261023-18';
-import { renderBanned } from './banned.js?v=20261023-18';
-import { renderRegistered } from './registered.js?v=20261023-18';
-import { renderFoodTrucks } from './foodtrucks.js?v=20261023-18';
-import { renderFoodTruckApply } from './trucksapply.js?v=20261023-18';
-import { renderCheckin } from './checkin.js?v=20261023-18';
-import { renderAppRecovery } from './apprecovery.js?v=20261023-18';
-import { renderBilling } from './billing.js?v=20261023-18';
-import { renderExpenses } from './expenses.js?v=20261023-18';
-import { renderReports } from './reports.js?v=20261023-18';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName, todayKey } from './api.js?v=20261023-19';
+import { VERSION, STAGE } from './version.js?v=20261023-19';
+import { renderHome } from './home.js?v=20261023-19';
+import { renderEventDay } from './eventday.js?v=20261023-19';
+import { renderAttendees } from './attendees.js?v=20261023-19';
+import { renderApplications } from './applications.js?v=20261023-19';
+import { renderWaitlist } from './waitlist.js?v=20261023-19';
+import { renderMoves } from './moves.js?v=20261023-19';
+import { renderVendors } from './vendors.js?v=20261023-19';
+import { renderPayments } from './payments.js?v=20261023-19';
+import { renderInvoices } from './invoices.js?v=20261023-19';
+import { renderFloorEditor } from './flooredit.js?v=20261023-19';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261023-19';
+import { renderComms } from './comms.js?v=20261023-19';
+import { renderThreads } from './threads.js?v=20261023-19';
+import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261023-19';
+import { renderSocial } from './social.js?v=20261023-19';
+import { renderRsvps } from './rsvps.js?v=20261023-19';
+import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261023-19';
+import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261023-19';
+import { renderManualBooking } from './manualbooking.js?v=20261023-19';
+import { renderCancelled } from './cancelled.js?v=20261023-19';
+import { renderBanned } from './banned.js?v=20261023-19';
+import { renderRegistered } from './registered.js?v=20261023-19';
+import { renderFoodTrucks } from './foodtrucks.js?v=20261023-19';
+import { renderFoodTruckApply } from './trucksapply.js?v=20261023-19';
+import { renderCheckin } from './checkin.js?v=20261023-19';
+import { renderAppRecovery } from './apprecovery.js?v=20261023-19';
+import { renderBilling } from './billing.js?v=20261023-19';
+import { renderExpenses } from './expenses.js?v=20261023-19';
+import { renderReports } from './reports.js?v=20261023-19';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.
@@ -205,10 +205,12 @@ function renderChrome() {
         <div><h1>Trinity Crafters Market</h1>
         <p>${subtitle}</p></div>
       </div>
-      <div class="head-user"><span class="head-email">${esc(u.email)}</span><button class="btn small ghost-light" id="v2-signout">Sign out</button></div>
+      <div class="head-user"><span class="head-email">${esc(u.email)}</span>${role === 'vendor' ? `<button class="btn small ghost-light" id="v2-refresh" ${vendorRefreshBusy ? 'disabled' : ''}>${vendorRefreshBusy ? 'Refreshing…' : 'Refresh'}</button>` : ''}<button class="btn small ghost-light" id="v2-signout">Sign out</button></div>
     </div>`;
   const out = $('#v2-signout');
   if (out) out.onclick = resetSession;
+  const refreshBtn = $('#v2-refresh');
+  if (refreshBtn) refreshBtn.onclick = onVendorRefresh;
 
   let tabs, activeFor, homeTarget = '';
   if (role === 'admin') {
@@ -415,6 +417,51 @@ async function refreshVendor() {
 }
 async function ensurePublic() {
   if (!state.publicData) state.publicData = await api('public');
+}
+
+// --- vendor Refresh button (§30) ------------------------------------------------
+// Vendor data changes under a vendor — booking status, waitlist offers
+// (12-hour window), move decisions, floor-plan spots, credits — and until
+// now the only way to pull it fresh was closing the app. The header
+// Refresh button (vendor shell only, rendered by renderChrome) re-runs
+// the shell's own vendor refresh path and re-renders the current screen.
+// It never reloads the page, never navigates, never signs anyone out.
+// Apply-screen exception: renderVendorApply holds in-progress input only
+// in the DOM (typed fields, checked agreements, the typed signature)
+// plus render-local state (chosen dates, photos) — re-rendering would
+// wipe a half-finished application. On Apply the refresh updates the
+// underlying payloads (rows / moves / credits, and the public catalog
+// the form's counts come from, for its next render) and the header, and
+// leaves the form exactly as it stands; the toast says so.
+let vendorRefreshBusy = false;
+function syncRefreshButton() {
+  const b = $('#v2-refresh');
+  if (!b) return;
+  b.disabled = vendorRefreshBusy;
+  b.textContent = vendorRefreshBusy ? 'Refreshing…' : 'Refresh';
+}
+async function onVendorRefresh() {
+  if (vendorRefreshBusy) return;
+  vendorRefreshBusy = true;
+  syncRefreshButton();
+  try {
+    await refreshVendor();
+    if (state.route.name === 'vapply') {
+      // Fresh catalog for the form's next render; a failure here keeps
+      // the catalog already loaded, so it never fails the refresh.
+      try { state.publicData = await api('public'); } catch { /* keep the current catalog */ }
+      renderChrome();
+      toast('Refreshed — your bookings, offers and credits are up to date. The application you are working on was left as-is.');
+    } else {
+      await route();
+      toast('Refreshed · ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }));
+    }
+  } catch (e) {
+    toast(e.message || 'Refresh failed — check your connection and try again.', true);
+  } finally {
+    vendorRefreshBusy = false;
+    syncRefreshButton();
+  }
 }
 
 const ctx = {

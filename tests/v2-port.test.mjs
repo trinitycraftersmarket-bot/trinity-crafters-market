@@ -507,3 +507,52 @@ test("§29: 'mine' parity — v2 and classic share the one bookings payload, imp
   assert.ok(mine.includes('claimImported'), 'mine must still run the §13.5 claim annotation');
   assert.ok(mine.indexOf('from market.imported_attendees i') < mine.indexOf('claimImported'), 'imported rows must be selected before/regardless of the claim');
 });
+
+test('§30: the vendor header carries a Refresh button, wired to the shell refresh path', () => {
+  const app = read(v2js, 'app.js');
+  // The button renders only for the vendor role, next to Sign out in the
+  // shared header — the organizer and manager shells never get it.
+  assert.ok(app.includes('id="v2-refresh"'), 'the vendor header must render a Refresh button');
+  assert.ok(app.includes("role === 'vendor' ? `<button class=\"btn small ghost-light\" id=\"v2-refresh\""), 'the Refresh button must be gated on the vendor role');
+  assert.ok(app.includes("refreshBtn.onclick = onVendorRefresh"), 'the header must wire the Refresh button');
+  // The handler re-runs the existing vendor refresh path — no new fetch
+  // plumbing, no page reload, no session or navigation side effects.
+  // (Slice bounded to the handler itself: route()'s error card further
+  // down legitimately carries a Reload button.)
+  const handler = app.slice(app.indexOf('async function onVendorRefresh()'), app.indexOf('const ctx = {'));
+  assert.ok(handler.includes('if (vendorRefreshBusy) return;'), 'double-taps must not stack refreshes');
+  assert.ok(handler.includes('await refreshVendor();'), 'the refresh must re-run refreshVendor (mine / moves / credits)');
+  assert.ok(!handler.includes('location.reload'), 'the refresh must never reload the page');
+  assert.ok(!handler.includes('resetSession'), 'the refresh must never sign anyone out');
+  assert.ok(!handler.includes('navigate('), 'the refresh must never change navigation');
+  // Busy state: the button disables and relabels while a refresh is in
+  // flight, and the state survives renderChrome (which rebuilds the
+  // header on every route) because the markup renders from the flag.
+  assert.ok(app.includes('let vendorRefreshBusy = false;'), 'the busy flag must be module state');
+  assert.ok(app.includes("b.textContent = vendorRefreshBusy ? 'Refreshing…' : 'Refresh';"), 'the button must show a busy label');
+  assert.ok(handler.includes('vendorRefreshBusy = false;'), 'the handler must always clear the busy flag');
+  // Failures are toasted, never swallowed (§29 lesson).
+  assert.ok(handler.includes('toast(e.message'), 'a failed refresh must toast the error');
+  assert.ok(handler.includes("toast('Refreshed · '"), 'a successful refresh must confirm with a toast');
+});
+
+test('§30: on the Apply screen the refresh updates data without re-rendering the form', () => {
+  const app = read(v2js, 'app.js');
+  const handler = app.slice(app.indexOf('async function onVendorRefresh()'), app.indexOf('const ctx = {'));
+  const applyBranch = handler.slice(handler.indexOf("state.route.name === 'vapply'"), handler.indexOf('} else {'));
+  // The apply branch refreshes the underlying payloads and the chrome,
+  // and says the in-progress application was left alone.
+  assert.ok(applyBranch.includes("state.publicData = await api('public')"), 'the apply refresh must freshen the public catalog for the next render');
+  assert.ok(applyBranch.includes('renderChrome();'), 'the apply refresh must still refresh the header (next-market subtitle)');
+  assert.ok(applyBranch.includes('left as-is'), 'the apply refresh toast must say the in-progress form was left as-is');
+  assert.ok(!applyBranch.includes('route()'), 'the apply refresh must NOT re-route — re-rendering would wipe the in-progress form');
+  assert.ok(!applyBranch.includes('renderVendorApply'), 'the apply refresh must NOT re-render the application form');
+  // Every other vendor screen takes the re-render path.
+  const otherBranch = handler.slice(handler.indexOf('} else {'), handler.indexOf('} catch (e)'));
+  assert.ok(otherBranch.includes('await route();'), 'non-apply screens must re-render through route()');
+  // renderVendorApply holds typed input only in the DOM: the wipe the
+  // exception protects against is real (fields are read back from
+  // form.elements at submit/scan time).
+  const v = read(v2js, 'vendor.js');
+  assert.ok(v.includes('form.elements.namedItem'), 'the apply form reads its fields from the DOM — re-render would destroy them');
+});
