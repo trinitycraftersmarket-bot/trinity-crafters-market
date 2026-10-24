@@ -3,7 +3,7 @@
 // RSVPs report shows. Available to the organizer and to managers with
 // the shopper_rsvps permission (the server enforces both). Read-only:
 // RSVPs are created by shoppers on the public site.
-import { api, esc, nice } from './api.js?v=20261023-18';
+import { api, esc, nice } from './api.js?v=20261023-19';
 
 export function renderRsvps(ctx, root) {
   root.innerHTML = `
