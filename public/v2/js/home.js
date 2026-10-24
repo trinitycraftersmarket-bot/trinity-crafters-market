@@ -1,8 +1,8 @@
 // Market Day home screen: the next market, its live numbers, and the
 // daily-driver quick actions. Everything renders from the freshly fetched
 // admin payload (ctx.state.admin) — no cached copies (audit §5 state rule).
-import { esc, money, nice, niceShort, clock, marketName, isToday, dateOf } from './api.js?v=20261023-19';
-import { eventStats } from './data.js?v=20261023-19';
+import { esc, money, nice, niceShort, clock, marketName, isToday, dateOf } from './api.js?v=20261023-20';
+import { eventStats } from './data.js?v=20261023-20';
 
 // Standing setup rule from the market's vendor setup instructions (the
 // current app's setup email template states the same times for every date).
@@ -59,7 +59,7 @@ export function renderHome(ctx, root) {
     <h3 class="section-title">Quick actions</h3>
     <div class="quick-grid">
       <button class="quick primary" data-go="event-day" data-event="${esc(next.id)}"><span class="ic">✓</span><span><strong>Event Day</strong><br><small>Check-ins, inspections &amp; floor plan</small></span></button>
-      <button class="quick light" data-go="event-day" data-event="${esc(next.id)}"><span class="ic">☰</span><span><strong>Attendees</strong><br><small>${stats.vendors} vendors · search the list</small></span></button>
+      <button class="quick light" data-go="section" data-section="attendees"><span class="ic">☰</span><span><strong>Attendees</strong><br><small>${stats.vendors} vendors · search the list</small></span></button>
       <button class="quick goldb" data-go="section" data-section="payment-log"><span class="ic">$</span><span><strong>Record Payment</strong><br><small>Card, cash or PayPal in seconds</small></span></button>
       <button class="quick light" data-go="section" data-section="move-requests"><span class="ic">⇄</span><span><strong>Move Requests</strong><br><small>${moves ? moves + ' waiting · needs your OK first' : 'Date changes, approved by you'}</small></span></button>
     </div>

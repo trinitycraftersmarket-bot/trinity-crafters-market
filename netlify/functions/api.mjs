@@ -536,7 +536,13 @@ ${description}`;
   const photoUrls=[];for(const path of snap.photos){if(!String(path).startsWith(u.id+'/'))continue;const {data}=await supa().storage.from('vendor-photos').createSignedUrl(path,3600);if(data?.signedUrl)photoUrls.push({path,url:data.signedUrl});}
   return json({attempt:{id:row.id,status:row.status,last_seen_at:row.last_seen_at,snapshot:snap,photo_urls:photoUrls}});
  }
- if(!staffActionAllowed(u,action))return json({error:'Access denied'},403);
+ // waitlist-accept / waitlist-decline are vendor-self actions (§31):
+ // their handlers' ownership checks in server/waitlist.mjs
+ // (assertOwner — the booking's user_id or verified email must match
+ // the caller, plus a live unexpired offer) are the security boundary,
+ // so vendors must be allowed to REACH the handlers. The exemption is
+ // keyed on the exact action names; every other action keeps the gate.
+ if(!staffActionAllowed(u,action)&&action!=='waitlist-accept'&&action!=='waitlist-decline')return json({error:'Access denied'},403);
  if(action==='staff-list')return json(await sql`
    select s.email,s.name,s.active,s.permissions,
      (select max(l.logged_in_at) from market.staff_login_log l where l.email=s.email) last_login,
@@ -1124,7 +1130,9 @@ trinitycraftersmarket@gmail.com`;
   await audit(sql,u,'imported attendance',{id:p.id,state});return json({ok:true});
  }
  if(action==='checkin-reminder'&&req.method==='POST'){
-  const p=await req.json(),imported=p.imported===true||p.imported==='1';
+  // Reuse the shared body parse above — a second req.json() here threw
+  // 'Body has already been read' and the reminder could never send (§31).
+  const imported=p.imported===true||p.imported==='1';
   let v;
   if(imported){
    [v]=await sql`select i.id,i.event_id,i.name,i.business,i.email,i.setup_checkin_at,e.date,e.title,l.name location,l.market_name from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where i.id=${p.id} and not coalesce(i.cancelled,false)`;
@@ -1484,7 +1492,10 @@ async function getAreaPlans(sql,url,u){
  // template), plus vendor display names for the pins — floor-attendees
  // itself stays staff-only, so names ride along here instead.
  const rows=dedupeSetupRows(await loadSetupRows(sql,id)),vendor_names={};
- for(const r of rows)vendor_names[String(r.id)]=String(r.business||r.name||'Vendor');
+ // Keyed by BOTH id spaces assignments are recorded in (§23): the
+ // attendee row id, and the master vendor id when the row carries one —
+ // display names only, so vendor pins resolve without floor-attendees.
+ for(const r of rows){const label=String(r.business||r.name||'Vendor');vendor_names[String(r.id)]=label;if(r.vendor_id&&!(String(r.vendor_id) in vendor_names))vendor_names[String(r.vendor_id)]=label;}
  return json({areas,template:[],vendor_names});
 }
 

@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261023-19';
+import { esc } from './api.js?v=20261023-20';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const dateKey = v => String(v || '').slice(0, 10);
@@ -28,8 +28,8 @@ export function printTable(title, subtitle, headers, rows, summary = '') {
 export function printAttendance({ market, subtitle, summary, headers, rows, plans = [] }) {
   const w = window.open('', '_blank');
   if (!w) throw Error('Allow pop-ups to print this report.');
-  const planPages = plans.map(p => `<section class="plan"><h2>${escHtml(p.title)}</h2><img src="${p.image}" alt="${escHtml(p.title)}"></section>`).join('');
-  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:9.5in;object-fit:contain}</style></head><body><h1>Trinity Crafters Market</h1><h2>Attendance List · ${escHtml(market || '')}${subtitle ? ' · ' + escHtml(subtitle) : ''}</h2>${summary ? `<p class="summary">${escHtml(summary)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${escHtml(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${escHtml(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer><script>window.onload=()=>setTimeout(()=>window.print(),50)<\/script></body></html>`);
+  const planPages = plans.map(p => `<section class="plan"><h2>${esc(p.title)}</h2><img src="${p.image}" alt="${esc(p.title)}"></section>`).join('');
+  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:9.5in;object-fit:contain}</style></head><body><h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer><script>window.onload=()=>setTimeout(()=>window.print(),50)<\/script></body></html>`);
   w.document.close();
 }
 

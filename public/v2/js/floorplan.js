@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261023-19';
+import { api, esc, nice } from './api.js?v=20261023-20';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -185,9 +185,11 @@ export async function renderSavedFloorPlan(host, eventId) {
 // switches to the event's other area plans. Areas without an uploaded
 // image fall back to that area's booth list, with the vendor's own booth
 // row highlighted. Matching: an assignment's vendor_id is the
-// floor-attendees row id, which is the same id the vendor's own `mine`
-// row carries (booking id / imported id); an email match on the attendee
-// rows covers the rest.
+// attendee row id, which is the same id the vendor's own `mine` row
+// carries (booking id / imported id); assignments recorded against the
+// master vendor id resolve too — the server keys vendor_names by both
+// id spaces (§31). Pin labels come from that vendor_names map, never
+// from the staff-only floor-attendees payload.
 export function findVendorSpot(areas, rowIds) {
   const ids = new Set((rowIds || []).map(String));
   for (const area of areas || []) {
@@ -206,28 +208,22 @@ export async function renderVendorFloorPlan(host, eventId, mineRow) {
   // vendors see the saved plans at EVERY venue, Hilton Garden Inn
   // included. No venue check and no fetch gate here.
   host.innerHTML = '<p class="muted">Loading the floor plan…</p>';
-  let result, rows;
+  let result;
   try {
-    [result, rows] = await Promise.all([
-      api('floor-area-plans', undefined, { event_id: eventId }),
-      api('floor-attendees', undefined, { event_id: eventId })
-    ]);
+    // Vendor-safe read (§31): floor-area-plans is served ahead of the
+    // identity wall and its non-staff branch returns the areas plus a
+    // vendor_names map for the pins. floor-attendees stays staff-only
+    // and is NEVER fetched on the vendor path — it 403'd here, which
+    // made every vendor's plan read as "not published yet."
+    result = await api('floor-area-plans', undefined, { event_id: eventId });
   } catch (e) {
-    // The plan store is staff-gated today (floor_plans / attendees
-    // permissions): a vendor token is refused, and the vendor gets the
-    // honest state instead of a broken screen.
-    host.innerHTML = /access denied/i.test(e.message)
-      ? '<p class="muted">The floor plan for this market is not published to vendor accounts yet — the organizer emails it before market day. Your booth assignment will appear here once it is published.</p>'
-      : '<p class="muted">Floor plan could not be loaded. (' + esc(e.message) + ')</p>';
+    host.innerHTML = '<p class="muted">Floor plan could not be loaded. (' + esc(e.message) + ')</p>';
     return;
   }
-  const vendors = rows || [];
-  const myEmail = String(mineRow?.email || '').trim().toLowerCase().replace(/,+$/, '');
+  const vendors = Object.entries(result.vendor_names || {}).map(([id, label]) => ({ id, business: label }));
   const rowIds = new Set();
   if (mineRow?.id) rowIds.add(String(mineRow.id));
-  for (const r of vendors) {
-    if (myEmail && String(r.email || '').trim().toLowerCase().replace(/,+$/, '') === myEmail) rowIds.add(String(r.id));
-  }
+  if (mineRow?.vendor_id) rowIds.add(String(mineRow.vendor_id));
   const areas = (result.areas || []).map(standardizeArea).filter(area => {
     const assigned = Object.values(area.assignments || {}).some(e => e && e.vendor_id);
     return imageAllowed(area.image_data_url) || assigned;

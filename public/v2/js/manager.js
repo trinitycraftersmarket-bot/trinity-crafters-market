@@ -5,9 +5,9 @@
 // `manager` payload does not carry (prices, payment internals,
 // inspection on booking rows) are not rendered at all. Everything
 // renders from the manager payload; every mutation re-fetches it.
-import { api, esc, nice } from './api.js?v=20261023-19';
-import { managerAttendeeRows } from './data.js?v=20261023-19';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261023-19';
+import { api, esc, nice } from './api.js?v=20261023-20';
+import { managerAttendeeRows } from './data.js?v=20261023-20';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261023-20';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 export const MANAGER_SECTIONS = [
@@ -144,8 +144,20 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
   root.querySelector('#v2-m-reminder').onclick = async e => {
     e.currentTarget.disabled = true;
     try {
-      const r = await api('checkin-reminder', { event_id: eventId });
-      ctx.toast(`Check-in reminder sent to ${r.sent} vendor(s).`);
+      // The checkin-reminder contract is per-attendee ({id, imported} —
+      // the classic contract); this button is the event-wide shortcut,
+      // so it fans out over this date's rows that still need check-in
+      // and have a usable email (§31 — there is no {event_id} variant).
+      const rows = managerAttendeeRows(ctx.state.manager, eventId)
+        .filter(r => !r.setup_checkin_at && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(r.email || '').replace(/,+\s*$/, '').trim()));
+      let sent = 0, failed = 0;
+      for (const r of rows) {
+        try { await api('checkin-reminder', { id: r.id, imported: r.imported }); sent++; }
+        catch { failed++; }
+      }
+      if (sent) ctx.toast(`Check-in reminder sent to ${sent} vendor(s).` + (failed ? ` ${failed} could not be sent.` : ''));
+      else if (failed) ctx.toast('No check-in reminders could be sent.', true);
+      else ctx.toast('Every vendor for this date has already checked in or has no email on file.');
     } catch (err) { ctx.toast(err.message, true); }
     e.currentTarget.disabled = false;
   };
