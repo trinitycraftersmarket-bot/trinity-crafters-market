@@ -345,6 +345,54 @@ test('stage H: the four public paths redirect to v2; classic routing untouched',
     assert.ok(sitemap.includes(`https://trinitylutzmarkets.com/${p}<`), `sitemap must keep the public URL ${p}`);
 });
 
+test('§27: registered-users action is organizer-only and shaped in api.mjs', () => {
+  const apiSrc = readFileSync(join(root, 'netlify', 'functions', 'api.mjs'), 'utf8');
+  const idx = apiSrc.indexOf("action==='registered-users'");
+  assert.ok(idx > 0, 'api.mjs must implement registered-users');
+  const block = apiSrc.slice(idx, apiSrc.indexOf("action==='survey-report'"));
+  assert.ok(block.includes("if(!u.admin)return json({error:'Organizer access only'},403)"), 'registered-users must be organizer-only');
+  // Accounts come from Supabase Auth via the service-role client,
+  // paginated until a short page, with a sane cap.
+  assert.ok(block.includes('supa().auth.admin.listUsers'), 'accounts must come from Supabase Auth admin');
+  assert.ok(block.includes('perPage:PER_PAGE'), 'listUsers must paginate');
+  assert.ok(block.includes('CAP=1000'), 'the account scan must be capped');
+  assert.ok(block.includes('batch.length<PER_PAGE'), 'pagination must stop at a short page');
+  // Exact user_id links beat email fallbacks; the flip side is built
+  // from the directory universe and excludes account holders.
+  assert.ok(block.includes('appByUser'), 'matching must try applications.user_id first');
+  assert.ok(block.includes('profileByUser'), 'matching must try vendor_profiles.user_id');
+  assert.ok(block.includes("via='application'"), 'the match source must be reported');
+  assert.ok(block.includes('importedByEmail'), 'imported attendees match by email (they have no user_id)');
+  assert.ok(block.includes('has_vendor_record:!!link'), 'unmatched accounts must be flagged');
+  assert.ok(block.includes('organizer:'), 'the organizer account must be flagged');
+  assert.ok(block.includes('process.env.ADMIN_EMAIL'), 'the organizer flag must key off ADMIN_EMAIL');
+  assert.ok(block.includes('staff:'), 'staff accounts must be flagged');
+  assert.ok(block.includes('from market.staff where active'), 'the staff flag must come from the staff table');
+  assert.ok(block.includes('last_sign_in_at:acct.last_sign_in_at'), 'last sign-in must pass through unparsed (it is a sign-in, not "last active")');
+  assert.ok(block.includes('not_registered'), 'the flip side (vendors with no account) must be returned');
+  assert.ok(block.includes('counts:{registered:'), 'the response must carry counts');
+  assert.ok(!block.includes('last_active'), 'nothing may relabel sign-in data as activity');
+});
+
+test('§27: Registered Users section is registered in the Vendors group and renders both lists', () => {
+  assert.ok(existsSync(join(v2js, 'registered.js')), 'missing registered.js');
+  const app = read(v2js, 'app.js');
+  assert.ok(app.includes("label: 'Registered Users'"), 'section registry must carry the Registered Users label');
+  assert.ok(app.includes("live: 'registered'"), 'section registry must wire live: registered');
+  assert.ok(app.includes("'registered'"), 'router must accept the registered route');
+  assert.ok(app.includes('renderRegistered'), 'app.js must dispatch to renderRegistered');
+  const r = read(v2js, 'registered.js');
+  assert.ok(r.includes("api('registered-users')"), 'the section must load the registered-users action');
+  assert.ok(r.includes('Registered'), 'the registered list toggle must render');
+  assert.ok(r.includes('Not registered yet'), 'the not-registered toggle must render');
+  assert.ok(r.includes('Last sign-in'), 'registered rows must show the last sign-in');
+  assert.ok(r.includes("'Never'"), 'accounts that never signed in must say Never');
+  assert.ok(r.includes('No vendor record'), 'unmatched accounts must carry the No vendor record badge');
+  assert.ok(r.includes('Organizer'), 'organizer accounts must be badged');
+  assert.ok(r.includes('Staff'), 'staff accounts must be badged');
+  assert.ok(!r.includes('Last active'), 'the UI must not relabel last sign-in as last active');
+});
+
 test('stage G: attendees gains the PDF import and the printable attendance list', () => {
   assert.ok(existsSync(join(v2js, 'pdfimport.js')), 'missing pdfimport.js');
   const p = read(v2js, 'pdfimport.js');

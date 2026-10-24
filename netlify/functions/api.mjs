@@ -587,6 +587,67 @@ ${description}`;
   }
   return json(rows);
  }
+ if(action==='registered-users'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  // Registered Users (audit §27): the opposite view of the Vendor
+  // Directory. The directory lists vendor RECORDS (applications + PDF
+  // imports — including people who never made an account); this lists
+  // the app's real accounts from Supabase Auth, links each one back to
+  // its vendor record, and returns the flip side too: vendor emails in
+  // the directory universe with no account behind them.
+  //
+  // Response: { registered: [{id, email, registered_at,
+  // last_sign_in_at, business, name, matched_via, has_vendor_record,
+  // organizer, staff}], not_registered: [{email, business, name}],
+  // counts: {registered, not_registered, with_vendor_record} }.
+  // last_sign_in_at is the account's last SIGN-IN (Supabase Auth) —
+  // not a general "last active" signal, and the UI labels it as such.
+  //
+  // Matching: an exact user_id link wins (applications.user_id, then
+  // vendor_profiles.user_id — same person by construction), then the
+  // lowercased email against applications, profiles, and finally
+  // imported attendees (which have no user_id at all). Rows are read
+  // newest first and the first row stored per key wins, so an account
+  // whose email appears on several vendor records links to the most
+  // recent one and still produces exactly one output row.
+  const accounts=[];const PER_PAGE=200,CAP=1000;let page=1;
+  while(accounts.length<CAP){
+   const {data,error}=await supa().auth.admin.listUsers({page,perPage:PER_PAGE});
+   if(error)throw Error('Could not load the app account list. Please try again.');
+   const batch=data?.users||[];accounts.push(...batch);
+   if(batch.length<PER_PAGE)break;
+   page++;
+  }
+  const staffRows=await sql`select email from market.staff where active`;
+  const staffEmails=new Set(staffRows.map(r=>setupEmail(r.email)).filter(Boolean));
+  const appRows=await sql`select user_id,email,name,business,created_at from market.applications order by created_at desc`;
+  const profileRows=await sql`select user_id,email,name,business from market.vendor_profiles`;
+  const importedRows=await sql`select email,name,business,created_at from market.imported_attendees order by created_at desc`;
+  const appByUser=new Map(),appByEmail=new Map(),profileByUser=new Map(),profileByEmail=new Map(),importedByEmail=new Map();
+  for(const r of appRows){if(r.user_id&&!appByUser.has(r.user_id))appByUser.set(r.user_id,r);const e=setupEmail(r.email);if(e&&!appByEmail.has(e))appByEmail.set(e,r);}
+  for(const r of profileRows){if(r.user_id&&!profileByUser.has(r.user_id))profileByUser.set(r.user_id,r);const e=setupEmail(r.email);if(e&&!profileByEmail.has(e))profileByEmail.set(e,r);}
+  for(const r of importedRows){const e=setupEmail(r.email);if(e&&!importedByEmail.has(e))importedByEmail.set(e,r);}
+  const adminEmail=setupEmail(process.env.ADMIN_EMAIL||'');
+  const accountEmails=new Set();
+  const registered=accounts.map(acct=>{
+   const email=setupEmail(acct.email||'');if(email)accountEmails.add(email);
+   let link=null,via=null;
+   if(acct.id&&appByUser.has(acct.id)){link=appByUser.get(acct.id);via='application';}
+   else if(acct.id&&profileByUser.has(acct.id)){link=profileByUser.get(acct.id);via='profile';}
+   else if(email&&appByEmail.has(email)){link=appByEmail.get(email);via='application-email';}
+   else if(email&&profileByEmail.has(email)){link=profileByEmail.get(email);via='profile-email';}
+   else if(email&&importedByEmail.has(email)){link=importedByEmail.get(email);via='imported-email';}
+   return {id:acct.id,email:email||String(acct.email||''),registered_at:acct.created_at||null,last_sign_in_at:acct.last_sign_in_at||null,business:link?.business||'',name:link?.name||'',matched_via:via,has_vendor_record:!!link,organizer:!!email&&email===adminEmail,staff:!!email&&staffEmails.has(email)};
+  }).sort((a,b)=>String(b.registered_at||'').localeCompare(String(a.registered_at||'')));
+  // Flip side: vendor emails from applications + imported attendees,
+  // deduped by email (the newest application wins over an imported
+  // twin, mirroring the directory), minus every email with an account.
+  const vendorByEmail=new Map();
+  for(const r of appRows){const e=setupEmail(r.email);if(e&&!vendorByEmail.has(e))vendorByEmail.set(e,r);}
+  for(const r of importedRows){const e=setupEmail(r.email);if(e&&!vendorByEmail.has(e))vendorByEmail.set(e,r);}
+  const not_registered=[...vendorByEmail.entries()].filter(([e])=>!accountEmails.has(e)).map(([email,r])=>({email,business:r.business||'',name:r.name||''})).sort((a,b)=>String(a.business||a.name||a.email).localeCompare(String(b.business||b.name||b.email)));
+  return json({registered,not_registered,counts:{registered:registered.length,not_registered:not_registered.length,with_vendor_record:registered.filter(r=>r.has_vendor_record).length}});
+ }
  if(action==='survey-report'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   return json(await sql`select s.*,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id order by e.date desc,s.submitted_at desc nulls last,s.business,s.vendor_name`);
