@@ -5,7 +5,7 @@
 // a new ban exactly like the classic ban form (name required, email or
 // phone required by the server, private reason, notification emailed
 // when an address is available).
-import { api, esc } from './api.js?v=20261024-34';
+import { api, esc } from './api.js?v=20261024-35';
 
 export function renderBanned(ctx, root) {
   root.innerHTML = `

@@ -7,8 +7,8 @@
 // (vendor-payment) the Attendees panel uses, and a receipts strip fed by
 // vendor-list payments (vendor-receipt, with receipt_sent_at shown).
 // Mutations re-fetch the admin payload, then re-render (§1 rule 1).
-import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261024-34';
-import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261024-34';
+import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261024-35';
+import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261024-35';
 
 let view = { q: '', status: '', eventId: '' };
 
@@ -105,6 +105,42 @@ export function renderInvoices(ctx, root) {
       mutate(() => miCall('record-payment', { id: x.id, amount: Number(f.get('amount')), payment_method: f.get('payment_method'), comment: f.get('comment') }), 'Payment recorded.');
     };
   }
+  // §41: the same per-date item editor as Monthly Billing's Edit
+  // Charges sheet — same items, same edit-item action, so the two
+  // screens can never disagree about a charge's per-date amounts.
+  // Per-date inputs prefill from the entry amounts when present ($0 is
+  // a real amount — a free date), else the legacy even split; on save
+  // the per-date values win and the charge becomes their sum.
+  function editItemSheet(x) {
+    const items = x.items || [];
+    const splitPreview = it => (Math.round(Number(it.amount || 0) / ((it.market_dates || []).length || 1)) / 100).toFixed(2);
+    const entryVal = (it, m) => m && m.amount !== undefined && m.amount !== null && m.amount !== '' && Number.isFinite(Number(m.amount)) ? (Number(m.amount) / 100).toFixed(2) : splitPreview(it);
+    const dateInputs = (it, n) => (Array.isArray(it.market_dates) && it.market_dates.length > 1) ? `
+          <div class="bill-item-dates">
+            <p class="note">Amount per market date — saving makes the charge total the sum of these dates.</p>
+            ${it.market_dates.map((m, k) => `<label class="sheet-field">${esc(nice(m.date))} — ${esc(m.location || m.market_name || 'Trinity Crafters Market')}${entryVal(it, m) === '0.00' ? ' (free)' : ''}<input data-item-date-amount="${n}" data-date-idx="${k}" type="number" min="0" step="0.01" value="${esc(entryVal(it, m))}"></label>`).join('')}
+          </div>` : '';
+    ctx.openSheet(`
+      <h3 class="sheet-title">Edit charges</h3>
+      <p><strong>${esc(x.business || x.vendor_name || 'Vendor')}</strong> · ${esc(x.billing_period || '')}</p>
+      ${items.map((it, n) => `
+        <div class="bill-item-edit">
+          <label class="sheet-field">Charge ${n + 1} — description<input data-item-desc="${n}" value="${esc(it.description || it.space || 'Charge')}"></label>
+          <label class="sheet-field">Amount ($)<input data-item-amount="${n}" type="number" min="0" step="0.01" value="${(Number(it.amount || 0) / 100).toFixed(2)}"></label>${dateInputs(it, n)}
+          <div class="vendor-actions"><button class="btn small" data-item-save="${n}">Save charge ${n + 1}</button></div>
+        </div>`).join('') || '<p class="note">This invoice has no charge lines.</p>'}
+      <div class="sheet-actions"><button class="btn" data-sheet-close>Done</button></div>`);
+    ctx.sheetEl.querySelectorAll('[data-item-save]').forEach(btn => btn.onclick = () => {
+      const n = btn.dataset.itemSave;
+      const description = ctx.sheetEl.querySelector('[data-item-desc="' + n + '"]').value;
+      const amount = ctx.sheetEl.querySelector('[data-item-amount="' + n + '"]').value;
+      const payload = { id: x.id, index: Number(n), description, amount };
+      const dateEls = [...ctx.sheetEl.querySelectorAll('[data-item-date-amount="' + n + '"]')].sort((a, b) => Number(a.dataset.dateIdx) - Number(b.dataset.dateIdx));
+      if (dateEls.length) payload.date_amounts = dateEls.map(el => Number(el.value || 0));
+      ctx.closeSheet();
+      mutate(() => miCall('edit-item', payload), 'Invoice charge updated.');
+    });
+  }
   function editSheet(x) {
     ctx.openSheet(`
       <h3 class="sheet-title">Edit invoice</h3>
@@ -134,7 +170,7 @@ export function renderInvoices(ctx, root) {
       ${x.paystatus !== 'paid' ? `<button class="btn small" data-act="record" data-kind="${kind}" data-id="${id}">Record payment</button>` : ''}`;
     if (x.kind === 'monthly') return `
       ${x.paystatus !== 'paid' && x.status !== 'cancelled' ? `<button class="btn primary small" data-act="mi-record" data-kind="${kind}" data-id="${id}">Record payment</button>` : ''}
-      <span class="note">Charges are managed in Monthly Billing.</span>`;
+      ${x.status !== 'cancelled' ? `<button class="btn small" data-act="mi-edit" data-kind="${kind}" data-id="${id}">Edit charges</button>` : ''}`;
     return '';
   }
   function cardHtml(x) {
@@ -209,6 +245,7 @@ export function renderInvoices(ctx, root) {
       }, null);
       else if (act === 'record') paySheet(x);
       else if (act === 'mi-record') monthlyPaySheet(x);
+      else if (act === 'mi-edit') editItemSheet(x);
       else if (act === 'mi-receipt') {
         const pay = (x.payments || []).find(p => String(p.id) === String(btn.dataset.payment));
         if (pay) mutate(() => miCall('email-receipt', { id: x.id, payment_id: pay.id }), 'Receipt emailed to ' + (x.vendor_email || 'the vendor') + '.');

@@ -10,8 +10,8 @@
 // email-receipt against the shared vendor_payments ledger. Due is the
 // BALANCE (total − paid_total, which the list attaches per invoice); a
 // partially covered invoice carries the stored status 'partial'.
-import { api, esc, getToken, nice } from './api.js?v=20261024-34';
-import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-34';
+import { api, esc, getToken, nice } from './api.js?v=20261024-35';
+import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-35';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
@@ -148,11 +148,17 @@ export function renderBilling(ctx, root) {
   // model). A delete re-renders the sheet from the server invoice, so the
   // current field values are snapshotted first: restored when a delete is
   // cancelled, and used to warn when unsaved edits would be discarded.
+  // §41: per-date amounts. An entry's own amount (cents) wins when the
+  // key exists and is finite — $0 included (a free date); otherwise the
+  // sheet previews the legacy even split the printout shows today.
+  const splitPreview = it => (Math.round(Number(it.amount || 0) / ((it.market_dates || []).length || 1)) / 100).toFixed(2);
+  const entryVal = (it, m) => m && m.amount !== undefined && m.amount !== null && m.amount !== '' && Number.isFinite(Number(m.amount)) ? (Number(m.amount) / 100).toFixed(2) : splitPreview(it);
   function snapshotSheet() {
     const snap = { charges: {}, discount: undefined };
     if (!ctx.sheetEl) return snap;
     ctx.sheetEl.querySelectorAll('[data-item-desc]').forEach(el => { (snap.charges[el.dataset.itemDesc] = snap.charges[el.dataset.itemDesc] || {}).desc = el.value; });
     ctx.sheetEl.querySelectorAll('[data-item-amount]').forEach(el => { (snap.charges[el.dataset.itemAmount] = snap.charges[el.dataset.itemAmount] || {}).amount = el.value; });
+    ctx.sheetEl.querySelectorAll('[data-item-date-amount]').forEach(el => { const c = (snap.charges[el.dataset.itemDateAmount] = snap.charges[el.dataset.itemDateAmount] || {}); (c.dates = c.dates || {})[el.dataset.dateIdx] = el.value; });
     const d = ctx.sheetEl.querySelector('[data-invoice-discount]');
     if (d) snap.discount = d.value;
     const dr = ctx.sheetEl.querySelector('[data-discount-reason]');
@@ -169,6 +175,7 @@ export function renderBilling(ctx, root) {
       if (!it) continue;
       if (c.desc !== undefined && c.desc !== (it.description || it.space || 'Charge')) return true;
       if (c.amount !== undefined && c.amount !== (Number(it.amount || 0) / 100).toFixed(2)) return true;
+      if (c.dates) { const dates = Array.isArray(it.market_dates) ? it.market_dates : []; for (const [k, v] of Object.entries(c.dates)) { const m = dates[Number(k)]; if (m && v !== entryVal(it, m)) return true; } }
     }
     if (snap.discount !== undefined && snap.discount !== (Number(i.discount || 0) / 100).toFixed(2)) return true;
     if (snap.discountReason !== undefined && snap.discountReason !== (i.discount_reason || '')) return true;
@@ -182,13 +189,23 @@ export function renderBilling(ctx, root) {
     const discountVal = edits && edits.discount !== undefined ? edits.discount : (Number(i.discount || 0) / 100).toFixed(2);
     const reasonVal = edits && edits.discountReason !== undefined ? edits.discountReason : (i.discount_reason || '');
     const noteVal = edits && edits.discountNote !== undefined ? edits.discountNote : (i.discount_note || '');
+    // §41: one amount input per market date under a multi-date charge's
+    // Amount field, labelled with the date + location. On save the
+    // per-date values win — the server stamps them and the charge
+    // amount becomes their sum.
+    const dateVal = (n, k, saved) => edits && edits.charges && edits.charges[n] && edits.charges[n].dates && edits.charges[n].dates[k] !== undefined ? edits.charges[n].dates[k] : saved;
+    const dateInputs = (it, n) => (Array.isArray(it.market_dates) && it.market_dates.length > 1) ? `
+          <div class="bill-item-dates">
+            <p class="note">Amount per market date — saving makes the charge total the sum of these dates.</p>
+            ${it.market_dates.map((m, k) => `<label class="sheet-field">${esc(nice(m.date))} — ${esc(m.location || m.market_name || 'Trinity Crafters Market')}${entryVal(it, m) === '0.00' ? ' (free)' : ''}<input data-item-date-amount="${n}" data-date-idx="${k}" type="number" min="0" step="0.01" value="${esc(dateVal(n, k, entryVal(it, m)))}"></label>`).join('')}
+          </div>` : '';
     ctx.openSheet(`
       <h3 class="sheet-title">Edit charges</h3>
       <p><strong>${esc(i.business || i.vendor_name || 'Vendor')}</strong> · ${esc(i.billing_period || '')}</p>
       ${items.map((it, n) => `
         <div class="bill-item-edit">
           <label class="sheet-field">Charge ${n + 1} — description<input data-item-desc="${n}" value="${esc(chargeVal(n, 'desc', it.description || it.space || 'Charge'))}"></label>
-          <label class="sheet-field">Amount ($)<input data-item-amount="${n}" type="number" min="0" step="0.01" value="${esc(chargeVal(n, 'amount', (Number(it.amount || 0) / 100).toFixed(2)))}"></label>
+          <label class="sheet-field">Amount ($)<input data-item-amount="${n}" type="number" min="0" step="0.01" value="${esc(chargeVal(n, 'amount', (Number(it.amount || 0) / 100).toFixed(2)))}"></label>${dateInputs(it, n)}
           <div class="vendor-actions"><button class="btn small" data-item-save="${n}">Save charge ${n + 1}</button><button class="btn small ghost" data-item-delete="${n}">Delete charge ${n + 1}</button></div>
         </div>`).join('') || '<p class="note">This invoice has no charge lines.</p>'}
       <div class="bill-item-edit">
@@ -209,8 +226,13 @@ export function renderBilling(ctx, root) {
       const n = btn.dataset.itemSave;
       const description = ctx.sheetEl.querySelector('[data-item-desc="' + n + '"]').value;
       const amount = ctx.sheetEl.querySelector('[data-item-amount="' + n + '"]').value;
+      const payload = { id: i.id, index: Number(n), description, amount };
+      // §41: per-date inputs ride along (dollars, index-aligned); the
+      // server stamps them and replaces the lump amount with their sum.
+      const dateEls = [...ctx.sheetEl.querySelectorAll('[data-item-date-amount="' + n + '"]')].sort((a, b) => Number(a.dataset.dateIdx) - Number(b.dataset.dateIdx));
+      if (dateEls.length) payload.date_amounts = dateEls.map(el => Number(el.value || 0));
       ctx.closeSheet();
-      mutate(() => miCall('edit-item', { id: i.id, index: Number(n), description, amount }), 'Invoice charge updated.');
+      mutate(() => miCall('edit-item', payload), 'Invoice charge updated.');
     });
     ctx.sheetEl.querySelectorAll('[data-item-delete]').forEach(btn => btn.onclick = async () => {
       const n = Number(btn.dataset.itemDelete);

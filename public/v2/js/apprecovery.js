@@ -16,7 +16,7 @@
 // be emailed a completion link ('application-attempt-email'), and
 // attempts hit by the Oct 22–23 agreements form bug carry an
 // "Our bug — fixed Oct 23" badge.
-import { api, esc, nice, marketName } from './api.js?v=20261024-34';
+import { api, esc, nice, marketName } from './api.js?v=20261024-35';
 
 // --- category fit (ported from public/category-conflicts.js) ---
 const cleanText = v => String(v || '').toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9&/' -]+/g, ' ').replace(/\s+/g, ' ').trim();
