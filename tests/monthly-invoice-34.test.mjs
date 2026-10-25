@@ -47,6 +47,21 @@ test('§34: the print template carries the screen-only controls row', () => {
   assert.ok(SRC.includes('.print{display:none}'), '@media print must keep hiding the controls');
 });
 
+test('§39: Close is a cascade — close, then history.back(), then the reload fallback', () => {
+  // Step 2 (§39): after ~300ms, if still open and there is history, go back —
+  // in the app the print page is a same-webview navigation, so Back returns
+  // to the billing screen as Scott left it instead of reloading the app.
+  assert.ok(SRC.includes('history.length>1'), 'the back step must be guarded by history.length>1');
+  assert.ok(SRC.includes('history.back()'), 'the back step must call history.back()');
+  assert.ok(SRC.includes('if(!window.closed&&history.length>1)history.back()},300)'), 'the back step fires at ~300ms, only if still open');
+  // Step 3: the §34 redirect stays as the last resort, at ~700ms.
+  assert.ok(SRC.includes('},700)'), 'the redirect fallback must be deferred to ~700ms');
+  // The handler appears twice and both copies must carry the cascade: the
+  // html() template and the email action's strip string (they must match
+  // byte-for-byte or the strip silently stops removing the controls).
+  assert.equal(SRC.split('history.back()').length - 1, 2, 'template + email strip must both carry the cascade');
+});
+
 // ---------------------------------------------------------------- behavioral harness
 // monthly-invoices.mjs through its real default handler: imports stripped,
 // core mocked (identity/queue/flushMail/audit), db = PGlite adapter (§31).
@@ -107,6 +122,7 @@ test('§34 (behavioral): the print page renders the controls row + hint', async 
   assert.ok(body.includes('Print / Save PDF'), 'Print button present');
   assert.ok(body.includes('>Close</button>'), 'Close button present');
   assert.ok(body.includes('window.close()'), 'Close calls window.close()');
+  assert.ok(body.includes('history.back()'), 'Close cascade includes the history.back() step (§39)');
   assert.ok(body.includes(FALLBACK), 'Close fallback URL present');
   assert.ok(body.includes('On a phone? Printing lives in the browser menu'), 'phone hint present');
   assert.ok(body.includes('.print{display:none}'), 'controls stay off paper');

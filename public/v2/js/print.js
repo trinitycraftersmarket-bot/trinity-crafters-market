@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261024-24';
+import { esc } from './api.js?v=20261024-25';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
@@ -13,13 +13,17 @@ const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 // document has no tab to close, so a bare print page traps the user on
 // whatever backdrop the WebView shows through (and the documents set no
 // background of their own, so it rendered black-on-dark-green). The row
-// gives Print + Close (with the §34 fallback: if the window refuses to
-// close, navigate back to the app) + the phone hint, and every builder
-// forces a light canvas (body background + color-scheme) — all screen
-// only: @media print hides the row, so paper output is unchanged.
+// gives Print + Close + the phone hint, and every builder forces a
+// light canvas (body background + color-scheme) — all screen only:
+// @media print hides the row, so paper output is unchanged.
+// §39: Close is a cascade — window.close(); if the window is still
+// open after ~300ms and there is history, history.back() (in the app
+// the print page is a same-webview navigation, so Back returns to the
+// app screen as the user left it); only if STILL open after a further
+// ~400ms does it fall back to reloading the app URL.
 const PRINT_CONTROLS_CSS = `:root{color-scheme:light}.print-controls{margin:0 0 12px}.print-controls button{padding:8px 12px;margin:0 8px 0 0}.print-controls p{margin:8px 0 0;font-size:9pt;color:#555}@media print{.print-controls{display:none}}`;
 function printControls() {
-  return `<div class="print-controls"><button type="button" onclick="window.print()">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/'},300)">Close</button><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF.</p></div>`;
+  return `<div class="print-controls"><button type="button" onclick="window.print()">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/'},700)">Close</button><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF.</p></div>`;
 }
 const dateKey = v => String(v || '').slice(0, 10);
 const niceShortDate = v => {
