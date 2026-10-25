@@ -5,15 +5,14 @@
 // The v2 app talks to the same Netlify functions, with the same payloads,
 // as the legacy UI; nothing here invents a new endpoint or response shape.
 //
-// Auth is the legacy model, unchanged (audit §8.2): Supabase email-code
-// (OTP) sign-in; the access token lives in sessionStorage under
-// 'market-token' — the same key the legacy app uses, so a user signed in
-// there is signed in here and vice versa.
-export const TOKEN_KEY = 'market-token';
-
-export const getToken = () => sessionStorage.getItem(TOKEN_KEY);
-export const setToken = t => { if (t) sessionStorage.setItem(TOKEN_KEY, t); };
-export const clearToken = () => sessionStorage.removeItem(TOKEN_KEY);
+// Auth is the legacy model (audit §8.2): Supabase email-code (OTP)
+// sign-in. Token storage itself lives in ./token.js — the one
+// allowlisted storage accessor (§52), which persists the credential on
+// the device so the user stays signed in across app restarts and
+// windows. api.js only re-exports its API; existing importers of
+// getToken/setToken/clearToken/TOKEN_KEY are unchanged.
+import { getToken, setToken, clearToken, TOKEN_KEY } from './token.js?v=20261024-33';
+export { getToken, setToken, clearToken, TOKEN_KEY };
 
 // --- formatting helpers (ported semantics from the legacy UI) -------------
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
