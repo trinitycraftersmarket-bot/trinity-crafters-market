@@ -23,10 +23,131 @@ const displayDate=v=>{
  return d?d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'}):'your scheduled market date';
 };
 
+// §45 (Oct 24, 2026) — unpaid manually-invoiced (GoDaddy) holds: a
+// reminder ladder + 48-hour close-out, layered ON TOP of the legacy
+// 24-hour hold rule in handleHeldPayments below (the inner rule —
+// unchanged for everyone else; this ladder runs first each sweep so its
+// rungs fire on bookings that are still held when a mark passes).
+// Audience: bookings still 'held' with a manually recorded invoice
+// reference whose market has not started. PayPal holds are excluded —
+// their invoice_reference is a PayPal invoice id, not a GoDaddy
+// reference, and their sends/sync live in the legacy path. Vendors
+// flagged payment_reminder_exempt are excluded from every rung,
+// including the close-out (see the seed below).
+// Marks (spec defaults): rung 1 at invoice-sent +48h; rung 2 at
+// market −72h; close-out at market −48h. Each rung is claimed by a
+// send-once stamp on the booking row inside the transaction that
+// queues the email (§35 pattern) — re-runs and racing sweeps send
+// nothing twice. Market marks are computed in SQL against the
+// America/New_York wall clock (the server/moves.mjs precedent).
+const PAT_REMINDER_EXEMPT_EMAIL='pelalem@msn.com';
+
+async function ensureInvoiceHoldLadder(){
+ const sql=db();
+ // Send-once stamps + the waitlist stamp the close-out transition sets
+ // (codified in database/codify-live-schema.sql §13; runtime ALTERs keep
+ // deploys that predate the columns safe, the §35 pattern).
+ await sql`alter table market.bookings add column if not exists invoice_reminder1_sent_at timestamptz`;
+ await sql`alter table market.bookings add column if not exists invoice_reminder2_sent_at timestamptz`;
+ await sql`alter table market.bookings add column if not exists invoice_closeout_at timestamptz`;
+ await sql`alter table market.bookings add column if not exists waitlisted_at timestamptz`;
+ await sql`alter table market.applications add column if not exists payment_reminder_exempt boolean not null default false`;
+ // One-time seed (settings marker): Pat's Potions (Pat Elalem) pays on
+ // the 1st of the month by standing arrangement, so she is exempt from
+ // the reminder/close-out automation. Seeded ONCE by email match —
+ // after that the flag is plain data and a manual change is never
+ // re-seeded over. NOT Pam Briscoe (different person; pays cash).
+ const [seeded]=await sql`select key from market.settings where key='payment_reminder_exempt_seeded'`;
+ if(seeded)return;
+ await sql`update market.applications set payment_reminder_exempt=true where lower(email)=${PAT_REMINDER_EXEMPT_EMAIL}`;
+ try{
+  const [t]=await sql`select to_regclass('market.vendor_profiles') as reg`;
+  if(t?.reg){
+   await sql`alter table market.vendor_profiles add column if not exists payment_reminder_exempt boolean not null default false`;
+   await sql`update market.vendor_profiles set payment_reminder_exempt=true where lower(email)=${PAT_REMINDER_EXEMPT_EMAIL}`;
+  }
+ }catch(e){console.error('§45 vendor_profiles exemption sync failed',e);}
+ await sql`insert into market.settings(key,value) values('payment_reminder_exempt_seeded','1') on conflict(key) do nothing`;
+ await audit(sql,'system','payment reminder exemption seeded',{email:PAT_REMINDER_EXEMPT_EMAIL});
+}
+
+async function sweepInvoiceHoldLadder(){
+ const sql=db();
+ const rows=await sql`
+  select b.id,b.event_id,b.invoice_reference,b.hold_until,b.price,b.space,b.invoice_reminder1_sent_at,b.invoice_reminder2_sent_at,
+    a.name,a.business,a.email,e.date,l.name location,
+    coalesce((select max(x.created_at) from market.audit x where x.detail->>'id'=b.id::text and x.action in ('paypal invoice sent','booking held')),b.hold_until-interval '24 hours') as held_at,
+    exists(select 1 from market.audit x where x.detail->>'id'=b.id::text and x.action='paypal invoice sent') as paypal_hold,
+    ((e.date+coalesce(e.start_time,time '10:00'))-interval '48 hours' <= (now() at time zone 'America/New_York')) as closeout_due,
+    ((e.date+coalesce(e.start_time,time '10:00'))-interval '72 hours' <= (now() at time zone 'America/New_York')) as rung2_due
+  from market.bookings b
+  join market.applications a on a.id=b.application_id
+  join market.events e on e.id=b.event_id
+  join market.locations l on l.id=e.location_id
+  where b.status='held'
+    and nullif(trim(b.invoice_reference),'') is not null
+    and not coalesce(a.payment_reminder_exempt,false)
+    and (e.date+coalesce(e.start_time,time '10:00')) > (now() at time zone 'America/New_York')`;
+ for(const b of rows){
+  if(b.paypal_hold)continue;
+  const day=displayDate(b.date),space=b.space==='indoor'?'Indoor':'Outdoor',amount='$'+(Number(b.price)/100).toFixed(2);
+  if(b.closeout_due){
+   // Close-out: the held spot is released and the booking moves to the
+   // wait-list with the organizer waitlist transition's field semantics
+   // (status + decision_reason + waitlisted_at + hold cleared) — a
+   // booking row cannot be both 'cancelled' and waitlisted, and the
+   // unique(application_id, event_id) constraint forbids a second row,
+   // so the cancellation of the spot is recorded in the audit, the
+   // vendor-facing reason, and the final email. The freed spot then
+   // goes through the normal waitlist scan, like the legacy cancel.
+   let closed=false;
+   await sql.begin(async tx=>{
+    await tx`select pg_advisory_xact_lock(708821)`;
+    const claimed=await tx`update market.bookings set invoice_closeout_at=now() where id=${b.id} and status='held' and invoice_closeout_at is null returning id`;
+    if(!claimed.length)return;
+    closed=true;
+    await tx`update market.bookings set status='waitlist',hold_until=null,waitlisted_at=now(),waitlist_offered_at=null,decision_reason='Invoice unpaid — spot released at the 48-hour close-out; moved to the wait-list.' where id=${b.id}`;
+    const body=`Hi ${b.name},\n\nYour vendor spot for ${day} at ${b.location} has been closed out because the invoice (reference ${b.invoice_reference}) was still unpaid 48 hours before the market. Your space has been released.\n\nYou've been moved to the wait-list for this date. If a space opens up, we'll contact you. Please don't pay the outstanding invoice while you're on the wait-list — if a spot is confirmed for you again, we'll let you know how to pay.\n\nIf you'd still like to attend, just reply to this email.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`;
+    await queue(tx,b.email,`Your spot was released — you're on the wait-list for ${day}`,body);
+    await audit(tx,'system','invoice hold closed out',{id:b.id,event_id:b.event_id,invoice_reference:b.invoice_reference});
+   });
+   if(closed)await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await scanWaitlist(tx,b.event_id,{space:b.space,actor:'system'});});
+   continue;
+  }
+  const reminder=rung=>({
+   subject:rung===2?`Final payment reminder — your spot for ${day}`:`Payment reminder — your spot for ${day}`,
+   body:`Hi ${b.name},\n\n${rung===2?'This is a second reminder that':'This is a reminder that'} the vendor invoice for your Trinity Crafters Market spot has not been paid yet.\n\nPlease check your email for the GoDaddy invoice (reference ${b.invoice_reference}) and pay it as soon as you can — we can't hold spots without payment.\n\nMarket: ${b.location}\nDate: ${day}\nSpace: ${space}\nAmount due: ${amount}\n\nUnpaid spots are closed out 48 hours before the market and the space is released. If that happens, you'll be moved to the wait-list for that date.\n\nIf you need more time, just reply to this email and tell us when you'll pay — we'd rather hear from you than release your spot.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`,
+  });
+  if(b.rung2_due){
+   if(b.invoice_reminder2_sent_at)continue;
+   const {subject,body}=reminder(2);
+   await sql.begin(async tx=>{
+    const claimed=await tx`update market.bookings set invoice_reminder2_sent_at=now() where id=${b.id} and status='held' and invoice_reminder2_sent_at is null returning id`;
+    if(!claimed.length)return;
+    await queue(tx,b.email,subject,body);
+    await audit(tx,'system','invoice payment reminder sent',{id:b.id,rung:2,invoice_reference:b.invoice_reference});
+   });
+   continue;
+  }
+  // Rung 1 is only reachable before the market marks open (the window
+  // closes when rung 2's opens), and needs the invoice-sent timestamp.
+  if(b.invoice_reminder1_sent_at||!b.held_at)continue;
+  const sentAt=new Date(b.held_at);
+  if(!Number.isFinite(sentAt.getTime())||Date.now()<sentAt.getTime()+48*3600000)continue;
+  const {subject,body}=reminder(1);
+  await sql.begin(async tx=>{
+   const claimed=await tx`update market.bookings set invoice_reminder1_sent_at=now() where id=${b.id} and status='held' and invoice_reminder1_sent_at is null returning id`;
+   if(!claimed.length)return;
+   await queue(tx,b.email,subject,body);
+   await audit(tx,'system','invoice payment reminder sent',{id:b.id,rung:1,invoice_reference:b.invoice_reference,held_at:sentAt.toISOString()});
+  });
+ }
+}
+
 async function handleHeldPayments(){
  const sql=db(),token=await paypalToken();
  const held=await sql`
-  select b.id,b.event_id,b.invoice_reference,b.hold_until,b.price,b.space,a.name,a.business,a.email,e.date,l.name location,
+  select b.id,b.event_id,b.invoice_reference,b.hold_until,b.price,b.space,a.name,a.business,a.email,a.payment_reminder_exempt,e.date,l.name location,
     coalesce((select max(x.created_at) from market.audit x where x.detail->>'id'=b.id::text and x.action in ('paypal invoice sent','booking held')),b.hold_until-interval '24 hours') as held_at
   from market.bookings b
   join market.applications a on a.id=b.application_id
@@ -41,6 +162,11 @@ async function handleHeldPayments(){
     continue;
    }
   }
+  // §45: vendors exempt from payment reminders (Pat's Potions — pays on
+  // the 1st by arrangement) are skipped by the reminder AND the
+  // auto-cancel alike; the PayPal paid-sync above still settles a paid
+  // invoice. Everyone else's 24-hour rule is unchanged.
+  if(b.payment_reminder_exempt)continue;
   const heldAt=new Date(b.held_at),remindAt=new Date(heldAt.getTime()+12*3600000),cancelAt=new Date(heldAt.getTime()+24*3600000),now=new Date();
   if(!Number.isFinite(heldAt.getTime())){await audit(sql,'system','payment hold date invalid',{id:b.id,held_at:String(b.held_at||'')});continue;}
   // Payment is due within 24 hours of the invoice/hold starting. Keep the stored deadline aligned with that rule.
@@ -224,6 +350,8 @@ async function handleWaitlistOffers(){
 }
 export default async()=>{
  if(!ready())return;
+ await ensureInvoiceHoldLadder();
+ await sweepInvoiceHoldLadder();
  await handleHeldPayments();
  await handleWaitlistOffers();
  await sendDayBeforeVendorReminders();
