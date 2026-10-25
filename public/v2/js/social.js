@@ -7,7 +7,7 @@
 // Here every Facebook/Instagram channel is shown; a disconnected or
 // locked one is greyed, un-selectable, and labelled with the fix —
 // reconnect it in Buffer.
-import { fnGet, fn, fnForm, esc, nice } from './api.js?v=20261024-30';
+import { fnGet, fn, fnForm, esc, nice } from './api.js?v=20261024-31';
 
 export function renderSocial(ctx, root) {
   root.innerHTML = `

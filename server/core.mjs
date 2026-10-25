@@ -45,6 +45,16 @@ export async function flushMail(){
  let sent=0,failed=0;
  for(let batch=0;batch<25;batch++){
   let processed=0;
+  // §53: the batch transaction is guarded end to end. One SQL-level
+  // fault inside a batch (a poisoned row whose stamp update fails, a
+  // deadlock) aborts the transaction, the per-row catch's own error
+  // stamp then throws 25P02, and before this guard that escape rolled
+  // back the whole batch — including stamps for rows the provider had
+  // already sent, which the next flush then re-sent — and 500'd the
+  // calling action after its email went out. A failed batch now just
+  // stops the flush: its rows stay pending for the hourly sweep, and
+  // flushMail always resolves with the counts it did complete.
+  try{
   await db().begin(async tx=>{
    const rows=await tx`select * from market.outbox where sent_at is null and error is null order by created_at limit 10 for update skip locked`;
    processed=rows.length;
@@ -57,6 +67,7 @@ export async function flushMail(){
     }catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;failed++;}
    }
   });
+  }catch(e){console.error('flushMail batch failed; leaving the remaining rows pending for the sweep',e);break;}
   if(processed<10)break;
  }
  return {sent,failed};
