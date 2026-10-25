@@ -6,13 +6,18 @@
 // (amount − discount + late fee; cancelled invoices are due $0). The
 // classic filters only show/hide invoice cards — here they re-render
 // just the list, so the Add Bill form is never disturbed.
-import { api, esc, getToken, nice } from './api.js?v=20261024-29';
-import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-29';
+// §49 adds partial payments: record-payment / delete-payment /
+// email-receipt against the shared vendor_payments ledger. Due is the
+// BALANCE (total − paid_total, which the list attaches per invoice); a
+// partially covered invoice carries the stored status 'partial'.
+import { api, esc, getToken, nice } from './api.js?v=20261024-30';
+import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-30';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
 const monthLabel = m => new Date(m + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-const dueOf = i => i.status === 'cancelled' ? 0 : Math.max(0, Number(i.amount || 0) - Number(i.discount || 0) + Number(i.late_fee || 0));
+const dueOf = i => i.status === 'cancelled' ? 0 : Math.max(0, Number(i.amount || 0) - Number(i.discount || 0) + Number(i.late_fee || 0) - Number(i.paid_total || 0));
+const PAY_METHODS = ['Cash', 'Credit Card', 'GoDaddy Payments', 'GoDaddy Invoice', 'PayPal', 'Check', 'Other'];
 
 // Transport for the monthly-invoices function, exactly the classic calls:
 // GET (no action) lists; POSTs carry ?action= with a JSON body.
@@ -94,14 +99,14 @@ export function renderBilling(ctx, root) {
       <div class="vendor-top">
         <div><h3>${esc(i.business || i.vendor_name || 'Vendor')}</h3>
         <div class="contact">${esc(i.billing_period || '')}${i.vendor_email ? ' · ' + esc(i.vendor_email) : ''}</div></div>
-        <span class="status ${i.status === 'paid' ? 'ok' : i.status === 'cancelled' ? 'bad' : 'warn'}">${esc(i.status || 'draft')}</span>
+        <span class="status ${i.status === 'paid' ? 'ok' : i.status === 'cancelled' ? 'bad' : 'warn'}">${esc(i.status === 'partial' ? 'partially paid' : (i.status || 'draft'))}</span>
       </div>
-      <p class="note">Subtotal: ${usd(i.amount)} · Discount: ${usd(i.discount || 0)} · <strong>Due: ${usd(dueOf(i))}</strong></p>
+      <p class="note">Subtotal: ${usd(i.amount)} · Discount: ${usd(i.discount || 0)}${Number(i.paid_total || 0) ? ` · Paid: ${usd(i.paid_total)}` : ''} · <strong>${Number(i.paid_total || 0) ? 'Balance' : 'Due'}: ${usd(dueOf(i))}</strong></p>
       <label class="sheet-field">Discount ($)<input type="number" min="0" step="0.01" data-f="discount" value="${esc(fVal('discount', (Number(i.discount || 0) / 100).toFixed(2)))}"></label>
       ${i.discount_reason ? `<p class="note">Discount reason: ${esc(i.discount_reason)}${i.discount_note ? ' — ' + esc(i.discount_note) : ''}</p>` : ''}
       <label class="sheet-field">Comments<textarea data-f="comment" rows="2">${esc(fVal('comment', i.payment_comment || ''))}</textarea></label>
       <label class="sheet-field">Status<select data-f="status">
-        ${[['draft', 'Draft / Unpaid'], ['emailed', 'Emailed / Outstanding'], ['paid', 'Paid'], ['cancelled', 'Cancelled']].map(([v, t]) => `<option value="${v}" ${fVal('status', i.status || 'draft') === v ? 'selected' : ''}>${t}</option>`).join('')}
+        ${[['draft', 'Draft / Unpaid'], ['emailed', 'Emailed / Outstanding'], ...(i.status === 'partial' ? [['partial', 'Partially paid']] : []), ['paid', 'Paid'], ['cancelled', 'Cancelled']].map(([v, t]) => `<option value="${v}" ${fVal('status', i.status || 'draft') === v ? 'selected' : ''}>${t}</option>`).join('')}
       </select></label>
       <label class="sheet-field">Payment method<select data-f="method">
         <option value="">Choose method</option>
@@ -110,8 +115,13 @@ export function renderBilling(ctx, root) {
       <p class="note"><strong>GoDaddy invoice:</strong> ${i.godaddy_invoice_sent_count ? 'Sent ' + i.godaddy_invoice_sent_count + ' time' + (i.godaddy_invoice_sent_count === 1 ? '' : 's') + ' · First ' + esc(new Date(i.godaddy_invoice_first_sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' })) + ' · Last ' + esc(new Date(i.godaddy_invoice_last_sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' })) : 'Not marked sent yet'}</p>
       ${i.sent_at ? `<p class="note"><strong>Invoice email:</strong> Emailed · Last ${esc(new Date(i.sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' }))} · to ${esc(i.vendor_email || '')}</p>` : ''}
       ${i.status === 'cancelled' && i.cancel_reason ? `<p class="note"><strong>Cancellation:</strong> ${esc(i.cancel_reason)}</p>` : ''}
+      ${(i.payments || []).length ? `<div class="bill-payments"><h4 class="mini-title">Payments</h4>${(i.payments || []).map(p => `
+        <p class="note">${esc(new Date(p.paid_at || p.created_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' }))} · <strong>${usd(p.amount)}</strong> · ${esc(p.payment_method || '')}${p.note ? ' · ' + esc(p.note) : ''}${p.recorded_by ? ' · recorded by ' + esc(p.recorded_by) : ''}${p.receipt_sent_at ? ' · Receipt sent ' + esc(new Date(p.receipt_sent_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' })) : ''}<br>
+        <button class="btn small" data-pay-receipt="${esc(p.id)}">${p.receipt_sent_at ? 'Resend receipt' : 'Email receipt'}</button>
+        <button class="btn small ghost" data-pay-delete="${esc(p.id)}">Delete payment</button></p>`).join('')}</div>` : ''}
       <div class="vendor-actions">
         <button class="btn primary small" data-bill-act="save">Save Changes</button>
+        ${i.status !== 'paid' && i.status !== 'cancelled' ? '<button class="btn small" data-bill-act="record-payment">Record payment</button>' : ''}
         <button class="btn small" data-bill-act="godaddy">Mark GoDaddy Invoice Sent</button>
         <button class="btn small" data-bill-act="edit">Edit Charges</button>
         <button class="btn small" data-bill-act="print">Print</button>
@@ -261,6 +271,26 @@ export function renderBilling(ctx, root) {
       mutate(() => miCall('cancel', { id: i.id, reason }), 'Invoice cancelled.');
     };
   }
+  // §49 — record a (partial) payment against the invoice balance. The
+  // amount prefills with the full balance; Scott edits it down to what
+  // the vendor actually handed over (Ken's $45-at-a-time flow).
+  function recordPaymentSheet(i) {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Record payment</h3>
+      <p><strong>${esc(i.business || i.vendor_name || 'Vendor')}</strong> · ${esc(i.billing_period || '')} · Balance due: ${usd(dueOf(i))}</p>
+      <form id="v2-bill-pay-form">
+        <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" value="${(dueOf(i) / 100).toFixed(2)}" required></label>
+        <label class="sheet-field">Payment method<select name="payment_method">${PAY_METHODS.map(m => `<option>${m}</option>`).join('')}</select></label>
+        <label class="sheet-field">Comment<input name="comment" placeholder="Optional note (e.g. paid at the market)"></label>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Record payment</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-bill-pay-form').onsubmit = e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      ctx.closeSheet();
+      mutate(() => miCall('record-payment', { id: i.id, amount: Number(f.get('amount')), payment_method: f.get('payment_method'), comment: f.get('comment') }), 'Payment recorded.');
+    };
+  }
   function godaddySheet(i) {
     ctx.openSheet(`
       <h3 class="sheet-title">Mark GoDaddy invoice sent</h3>
@@ -314,10 +344,22 @@ export function renderBilling(ctx, root) {
           payment_method: card.querySelector('[data-f="method"]').value || ''
         }), 'Invoice updated.');
         else if (act === 'godaddy') godaddySheet(inv);
+        else if (act === 'record-payment') recordPaymentSheet(inv);
         else if (act === 'edit') editChargesSheet(inv);
         else if (act === 'print') window.open(printUrl(inv.id), '_blank');
         else if (act === 'email') mutate(() => miCall('email', { id: inv.id }), 'Invoice emailed to ' + (inv.vendor_email || 'the vendor') + '.');
         else if (act === 'cancel') cancelSheet(inv);
+      });
+      card.querySelectorAll('[data-pay-receipt]').forEach(btn => btn.onclick = () => {
+        const pay = (inv.payments || []).find(x => String(x.id) === String(btn.dataset.payReceipt));
+        if (pay) mutate(() => miCall('email-receipt', { id: inv.id, payment_id: pay.id }), 'Receipt emailed to ' + (inv.vendor_email || 'the vendor') + '.');
+      });
+      card.querySelectorAll('[data-pay-delete]').forEach(btn => btn.onclick = async () => {
+        const pay = (inv.payments || []).find(x => String(x.id) === String(btn.dataset.payDelete));
+        if (!pay) return;
+        const ok = await confirmSheet('Delete this payment?', `Delete the ${usd(pay.amount)} ${pay.payment_method || ''} payment recorded ${new Date(pay.paid_at || pay.created_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' })}? The invoice balance will go back up by that amount.`, 'Delete payment');
+        if (!ok) return;
+        mutate(() => miCall('delete-payment', { id: inv.id, payment_id: pay.id }), 'Payment deleted.');
       });
     });
   }

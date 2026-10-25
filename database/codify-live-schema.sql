@@ -255,9 +255,16 @@ revoke all on market.floor_plan_areas from anon,authenticated;
 -- ----------------------------------------------------------------------------
 -- 8. market.vendor_payments — the payment ledger behind the Payment Log
 --    (audit section 4). Exactly one of application_id / booking_id /
---    imported_attendee_id identifies the paid record; inserts null the others.
+--    imported_attendee_id / monthly_invoice_id identifies the paid record;
+--    inserts null the others.
 --    Evidence: inserts — netlify/functions/api.mjs:610,626; ledger read
 --    (created_at is the "recorded at" timestamp) — api.mjs:482-493.
+--    monthly_invoice_id (§49, Oct 24, 2026): partial payments on monthly
+--    invoices live in this same ledger (monthly-invoices.mjs record-payment
+--    / delete-payment / email-receipt); the Payment Log's first union
+--    branch already surfaces every ledger row, and its synthesized
+--    'monthly billing' branch excludes invoices that have ledger rows so
+--    a monthly payment is never counted twice.
 -- ----------------------------------------------------------------------------
 create table if not exists market.vendor_payments(
   id uuid primary key default gen_random_uuid(),
@@ -277,6 +284,8 @@ create table if not exists market.vendor_payments(
   event_id uuid references market.events,
   manual_entry boolean not null default false,
   receipt_sent_at timestamptz
+  -- §49 (Oct 24, 2026) adds monthly_invoice_id — the ALTER lives in
+  -- section 9 below, after market.vendor_invoices exists to reference.
 );
 alter table market.vendor_payments add column if not exists event_id uuid references market.events;
 alter table market.vendor_payments add column if not exists manual_entry boolean not null default false;
@@ -332,6 +341,14 @@ revoke all on market.vendor_invoices from anon,authenticated;
 -- in monthly-invoices.mjs keep live installs healed.
 alter table market.vendor_invoices add column if not exists discount_reason text;
 alter table market.vendor_invoices add column if not exists discount_note text;
+-- Partial payments (§49, Oct 24, 2026): monthly-invoice payments are rows
+-- in the shared ledger (section 8) linked back to the invoice; the FK
+-- ALTER sits here because vendor_invoices must exist first. A runtime
+-- ALTER in monthly-invoices.mjs keeps live installs healed. Invoice
+-- status gains a stored 'partial' value, recomputed from the ledger by
+-- the monthly-invoices function whenever payments or totals change.
+alter table market.vendor_payments add column if not exists monthly_invoice_id uuid references market.vendor_invoices;
+create index if not exists vendor_payments_monthly_invoice_idx on market.vendor_payments(monthly_invoice_id);
 
 -- ----------------------------------------------------------------------------
 -- 10. market.vendor_surveys — post-market vendor surveys (token link).

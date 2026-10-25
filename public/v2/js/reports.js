@@ -5,10 +5,13 @@
 // math (paid bookings + paid imports as income; expenses matched by
 // event or by expense date; monthly invoices at amount − discount +
 // late fee), same printed documents via the shared printTable builder.
+// §49 addendum: the Payment Report also flattens monthly-invoice ledger
+// payments into the same rows, tagged "Monthly invoice <period>" in the
+// transaction column, so its reconciliation total covers all money.
 // The per-date vendor/event report itself lives in Attendees — one
 // place per job, as everywhere else in v2.
-import { esc, nice, marketName } from './api.js?v=20261024-29';
-import { printTable } from './print.js?v=20261024-29';
+import { esc, nice, marketName } from './api.js?v=20261024-30';
+import { printTable } from './print.js?v=20261024-30';
 
 // The classic reports format money with cents; keep that exact format.
 const usd = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(n) || 0) / 100);
@@ -33,23 +36,67 @@ export function arRows(admin) {
     rows.push({ vendor: x.business || x.name, email: x.email || '', when: e ? nice(e.date) : '', amount: Number(x.invoice_amount), due: x.invoice_due_date ? nice(x.invoice_due_date) : 'Due now' });
   });
   (admin.monthlyInvoices || []).filter(x => x.status !== 'paid').forEach(x => {
-    const due = Math.max(0, Number(x.amount || 0) - Number(x.discount || 0) + Number(x.late_fee || 0));
+    // §49: AR shows the balance still owed, not the invoice total —
+    // payments recorded in the ledger (paid_total) come off the top.
+    const due = Math.max(0, Number(x.amount || 0) - Number(x.discount || 0) + Number(x.late_fee || 0) - Number(x.paid_total || 0));
     if (due) rows.push({ vendor: x.business || x.vendor_name || '', email: x.vendor_email || '', when: x.billing_period || '', amount: due, due: x.due_date ? nice(x.due_date) : 'Due now' });
   });
   return rows;
+}
+
+export function paymentReportRows(admin, filters = {}) {
+  const eventId = filters.eventId || '';
+  const method = String(filters.method || '').toLowerCase();
+  const q = String(filters.q || '').toLowerCase().trim();
+  const matches = (row, values) => (!method || String(row.payment_method || '').toLowerCase() === method || (method === 'monthly billing' && row.source === 'monthly invoice'))
+    && (!q || values.some(v => String(v || '').toLowerCase().includes(q)));
+
+  const imported = (admin.importedAttendees || [])
+    .filter(x => x.payment_status === 'paid' && Number(x.invoice_amount || 0) > 0 && String(x.payment_method || '').toLowerCase() !== 'monthly billing'
+      && (!eventId || x.event_id === eventId)
+      && matches(x, [x.name, x.business, x.email]));
+
+  // Monthly payments are not allocated to one market date (an invoice
+  // can span several dates), so they join the all-dates report only;
+  // assigning the whole payment to a selected date would overstate it.
+  const monthly = [];
+  if (!eventId) {
+    for (const invoice of admin.monthlyInvoices || []) {
+      for (const payment of invoice.payments || []) {
+        if (!(Number(payment.amount || 0) > 0)) continue;
+        const row = {
+          paid_at: payment.paid_at || payment.created_at || null,
+          created_at: payment.created_at || payment.paid_at || null,
+          business: invoice.business || '',
+          name: invoice.vendor_name || '',
+          email: invoice.vendor_email || '',
+          invoice_amount: Number(payment.amount || 0),
+          payment_method: payment.payment_method || '',
+          payment_reference: 'Monthly invoice ' + (invoice.billing_period || ''),
+          approval_code: '',
+          card_brand: '',
+          card_last4: '',
+          payment_processor_status: '',
+          payment_status: invoice.status === 'partial' ? 'partial' : 'paid',
+          source: 'monthly invoice',
+          billing_period: invoice.billing_period || '',
+          monthly_invoice_id: invoice.id,
+          payment_id: payment.id
+        };
+        if (matches(row, [row.name, row.business, row.email])) monthly.push(row);
+      }
+    }
+  }
+
+  return [...imported, ...monthly]
+    .sort((x, y) => String(y.paid_at || y.created_at || '').localeCompare(String(x.paid_at || x.created_at || '')));
 }
 
 export function renderReports(ctx, root) {
   const admin = () => ctx.state.admin;
 
   function paymentRows() {
-    const method = view.method.toLowerCase(), q = view.q;
-    return (admin().importedAttendees || [])
-      .filter(x => x.payment_status === 'paid' && Number(x.invoice_amount || 0) > 0 && String(x.payment_method || '').toLowerCase() !== 'monthly billing'
-        && (!view.eventId || x.event_id === view.eventId)
-        && (!method || String(x.payment_method || '').toLowerCase() === method)
-        && (!q || [x.name, x.business, x.email].some(v => String(v || '').toLowerCase().includes(q))))
-      .sort((x, y) => String(y.paid_at || y.created_at || '').localeCompare(String(x.paid_at || x.created_at || '')));
+    return paymentReportRows(admin(), view);
   }
 
   function buildPL() {
@@ -107,7 +154,7 @@ export function renderReports(ctx, root) {
     </section>
     <section class="card">
       <h3 class="section-title first">Payment Report</h3>
-      <p class="note">Reconcile card, cash, PayPal and other payments. GoDaddy receipt numbers are shown when available.</p>
+      <p class="note">Reconcile card, cash, PayPal and other payments. GoDaddy receipt numbers are shown when available. Monthly-invoice payments are tagged “Monthly invoice” plus the billing period in the Transaction column.</p>
       <div class="filter-row">
         <label class="picker-label">Payment method<select id="v2-rpt-method" class="picker"><option value="">All methods</option><option>GoDaddy Payments</option><option>cash</option><option>PayPal</option><option>check</option><option>monthly billing</option></select></label>
         <label class="picker-label grow">Vendor search<input id="v2-rpt-search" class="picker" type="search" placeholder="Vendor or business" value="${esc(view.q)}"></label>

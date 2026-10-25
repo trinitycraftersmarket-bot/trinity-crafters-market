@@ -7,8 +7,8 @@
 // (vendor-payment) the Attendees panel uses, and a receipts strip fed by
 // vendor-list payments (vendor-receipt, with receipt_sent_at shown).
 // Mutations re-fetch the admin payload, then re-render (§1 rule 1).
-import { api, esc, money, nice, niceShort, marketName } from './api.js?v=20261024-29';
-import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261024-29';
+import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261024-30';
+import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261024-30';
 
 let view = { q: '', status: '', eventId: '' };
 
@@ -33,6 +33,19 @@ export function renderInvoices(ctx, root) {
 
   const admin = () => ctx.state.admin;
   const findRow = (kind, id) => invoiceRows(admin()).find(x => x.kind === kind && String(x.id) === String(id));
+  // §49: monthly-invoice payments live in the monthly-invoices function
+  // (same transport as Monthly Billing) — the Invoice Center records and
+  // manages them against the same ledger, so the two screens agree.
+  async function miCall(action, body) {
+    const r = await fetch('/.netlify/functions/monthly-invoices?action=' + encodeURIComponent(action), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const v = await r.json().catch(() => ({}));
+    if (!r.ok) throw Error(v.error || 'Invoice request failed.');
+    return v;
+  }
   const mutate = async (call, okMsg) => {
     try {
       await call();
@@ -73,6 +86,25 @@ export function renderInvoices(ctx, root) {
       }), 'Payment recorded and booking marked paid.');
     };
   }
+  // §49: record a (partial) payment on a monthly invoice, prefilled
+  // with the balance still owed (the row's amount IS the balance).
+  function monthlyPaySheet(x) {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Record payment</h3>
+      <p><strong>${esc(x.business || x.vendor_name || 'Vendor')}</strong> · ${esc(x.billing_period || '')} · Balance due: ${money(x.amount)}</p>
+      <form id="v2-inv-mi-pay-form">
+        <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" value="${(x.amount / 100).toFixed(2)}" required></label>
+        <label class="sheet-field">Payment method<select name="payment_method"><option>Cash</option><option>Credit Card</option><option>GoDaddy Payments</option><option>GoDaddy Invoice</option><option>PayPal</option><option>Check</option><option>Other</option></select></label>
+        <label class="sheet-field">Comment<input name="comment" placeholder="Optional note (e.g. paid at the market)"></label>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Record payment</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-inv-mi-pay-form').onsubmit = e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      ctx.closeSheet();
+      mutate(() => miCall('record-payment', { id: x.id, amount: Number(f.get('amount')), payment_method: f.get('payment_method'), comment: f.get('comment') }), 'Payment recorded.');
+    };
+  }
   function editSheet(x) {
     ctx.openSheet(`
       <h3 class="sheet-title">Edit invoice</h3>
@@ -100,7 +132,10 @@ export function renderInvoices(ctx, root) {
       ${x.status === 'approved' ? `<button class="btn primary small" data-act="pp-invoice" data-kind="${kind}" data-id="${id}">Create &amp; send PayPal invoice</button>` : ''}
       ${x.status === 'held' ? `<button class="btn primary small" data-act="pp-sync" data-kind="${kind}" data-id="${id}">Check PayPal payment</button>` : ''}
       ${x.paystatus !== 'paid' ? `<button class="btn small" data-act="record" data-kind="${kind}" data-id="${id}">Record payment</button>` : ''}`;
-    return '<span class="note">Managed in Monthly Billing.</span>';
+    if (x.kind === 'monthly') return `
+      ${x.paystatus !== 'paid' && x.status !== 'cancelled' ? `<button class="btn primary small" data-act="mi-record" data-kind="${kind}" data-id="${id}">Record payment</button>` : ''}
+      <span class="note">Charges are managed in Monthly Billing.</span>`;
+    return '';
   }
   function cardHtml(x) {
     const overdue = isOverdue(x);
@@ -111,11 +146,15 @@ export function renderInvoices(ctx, root) {
         <strong class="amount-due">${money(x.amount)}</strong>
       </div>
       <div class="chips">
-        ${overdue ? `<span class="status bad">OVERDUE — ${overdueDays(x)} DAYS</span>` : `<span class="status ${x.paystatus === 'paid' ? 'ok' : 'warn'}">${esc(x.paystatus)}</span>`}
+        ${overdue ? `<span class="status bad">OVERDUE — ${overdueDays(x)} DAYS</span>` : `<span class="status ${x.paystatus === 'paid' ? 'ok' : 'warn'}">${esc(x.kind === 'monthly' && x.status === 'partial' ? 'partially paid' : x.paystatus)}</span>`}
         <span class="status neutral">${esc(x.kind)}</span>
         ${isDueSoon(x) ? '<span class="status warn">Due within 7 days</span>' : ''}
       </div>
       <p class="note">${marketLine(x) ? '<strong>Market:</strong> ' + esc(marketLine(x)) + '<br>' : ''}${x.due ? '<strong>Due:</strong> ' + esc(niceShort(x.due)) + '<br>' : ''}${x.payment_method ? '<strong>Payment:</strong> ' + esc(x.payment_method) + '<br>' : ''}${x.sent_at ? '<strong>Sent:</strong> ' + esc(new Date(x.sent_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' })) : ''}</p>
+      ${x.kind === 'monthly' && (x.payments || []).length ? `<div class="bill-payments"><p class="note"><strong>Paid:</strong> ${money(x.paid_total)} of ${money(x.total)} · <strong>Balance:</strong> ${money(x.amount)}</p>${(x.payments || []).map(p => `
+        <p class="note">${esc(new Date(p.paid_at || p.created_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' }))} · <strong>${money(p.amount)}</strong> · ${esc(p.payment_method || '')}${p.note ? ' · ' + esc(p.note) : ''}${p.recorded_by ? ' · recorded by ' + esc(p.recorded_by) : ''}${p.receipt_sent_at ? ' · Receipt sent ' + esc(new Date(p.receipt_sent_at).toLocaleDateString('en-US', { timeZone: 'America/New_York' })) : ''}<br>
+        <button class="btn small" data-act="mi-receipt" data-kind="monthly" data-id="${esc(x.id)}" data-payment="${esc(p.id)}">${p.receipt_sent_at ? 'Resend receipt' : 'Email receipt'}</button>
+        <button class="btn small ghost" data-act="mi-delete" data-kind="monthly" data-id="${esc(x.id)}" data-payment="${esc(p.id)}">Delete payment</button></p>`).join('')}</div>` : ''}
       <div class="vendor-actions">${actionsHtml(x)}</div>
     </article>`;
   }
@@ -169,6 +208,16 @@ export function renderInvoices(ctx, root) {
         ctx.toast(['PAID', 'MARKED_AS_PAID', 'PAID_EXTERNAL'].includes(r.status) ? 'Payment confirmed — booking marked paid.' : 'PayPal invoice status: ' + r.status);
       }, null);
       else if (act === 'record') paySheet(x);
+      else if (act === 'mi-record') monthlyPaySheet(x);
+      else if (act === 'mi-receipt') {
+        const pay = (x.payments || []).find(p => String(p.id) === String(btn.dataset.payment));
+        if (pay) mutate(() => miCall('email-receipt', { id: x.id, payment_id: pay.id }), 'Receipt emailed to ' + (x.vendor_email || 'the vendor') + '.');
+      }
+      else if (act === 'mi-delete') {
+        const pay = (x.payments || []).find(p => String(p.id) === String(btn.dataset.payment));
+        if (pay) confirmSheet('Delete this payment?', `Delete the <strong>${money(pay.amount)}</strong> ${esc(pay.payment_method || '')} payment? The invoice balance will go back up by that amount.`, 'Delete payment', true,
+          () => mutate(() => miCall('delete-payment', { id: x.id, payment_id: pay.id }), 'Payment deleted.'));
+      }
     });
   }
 
