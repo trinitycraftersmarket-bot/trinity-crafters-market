@@ -4,7 +4,7 @@
 // with three totals). Pure functions over the admin payload, ported from the
 // legacy invoiceCenter() math: same rows, same amounts, same due rules.
 // No fetching, no DOM, no mutation of the payload.
-import { dateOf } from './api.js?v=20261024-29';
+import { dateOf } from './api.js?v=20261024-30';
 
 // One invoice row per owed/payable record, across the three legacy sources:
 // regular bookings (approved/held/paid), imported-attendee invoices, and
@@ -19,7 +19,14 @@ export function invoiceRows(admin) {
     .filter(x => x.invoice_amount != null && String(x.payment_method || '').toLowerCase() !== 'monthly billing')
     .map(x => ({ ...x, kind: 'imported', amount: Number(x.invoice_amount || 0), paystatus: x.payment_status || 'unpaid', due: x.invoice_due_date || null, event: findEvent(x.event_id) }));
   const monthly = (admin.monthlyInvoices || [])
-    .map(x => ({ ...x, kind: 'monthly', amount: Math.max(0, Number(x.amount || 0) - Number(x.discount || 0) + Number(x.late_fee || 0)), paystatus: x.status === 'paid' ? 'paid' : 'unpaid', due: x.due_date || null, event: null }));
+    .map(x => {
+      // §49: a monthly row's amount is the BALANCE still owed — the
+      // invoice total less the payments recorded against it in the
+      // ledger (paid_total rides the admin payload). `total` keeps the
+      // full invoice total for "Paid $X of $Y" displays.
+      const total = Math.max(0, Number(x.amount || 0) - Number(x.discount || 0) + Number(x.late_fee || 0));
+      return { ...x, kind: 'monthly', total, amount: Math.max(0, total - Number(x.paid_total || 0)), paystatus: x.status === 'paid' ? 'paid' : 'unpaid', due: x.due_date || null, event: null };
+    });
   return [...regular, ...imported, ...monthly];
 }
 

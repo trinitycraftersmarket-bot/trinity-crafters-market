@@ -14,11 +14,11 @@
 // organizer's concurrent edits instead of overwriting them, the canvas
 // composite print, and the setup instructions email. Native confirm()
 // dialogs are replaced by the shared sheet system (§6.2).
-import { api, esc, nice, clock, marketName } from './api.js?v=20261024-29';
+import { api, esc, nice, clock, marketName } from './api.js?v=20261024-30';
 import {
   imageAllowed, standardizeArea, spotId, spotIds, clampPct, vendorLabel,
   resolvePinPosition, resolvePins, fitPins, composePlanCanvas, printFloorPlan, printBoothList
-} from './floorplan.js?v=20261024-29';
+} from './floorplan.js?v=20261024-30';
 
 let view = { eventId: '' };
 const clone = data => JSON.parse(JSON.stringify(data));

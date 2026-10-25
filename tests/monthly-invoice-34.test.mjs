@@ -31,8 +31,8 @@ test('§34: no html=html( self-reference remains in any function/server module',
   }
 });
 
-test('§34: the email action builds emailHtml from html(i) and queues emailHtml', () => {
-  assert.ok(SRC.includes('emailHtml=html(i)'), 'the local must be renamed to emailHtml');
+test('§34: the email action builds emailHtml from the invoice template and queues emailHtml', () => {
+  assert.ok(SRC.includes('emailHtml=html(inv)'), 'the local must be renamed to emailHtml (§49 renders the payment-attached invoice copy)');
   assert.ok(SRC.includes('plain,emailHtml)'), 'queue() must receive emailHtml');
   assert.ok(!SRC.includes(',html);'), 'queue() must not receive a bare html local');
 });
@@ -102,6 +102,11 @@ const audit=async(...a)=>{globalThis.__audits.push(a);};
       late_fee integer not null default 0, items jsonb, due_date date, status text not null default 'draft',
       payment_method text, payment_reference text, payment_comment text, cancel_reason text,
       sent_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+    create table market.vendor_payments(
+      id uuid primary key, monthly_invoice_id uuid, vendor_id uuid, application_id uuid,
+      booking_id uuid, imported_attendee_id uuid, amount integer not null, payment_method text,
+      paid_at timestamptz, note text, recorded_by text, receipt_sent_at timestamptz,
+      created_at timestamptz not null default now());
     create table market.outbox(
       id uuid primary key, recipient text, subject text, body text, html_body text,
       attachments jsonb, sent_at timestamptz, error text, created_at timestamptz not null default now());`);
