@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261024-33';
+import { api, esc, nice } from './api.js?v=20261024-34';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
