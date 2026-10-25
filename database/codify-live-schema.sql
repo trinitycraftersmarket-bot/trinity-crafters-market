@@ -538,6 +538,32 @@ alter table market.bans add column if not exists inquiry_sent_at timestamptz;
 -- adds it at runtime via add-column-if-not-exists.
 alter table market.applications add column if not exists message_alert_sent_at timestamptz;
 
+-- §45 (Oct 24, 2026) unpaid manually-invoiced (GoDaddy) holds: the
+-- hourly sweep's reminder ladder + 48-hour close-out stamps each rung on
+-- the booking row (send-once claims), and the per-vendor payment-
+-- reminder exemption lives on the application (mirrored onto
+-- vendor_profiles, the §47 flag store). Read/written by
+-- netlify/functions/maintenance.mjs (ensureInvoiceHoldLadder /
+-- sweepInvoiceHoldLadder / handleHeldPayments), which also adds them at
+-- runtime via add-column-if-not-exists. The exemption is seeded once by
+-- the sweep for Pat's Potions (pelalem@msn.com — pays on the 1st by
+-- standing arrangement); the seed itself is data, not schema.
+alter table market.bookings add column if not exists invoice_reminder1_sent_at timestamptz;
+alter table market.bookings add column if not exists invoice_reminder2_sent_at timestamptz;
+alter table market.bookings add column if not exists invoice_closeout_at timestamptz;
+alter table market.applications add column if not exists payment_reminder_exempt boolean not null default false;
+-- market.vendor_profiles ships in its own migration (database/
+-- vendor-profiles.sql) and is intentionally not created by this file
+-- (see note (d) below) — guard the column add so a fresh database
+-- applying this file before that migration stays clean; on the live
+-- DB the table exists and the column lands.
+do $$
+begin
+  if to_regclass('market.vendor_profiles') is not null then
+    alter table market.vendor_profiles add column if not exists payment_reminder_exempt boolean not null default false;
+  end if;
+end $$;
+
 -- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------
