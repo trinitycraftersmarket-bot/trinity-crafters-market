@@ -190,17 +190,147 @@ async function handleHeldPayments(){
 
 
 
-async function applyMonthlyLateFees(){
+// §46 (Oct 24, 2026) — the monthly-billing late ladder, replacing the
+// legacy applyMonthlyLateFees ($10 at due_date + 3 on EVERY invoice —
+// no vendor gate, no exemption, no email, no cancellation). The
+// revised regime (AUDIT.md §46 REVISED) governs monthly invoices whose
+// vendor is flagged monthly billing — applications.monthly_billing_
+// active, mirrored onto vendor_profiles for imported vendors (the §47
+// flag stores). Due date = the 1st (the invoice's due_date; the
+// billing period's 1st when no due_date is stored):
+//   due date — the due-date email (Scott's approved wording, verbatim),
+//     claimed once by the due_email_sent_at stamp (§35 pattern);
+//   due + 2 days (the 3rd) — a $25 late fee, applied ONCE
+//     (late_fee_applied_at), and never re-applied after Scott zeroes
+//     it: zeroing an applied fee stamps late_fee_waived_at (the waiver
+//     record, written by the monthly-invoices update action), and the
+//     applied stamp alone also protects a zeroed fee;
+//   due + 4 days (the 5th) — that month's bookings auto-cancel (the
+//     legacy cancel semantics: status + hold cleared, audit, waitlist
+//     scan; imported spots release the same way vendor-credit cancels
+//     them), unless Scott marked a promised pay date on the invoice —
+//     cancellation then holds off until that date. A promise defers
+//     cancellation only; the fee still lands on the 3rd.
+// §45's payment_reminder_exempt vendors (Pat's Potions — pays on the
+// 1st by arrangement) are out of every rung. Partial payments (§49)
+// count through the ledger: balance > 0 is "unpaid"; a ledger-settled
+// invoice is exempt from further rungs even if its stored status lags.
+// The §45 ladder above governs manual GoDaddy holds; this one governs
+// monthly invoices — a booking already waitlisted by §45 is not in
+// this ladder's cancel set, and vice versa, so nothing double-fires.
+async function ensureMonthlyBillingLadder(){
  const sql=db();
- const rows=await sql`
-  update market.vendor_invoices
-  set late_fee=1000,late_fee_applied_at=now(),updated_at=now()
-  where status<>'paid'
-    and due_date is not null
-    and (now() at time zone 'America/New_York')::date >= due_date + 3
-    and late_fee_applied_at is null
-  returning id,vendor_email,due_date`;
- for(const r of rows)await audit(sql,'system','monthly invoice late fee applied',{invoice_id:r.id,amount:1000,due_date:String(r.due_date)});
+ await sql`alter table market.applications add column if not exists monthly_billing_active boolean not null default false`;
+ await sql`alter table market.applications add column if not exists payment_reminder_exempt boolean not null default false`;
+ await sql`alter table market.vendor_invoices add column if not exists billing_period text, add column if not exists amount integer not null default 0, add column if not exists discount integer not null default 0, add column if not exists vendor_name text, add column if not exists business text`;
+ await sql`alter table market.vendor_invoices add column if not exists due_email_sent_at timestamptz`;
+ await sql`alter table market.vendor_invoices add column if not exists promised_pay_date date`;
+ await sql`alter table market.vendor_invoices add column if not exists late_fee_waived_at timestamptz`;
+ await sql`alter table market.vendor_invoices add column if not exists monthly_bookings_cancelled_at timestamptz`;
+ try{
+  const [t]=await sql`select to_regclass('market.vendor_profiles') as reg`;
+  if(t?.reg){
+   await sql`alter table market.vendor_profiles add column if not exists monthly_billing_active boolean not null default false`;
+   await sql`alter table market.vendor_profiles add column if not exists payment_reminder_exempt boolean not null default false`;
+  }
+ }catch(e){console.error('§46 vendor_profiles flag sync failed',e);}
+}
+
+async function sweepMonthlyBillingLadder(){
+ const sql=db();
+ const [reg]=await sql`select to_regclass('market.vendor_profiles') as profiles, to_regclass('market.vendor_payments') as payments, to_regclass('market.bookings') as bookings, to_regclass('market.imported_attendees') as imported, to_regclass('market.imported_category_reservations') as catres`;
+ const hasProfiles=!!reg?.profiles, hasPayments=!!reg?.payments, hasBookings=!!reg?.bookings, hasImported=!!reg?.imported, hasCatRes=!!reg?.catres;
+ const [clock]=await sql`select (now() at time zone 'America/New_York')::date as today`;
+ // Date columns arrive as Date objects or 'YYYY-MM-DD' strings
+ // depending on the driver — normalize both (the dateOnly precedent).
+ const ymdOf=v=>{if(!v)return '';if(v instanceof Date)return v.toISOString().slice(0,10);const m=String(v).match(/\d{4}-\d{2}-\d{2}/);return m?m[0]:'';};
+ const today=ymdOf(clock?.today);
+ if(!today)return;
+ const addDays=(ymd,n)=>{const d=new Date(ymd+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
+ const byId=new Map();
+ const appRows=await sql`
+  select vi.id,vi.vendor_email,vi.vendor_name,vi.business,vi.billing_period,vi.amount,vi.discount,vi.late_fee,vi.late_fee_applied_at,vi.late_fee_waived_at,vi.due_email_sent_at,vi.promised_pay_date,vi.monthly_bookings_cancelled_at,vi.status,
+    coalesce(vi.due_date,(nullif(vi.billing_period,'')||'-01')::date) as due_on
+  from market.vendor_invoices vi
+  where vi.status not in ('paid','cancelled')
+    and coalesce(vi.due_date,(nullif(vi.billing_period,'')||'-01')::date) is not null
+    and exists(select 1 from market.applications a where lower(a.email)=lower(vi.vendor_email) and a.monthly_billing_active)
+    and not exists(select 1 from market.applications a where lower(a.email)=lower(vi.vendor_email) and a.payment_reminder_exempt)`;
+ for(const r of appRows)byId.set(String(r.id),r);
+ if(hasProfiles){
+  const profileRows=await sql`
+   select vi.id,vi.vendor_email,vi.vendor_name,vi.business,vi.billing_period,vi.amount,vi.discount,vi.late_fee,vi.late_fee_applied_at,vi.late_fee_waived_at,vi.due_email_sent_at,vi.promised_pay_date,vi.monthly_bookings_cancelled_at,vi.status,
+     coalesce(vi.due_date,(nullif(vi.billing_period,'')||'-01')::date) as due_on
+   from market.vendor_invoices vi
+   where vi.status not in ('paid','cancelled')
+     and coalesce(vi.due_date,(nullif(vi.billing_period,'')||'-01')::date) is not null
+     and exists(select 1 from market.vendor_profiles p where p.email=lower(vi.vendor_email) and p.monthly_billing_active)
+     and not exists(select 1 from market.vendor_profiles p where p.email=lower(vi.vendor_email) and p.payment_reminder_exempt)
+     and not exists(select 1 from market.applications a where lower(a.email)=lower(vi.vendor_email) and a.payment_reminder_exempt)`;
+  for(const r of profileRows)byId.set(String(r.id),r);
+ }
+ for(const vi of byId.values()){
+  const due=ymdOf(vi.due_on);
+  if(!due)continue;
+  const period=vi.billing_period||due.slice(0,7);
+  let paidSum=0;
+  if(hasPayments){
+   const [s]=await sql`select coalesce(sum(amount),0)::bigint as paid from market.vendor_payments where monthly_invoice_id=${vi.id}`;
+   paidSum=Number(s?.paid||0);
+  }
+  const balance=Math.max(0,Number(vi.amount||0)-Number(vi.discount||0)+Number(vi.late_fee||0)-paidSum);
+  if(balance<=0)continue;
+  const name=vi.vendor_name||vi.business||'Vendor';
+  const month=new Date(period+'-01T12:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  const promised=vi.promised_pay_date?ymdOf(vi.promised_pay_date):null;
+  const cancelOn=promised||addDays(due,4);
+  if(today>=cancelOn){
+   // Cancel rung — claimed by the stamp inside the transaction, so an
+   // hourly re-run or a racing sweep cancels nothing twice.
+   let did=false; const scans=[];
+   await sql.begin(async tx=>{
+    await tx`select pg_advisory_xact_lock(708821)`;
+    const claimed=await tx`update market.vendor_invoices set monthly_bookings_cancelled_at=now() where id=${vi.id} and monthly_bookings_cancelled_at is null and status not in ('paid','cancelled') returning id`;
+    if(!claimed.length)return;
+    did=true;
+    if(hasBookings){
+     const books=await tx`select b.id,b.event_id,b.space from market.bookings b join market.events e on e.id=b.event_id where b.application_id in (select id from market.applications where lower(email)=lower(${vi.vendor_email})) and to_char(e.date,'YYYY-MM')=${period} and b.status in ('approved','held')`;
+     for(const b of books){
+      await tx`update market.bookings set status='cancelled',hold_until=null where id=${b.id}`;
+      await audit(tx,'system','monthly billing bookings auto-cancelled',{id:b.id,invoice_id:vi.id,period});
+      if(!scans.some(s=>s.event===b.event_id))scans.push({event:b.event_id,space:b.space});
+     }
+    }
+    if(hasImported){
+     const atts=await tx`select i.id from market.imported_attendees i join market.events e on e.id=i.event_id where lower(trim(both ' ,' from i.email))=lower(${vi.vendor_email}) and to_char(e.date,'YYYY-MM')=${period} and not coalesce(i.cancelled,false)`;
+     for(const a of atts){
+      await tx`update market.imported_attendees set cancelled=true where id=${a.id}`;
+      if(hasCatRes)await tx`delete from market.imported_category_reservations where imported_attendee_id=${a.id}`;
+      await audit(tx,'system','monthly billing bookings auto-cancelled',{id:a.id,invoice_id:vi.id,period,imported:true});
+     }
+    }
+    const body=`Hi ${name},\n\nThe Trinity Crafters Market bookings covered by your monthly invoice for ${month} have been cancelled because the invoice is still unpaid${promised?' — the promised pay date has passed':''}. The spaces have been released.\n\nIf you'd still like to attend, just reply to this email and we'll see what space is available.\n\nThank you,\nScott — Trinity Crafters Market`;
+    await queue(tx,vi.vendor_email,`Your Trinity Crafters Market bookings for ${month} were cancelled`,body);
+    await audit(tx,'system','monthly billing cancellation sent',{invoice_id:vi.id,period});
+   });
+   if(did)for(const s of scans)await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await scanWaitlist(tx,s.event,{space:s.space,actor:'system'});});
+   continue;
+  }
+  if(today>=due&&!vi.due_email_sent_at){
+   const total='$'+((Number(vi.amount||0)-Number(vi.discount||0)+Number(vi.late_fee||0))/100).toFixed(2);
+   const body=`Hi ${name} — your Trinity Crafters Market invoice for ${month}, totaling ${total}, was due on the 1st, and it isn't marked paid yet. If payment is already on its way, thank you, and please disregard this note.\n\nMonthly billing runs on a set schedule: a $25 late fee is added on the 3rd, and on the 5th, unpaid bookings for the month are cancelled and the spaces released. If you need more time, please reply to this email with the date you can pay, and I'll note it on your account and hold your spaces until then.\n\nThank you,\nScott — Trinity Crafters Market`;
+   await sql.begin(async tx=>{
+    const claimed=await tx`update market.vendor_invoices set due_email_sent_at=now() where id=${vi.id} and due_email_sent_at is null returning id`;
+    if(!claimed.length)return;
+    await queue(tx,vi.vendor_email,`Your Trinity Crafters Market invoice for ${month} was due on the 1st`,body);
+    await audit(tx,'system','monthly due-date email sent',{invoice_id:vi.id,period,due_date:due});
+   });
+  }
+  if(today>=addDays(due,2)&&!vi.late_fee_applied_at&&!vi.late_fee_waived_at&&Number(vi.late_fee||0)===0){
+   const claimed=await sql`update market.vendor_invoices set late_fee=2500,late_fee_applied_at=now(),updated_at=now() where id=${vi.id} and late_fee_applied_at is null and late_fee_waived_at is null and late_fee=0 and status not in ('paid','cancelled') returning id`;
+   if(claimed.length)await audit(sql,'system','monthly invoice late fee applied',{invoice_id:vi.id,amount:2500,due_date:due});
+  }
+ }
 }
 
 async function sendDayBeforeVendorReminders(){
@@ -357,7 +487,8 @@ export default async()=>{
  await sendDayBeforeVendorReminders();
  await sendDayBeforeShopperReminders();
  await sendPostMarketSurveys();
- await applyMonthlyLateFees();
+ await ensureMonthlyBillingLadder();
+ await sweepMonthlyBillingLadder();
  await dailySystemBackup();
  await flushMail();
  const [last]=await db()`select value from market.settings where key='last_sync'`;

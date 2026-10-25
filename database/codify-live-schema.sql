@@ -564,6 +564,28 @@ begin
   end if;
 end $$;
 
+-- §46 (Oct 24, 2026) monthly-billing late ladder: the "Monthly billing"
+-- vendor flag (applications.monthly_billing_active is codified with the
+-- application columns above; the vendor_profiles mirror for imported
+-- vendors is guarded below), the ladder's per-invoice state (due-email
+-- send-once stamp, the promised pay date Scott marks from a vendor's
+-- reply, the late-fee waiver record that keeps a zeroed fee from being
+-- re-applied, and the booking-cancellation claim stamp). Read/written
+-- by netlify/functions/maintenance.mjs (ensureMonthlyBillingLadder /
+-- sweepMonthlyBillingLadder) and netlify/functions/monthly-invoices.mjs
+-- (the update action), which also add them at runtime via
+-- add-column-if-not-exists.
+alter table market.vendor_invoices add column if not exists due_email_sent_at timestamptz;
+alter table market.vendor_invoices add column if not exists promised_pay_date date;
+alter table market.vendor_invoices add column if not exists late_fee_waived_at timestamptz;
+alter table market.vendor_invoices add column if not exists monthly_bookings_cancelled_at timestamptz;
+do $$
+begin
+  if to_regclass('market.vendor_profiles') is not null then
+    alter table market.vendor_profiles add column if not exists monthly_billing_active boolean not null default false;
+  end if;
+end $$;
+
 -- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------

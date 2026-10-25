@@ -9,7 +9,7 @@
 // user_id and answers "Sign in to continue." without one) — that was
 // true on the classic page too, so the form renders publicly here and
 // surfaces the same error, with a sign-in path that returns to the form.
-import { esc, getToken, money, nice } from './api.js?v=20261024-38';
+import { esc, getToken, money, nice } from './api.js?v=20261024-39';
 
 async function ftCall(method, body) {
   const r = await fetch('/.netlify/functions/food-trucks', {

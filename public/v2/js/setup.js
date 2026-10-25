@@ -6,7 +6,7 @@
 // in the shared sheet system, every mutation re-fetches, and a save only
 // ever sends the fields it means to change (§5 R-7: the event-capacity
 // floor now bites only when capacity is actually reduced, server-side).
-import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261024-38';
+import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261024-39';
 
 const stamp = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 const intOr = (v, f) => { const n = parseInt(v, 10); return Number.isInteger(n) && n >= 0 ? n : f; };
