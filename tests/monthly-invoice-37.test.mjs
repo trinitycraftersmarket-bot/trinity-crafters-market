@@ -115,7 +115,7 @@ test.before(async () => {
   const mock = `
 const db=()=>globalThis.__sql;
 const identity=async()=>globalThis.__who;
-const queue=async(...a)=>{globalThis.__queued.push(a);};
+const queue=async(...a)=>{globalThis.__queued.push(a);const id='00000000-0000-4000-8000-0000000000e2';await globalThis.__db.query('insert into market.outbox(id,recipient,subject,sent_at) values($1,$2,$3,now()) on conflict (id) do update set sent_at=now()',[id,a[1],a[2]]);return {id};};
 const flushMail=async()=>{};
 const audit=async(...a)=>{globalThis.__audits.push(a);};
 `;
@@ -129,9 +129,13 @@ const audit=async(...a)=>{globalThis.__audits.push(a);};
       discount_reason text, discount_note text,
       late_fee integer not null default 0, items jsonb, due_date date, status text not null default 'draft',
       payment_method text, payment_reference text, payment_comment text, cancel_reason text,
-      paid_at timestamptz, sent_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now());`);
+      paid_at timestamptz, sent_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+    create table market.outbox(
+      id uuid primary key, recipient text, subject text, body text, html_body text,
+      attachments jsonb, sent_at timestamptz, error text, created_at timestamptz not null default now());`);
   sql = pgliteSql(db);
   globalThis.__sql = sql;
+  globalThis.__db = db;
   globalThis.__who = { admin: true, email: 'org@example.com' };
   globalThis.__queued = [];
   globalThis.__audits = [];

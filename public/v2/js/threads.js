@@ -5,7 +5,7 @@
 // vendor's own `mine` rows). A message's sender is the author's email,
 // so "mine" below means "sent from the signed-in account". Posting
 // re-fetches the whole thread list before re-rendering (state rule).
-import { api, esc } from './api.js?v=20261024-28';
+import { api, esc } from './api.js?v=20261024-29';
 
 export function renderThreads(ctx, root, { eyebrow = 'Messages', title = 'Vendor Messages', apps = [] } = {}) {
   const list = (apps || []).filter(a => a && a.application_id);

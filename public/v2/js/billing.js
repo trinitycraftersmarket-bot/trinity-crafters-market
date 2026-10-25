@@ -6,8 +6,8 @@
 // (amount − discount + late fee; cancelled invoices are due $0). The
 // classic filters only show/hide invoice cards — here they re-render
 // just the list, so the Add Bill form is never disturbed.
-import { api, esc, getToken, nice } from './api.js?v=20261024-28';
-import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-28';
+import { api, esc, getToken, nice } from './api.js?v=20261024-29';
+import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-29';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
@@ -108,6 +108,7 @@ export function renderBilling(ctx, root) {
         ${['Cash', 'Credit Card', 'GoDaddy Invoice'].map(m => `<option ${fVal('method', i.payment_method || '') === m ? 'selected' : ''}>${m}</option>`).join('')}
       </select></label>
       <p class="note"><strong>GoDaddy invoice:</strong> ${i.godaddy_invoice_sent_count ? 'Sent ' + i.godaddy_invoice_sent_count + ' time' + (i.godaddy_invoice_sent_count === 1 ? '' : 's') + ' · First ' + esc(new Date(i.godaddy_invoice_first_sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' })) + ' · Last ' + esc(new Date(i.godaddy_invoice_last_sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' })) : 'Not marked sent yet'}</p>
+      ${i.sent_at ? `<p class="note"><strong>Invoice email:</strong> Emailed · Last ${esc(new Date(i.sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' }))} · to ${esc(i.vendor_email || '')}</p>` : ''}
       ${i.status === 'cancelled' && i.cancel_reason ? `<p class="note"><strong>Cancellation:</strong> ${esc(i.cancel_reason)}</p>` : ''}
       <div class="vendor-actions">
         <button class="btn primary small" data-bill-act="save">Save Changes</button>
@@ -315,7 +316,7 @@ export function renderBilling(ctx, root) {
         else if (act === 'godaddy') godaddySheet(inv);
         else if (act === 'edit') editChargesSheet(inv);
         else if (act === 'print') window.open(printUrl(inv.id), '_blank');
-        else if (act === 'email') mutate(() => miCall('email', { id: inv.id }), 'Invoice emailed.');
+        else if (act === 'email') mutate(() => miCall('email', { id: inv.id }), 'Invoice emailed to ' + (inv.vendor_email || 'the vendor') + '.');
         else if (act === 'cancel') cancelSheet(inv);
       });
     });
