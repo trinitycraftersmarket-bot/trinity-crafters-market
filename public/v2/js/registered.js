@@ -11,7 +11,7 @@
 // pings the server while signed in). That is observed use — the app
 // file's download count is anonymous, so nothing here claims a
 // download was ever observed.
-import { api, esc } from './api.js?v=20261024-25';
+import { api, esc } from './api.js?v=20261024-26';
 
 let view = { q: '', tab: 'registered' };
 let payload = null;

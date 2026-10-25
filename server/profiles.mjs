@@ -15,6 +15,15 @@
 //    the profile gains the account's user_id and the matched imported ids
 //    in linked_imported_ids. The imported rows themselves are never merged
 //    into bookings — the twin model stays, and server/counts.mjs dedupes.
+//
+// 3. Organizer vendor flags (§47) — regular_vendor + monthly_billing_amount
+//    live on market.applications for application-sourced vendors (their
+//    canonical store, unchanged), and HERE for imported vendors, who have
+//    no application row. Before §47 the vendor-save action wrote the flags
+//    to applications only, so a tick on an imported vendor's settings sheet
+//    silently went nowhere (and the Directory hardcoded the flags off for
+//    imported rows). The profile is also every imported vendor's identity
+//    record now: ensureImportedProfiles backfills a stub for each one.
 import {audit} from './core.mjs';
 import {normalizePhone} from './rules.mjs';
 
@@ -47,6 +56,9 @@ export async function ensureProfileSchema(sql) {
     updated_at timestamptz not null default now())`;
   // Address shipped after the table first did — add it to existing tables.
   await sql`alter table market.vendor_profiles add column if not exists address text not null default ''`;
+  // Organizer vendor flags for imported vendors (§47) — see header note 3.
+  await sql`alter table market.vendor_profiles add column if not exists regular_vendor boolean not null default false`;
+  await sql`alter table market.vendor_profiles add column if not exists monthly_billing_amount integer`;
   await sql`create index if not exists vendor_profiles_user_idx on market.vendor_profiles(user_id)`;
 }
 
@@ -67,6 +79,8 @@ export function presentProfile(row) {
     description: row.description || '', phone: row.phone || '', address: row.address || '',
     space_preference: row.space_preference || '', website: row.website || '', social_links: row.social_links || '',
     linked_imported_ids: Array.isArray(row.linked_imported_ids) ? row.linked_imported_ids : [],
+    regular_vendor: row.regular_vendor === true,
+    monthly_billing_amount: row.monthly_billing_amount ?? null,
     claimed_at: row.claimed_at || null, updated_at: row.updated_at || null,
     completeness: profileCompleteness(row)
   };
@@ -146,18 +160,19 @@ async function writeProfile(sql, existing, row) {
       category_id = ${row.category_id}, description = ${row.description}, phone = ${row.phone}, address = ${row.address},
       space_preference = ${row.space_preference}, website = ${row.website}, social_links = ${row.social_links},
       linked_imported_ids = ${JSON.stringify(row.linked_imported_ids || [])}::jsonb,
+      regular_vendor = ${row.regular_vendor === true}, monthly_billing_amount = ${row.monthly_billing_amount ?? null},
       claimed_at = ${row.claimed_at}, updated_at = now()
       where id = ${existing.id} returning *`;
     return saved;
   }
   const [saved] = await sql`insert into market.vendor_profiles
-    (user_id, email, vendor_id, name, business, category_id, description, phone, address, space_preference, website, social_links, linked_imported_ids, claimed_at)
-    values (${row.user_id}, ${row.email}, ${row.vendor_id}, ${row.name}, ${row.business}, ${row.category_id}, ${row.description}, ${row.phone}, ${row.address}, ${row.space_preference}, ${row.website}, ${row.social_links}, ${JSON.stringify(row.linked_imported_ids || [])}::jsonb, ${row.claimed_at})
+    (user_id, email, vendor_id, name, business, category_id, description, phone, address, space_preference, website, social_links, linked_imported_ids, regular_vendor, monthly_billing_amount, claimed_at)
+    values (${row.user_id}, ${row.email}, ${row.vendor_id}, ${row.name}, ${row.business}, ${row.category_id}, ${row.description}, ${row.phone}, ${row.address}, ${row.space_preference}, ${row.website}, ${row.social_links}, ${JSON.stringify(row.linked_imported_ids || [])}::jsonb, ${row.regular_vendor === true}, ${row.monthly_billing_amount ?? null}, ${row.claimed_at})
     returning *`;
   return saved;
 }
 
-const blankRow = email => ({user_id: null, email, vendor_id: null, name: '', business: '', category_id: null, description: '', phone: '', address: '', space_preference: '', website: '', social_links: '', linked_imported_ids: [], claimed_at: null});
+const blankRow = email => ({user_id: null, email, vendor_id: null, name: '', business: '', category_id: null, description: '', phone: '', address: '', space_preference: '', website: '', social_links: '', linked_imported_ids: [], regular_vendor: false, monthly_billing_amount: null, claimed_at: null});
 
 // Find the canonical profile for an account: the row keyed by the current
 // verified email wins; a row found only by user_id is the same vendor
@@ -241,6 +256,47 @@ export async function findImportedMatches(sql, email) {
   const key = emailKey(email);
   if (!key) return [];
   return sql`select i.* from market.imported_attendees i where lower(trim(both ' ,' from i.email)) = ${key} order by i.created_at`;
+}
+
+// Organizer vendor flags for an imported vendor (§47): the profile is the
+// store (header note 3). Creates the stub when the vendor has none yet.
+// A blank email is a no-op — the flags have no key to live under.
+export async function saveVendorFlags(sql, {email, regularVendor, monthlyBillingAmount}) {
+  await ensureProfileSchema(sql);
+  const key = emailKey(email);
+  if (!key) return null;
+  const existing = await getProfile(sql, {email: key});
+  const row = {...blankRow(key), ...(existing || {}), email: key,
+    regular_vendor: regularVendor === true,
+    monthly_billing_amount: monthlyBillingAmount ?? null};
+  return writeProfile(sql, existing, row);
+}
+
+// Backfill (§47): every imported vendor with a usable email gets a
+// vendor_profiles row — their identity record — created from their most
+// recent attendee row. Idempotent (unique email + on conflict do nothing)
+// and safe to run on every Directory load, following the codebase's
+// lazy-ensure pattern. The imported rows themselves are untouched; email
+// keys use the same normalization as findImportedMatches (stray spaces /
+// trailing commas in PDF-imported addresses collapse to the account key).
+export async function ensureImportedProfiles(sql) {
+  await ensureProfileSchema(sql);
+  await sql`insert into market.vendor_profiles(email, name, business, phone, category_id)
+    select d.email, d.name, d.business, d.phone,
+      (select c.id from market.categories c where lower(c.name) = lower(trim(coalesce(d.category, ''))))
+    from (
+      select distinct on (lower(trim(both ' ,' from i.email)))
+        lower(trim(both ' ,' from i.email)) as email,
+        i.name as name,
+        coalesce(nullif(i.business, ''), i.name) as business,
+        coalesce(i.phone, '') as phone,
+        i.category as category
+      from market.imported_attendees i
+      where nullif(trim(both ' ,' from i.email), '') is not null
+        and position('@' in i.email) > 0
+      order by lower(trim(both ' ,' from i.email)), i.created_at desc
+    ) d
+    on conflict (email) do nothing`;
 }
 
 // Record the claim (§13.5): the matched imported rows attach to the

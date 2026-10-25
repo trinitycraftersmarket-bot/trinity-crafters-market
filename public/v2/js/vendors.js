@@ -5,7 +5,7 @@
 // profile, market dates and recorded payments). Writes go through
 // vendor-profile organizer-save / vendor-save / vendor-payment /
 // vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
-import { api, fn, esc, money, nice } from './api.js?v=20261024-25';
+import { api, fn, esc, money, nice } from './api.js?v=20261024-26';
 
 let rows = null;          // vendor-list payload for this screen session
 let creditSources = null; // vendor-credit admin-sources: paid records a credit can be issued from
@@ -14,7 +14,7 @@ const selected = new Set();  // invite-back selections survive re-renders
 let audience = 'selected';   // invite-back audience: 'selected' (ticked only) or 'group' (rows on screen)
 let shownRows = [];          // rows currently on screen (Show filter + search), refreshed by draw()
 // The Show filter's display names — the same words as the picker options.
-const FILTER_LABELS = { all: 'All vendors', regular: 'Regular vendors only', inactive: "Haven't attended recently", pdf: 'PDF imported vendors' };
+const FILTER_LABELS = { all: 'All vendors', regular: 'Regular vendors only', inactive: "Haven't attended recently" };
 // A row counts as emailable when it carries a usable address (the same
 // normalization the vendor cards use; vendor-reengage also skips
 // email-less rows server-side and reports the true count).
@@ -46,7 +46,7 @@ export function renderVendors(ctx, root) {
       <div class="search grow"><input id="v2-vendor-search" type="search" placeholder="Business, name, email, phone or category…" autocomplete="off" value="${esc(view.q)}"></div>
       <label class="picker-label">Show<select id="v2-vendor-filter" class="picker">
         <option value="all">All vendors</option><option value="regular">Regular vendors only</option>
-        <option value="inactive">Haven't attended recently</option><option value="pdf">PDF imported vendors</option>
+        <option value="inactive">Haven't attended recently</option>
       </select></label>
     </div>
     <div class="card invite-card">
@@ -133,7 +133,7 @@ export function renderVendors(ctx, root) {
       <div class="vendor-top">
         <div><h3>${esc(v.business || v.name || 'Vendor')}</h3>
         <div class="contact">${esc(v.name || '')} · ${esc(email)}${v.phone ? ' · ' + esc(v.phone) : ''}</div></div>
-        <span class="status neutral">${v.source === 'pdf' ? 'PDF imported' : v.regular_vendor ? 'Regular vendor' : 'Vendor'}</span>
+        <span class="status neutral">${v.regular_vendor ? 'Regular vendor' : 'Vendor'}</span>
       </div>
       <p class="note"><strong>${v.shows || 0}</strong> paid shows · <strong>${money(v.booking_spend || 0)}</strong> recorded booking spend · <strong>${money(v.recorded_payments || 0)}</strong> in recorded payments${v.category ? `<br><strong>Category:</strong> ${esc(v.category)}` : ''}</p>
       ${profileSummary(v)}
@@ -325,7 +325,6 @@ export function renderVendors(ctx, root) {
       const matchesSearch = !q || [v.business, v.name, v.email, v.phone, v.category].some(x => String(x || '').toLowerCase().includes(q));
       if (!matchesSearch) return false;
       if (view.filter === 'regular') return !!v.regular_vendor;
-      if (view.filter === 'pdf') return v.source === 'pdf';
       if (view.filter === 'inactive') {
         const last = (v.dates || []).map(x => new Date(String(x.date).slice(0, 10) + 'T12:00:00')).sort((a, b) => b - a)[0];
         return !last || last < cutoff;
