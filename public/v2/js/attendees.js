@@ -5,11 +5,11 @@
 // Day (Stage 1) so there is one place that runs the day — here they are
 // shown as read-only chips. Same server-is-truth rule: every action is a
 // server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261024-37';
-import { attendeeRows, eventStats } from './data.js?v=20261024-37';
-import { parseAttendeePdf } from './pdfimport.js?v=20261024-37';
-import { printAttendance } from './print.js?v=20261024-37';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261024-37';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261024-38';
+import { attendeeRows, eventStats } from './data.js?v=20261024-38';
+import { parseAttendeePdf } from './pdfimport.js?v=20261024-38';
+import { printAttendance } from './print.js?v=20261024-38';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261024-38';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };

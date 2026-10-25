@@ -16,7 +16,7 @@
 //     charge against the booking amount, so a combined multi-date charge
 //     can never match. The amount override is editable only for a single
 //     date; for several dates it shows the combined total, read-only.
-import { esc, getToken, nice } from './api.js?v=20261024-37';
+import { esc, getToken, nice } from './api.js?v=20261024-38';
 
 // The legacy panel shows cents ($45.00); keep that exact formatting here.
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);

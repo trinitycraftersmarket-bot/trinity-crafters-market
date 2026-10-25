@@ -6,7 +6,7 @@
 // emails the vendor), same arrival slots (8:15 / 8:30 / 8:45 / 9:00 AM),
 // same 24-hour close. The vendor side of check-in already lives in the
 // v2 vendor portal (vendor.js); this is the organizer side.
-import { esc, getToken, nice } from './api.js?v=20261024-37';
+import { esc, getToken, nice } from './api.js?v=20261024-38';
 
 const timeLabel = t => ({ '08:15': '8:15 AM', '08:30': '8:30 AM', '08:45': '8:45 AM', '09:00': '9:00 AM' }[String(t || '').slice(0, 5)] || 'Not selected');
 
@@ -74,7 +74,7 @@ export function renderCheckin(ctx, root) {
         <article class="card vendor">
           <div class="vendor-top">
             <div><h3>${esc(r.business || r.name || '')}</h3>
-            <div class="contact">${esc(r.name || '')} · ${esc(r.email || '')}<br>${esc(r.space || '')} · ${esc(r.status || '')}</div></div>
+            <div class="contact">${esc(r.name || '')} · ${esc(r.email || '')}<br>${esc(r.space || '')} · ${esc(r.status || '')}</div>${r.products ? `<div class="contact">Sells: ${esc(r.products)}</div>` : ''}</div>
             <span class="status ${r.setup_arrival_time ? 'ok' : 'warn'}">${r.setup_arrival_time ? esc(timeLabel(r.setup_arrival_time)) : 'Not checked in'}</span>
           </div>
           ${r.setup_checkin_at ? `<p class="note">Submitted ${esc(new Date(r.setup_checkin_at).toLocaleString('en-US', { timeZone: 'America/New_York' }))}</p>` : ''}
