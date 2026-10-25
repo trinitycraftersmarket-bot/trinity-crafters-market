@@ -30,6 +30,8 @@ create table if not exists market.vendor_profiles (
   website text not null default '',
   social_links text not null default '',
   linked_imported_ids jsonb not null default '[]'::jsonb,
+  regular_vendor boolean not null default false,
+  monthly_billing_amount integer,
   claimed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -41,6 +43,14 @@ create index if not exists vendor_profiles_user_idx
 -- Address was added to the profile after the table first shipped.
 alter table market.vendor_profiles
   add column if not exists address text not null default '';
+
+-- Organizer vendor flags (§47): regular_vendor + monthly_billing_amount
+-- live here for imported vendors (application-sourced vendors keep theirs
+-- on market.applications). See server/profiles.mjs header note 3.
+alter table market.vendor_profiles
+  add column if not exists regular_vendor boolean not null default false;
+alter table market.vendor_profiles
+  add column if not exists monthly_billing_amount integer;
 
 alter table market.vendor_profiles enable row level security;
 revoke all on market.vendor_profiles from anon, authenticated;

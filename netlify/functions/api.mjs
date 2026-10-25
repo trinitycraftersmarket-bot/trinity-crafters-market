@@ -6,7 +6,7 @@ import {syncInspection} from '../../server/twins.mjs';
 import {acceptOffer,declineOffer,ensureWaitlistSchema,offerAnyway,resolveOffers,scanWaitlist} from '../../server/waitlist.mjs';
 import {decisionEmail,banEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
-import {claimImported,ensureProfileSchema,upsertProfileFromApplication} from '../../server/profiles.mjs';
+import {claimImported,ensureProfileSchema,ensureImportedProfiles,saveVendorFlags,upsertProfileFromApplication} from '../../server/profiles.mjs';
 import {vendorPaymentHistory,recordManualPayment,ensureVendorPaymentColumns} from '../../server/vendor-payments.mjs';
 import {pickAreaAttachment,allAreaAttachments,blockedRecipients} from '../../server/floorplan-mail.mjs';
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
@@ -589,6 +589,9 @@ ${description}`;
  if(action==='vendor-list'){
   if(!u.admin)return json({error:'Organizer access only'},403);
   await ensureProfileSchema(sql);
+  // §47: imported vendors are full vendors — backfill their profile
+  // (identity + flag store) before the directory reads it below.
+  await ensureImportedProfiles(sql);
   const rows=await sql`select a.id,a.user_id,a.name,a.email,a.phone,a.business,a.billing_address,a.description,a.referral_source,a.referral_group,a.regular_vendor,a.monthly_billing_amount,a.paypal_subscription_id,a.paypal_subscription_status,a.paypal_plan_id,a.created_at,c.name category,'application' source,(select json_build_object('business',p.business,'name',p.name,'category_id',p.category_id,'description',p.description,'phone',p.phone,'address',p.address,'space_preference',p.space_preference,'website',p.website,'social_links',p.social_links) from market.vendor_profiles p where p.email=lower(trim(a.email))) profile,
   coalesce((select count(*) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int shows,
   coalesce((select sum(b.price) from market.bookings b where b.application_id=a.id and b.status='paid'),0)::int booking_spend,
@@ -598,7 +601,7 @@ ${description}`;
   from market.applications a left join market.categories c on c.id=a.category_id
   where a.id in (select distinct on (lower(email)) id from market.applications order by lower(email),created_at desc)
   union all
-  select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,false regular_vendor,null::integer monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,(select json_build_object('business',p.business,'name',p.name,'category_id',p.category_id,'description',p.description,'phone',p.phone,'address',p.address,'space_preference',p.space_preference,'website',p.website,'social_links',p.social_links) from market.vendor_profiles p where p.email=lower(trim(both ' ,' from i.email))) profile,
+  select i.id,null::uuid user_id,i.name,i.email,i.phone,coalesce(nullif(i.business,''),i.name) business,null::text billing_address,null::text description,'PDF import' referral_source,null::text referral_group,coalesce((select p.regular_vendor from market.vendor_profiles p where p.email=lower(trim(both ' ,' from i.email))),false) regular_vendor,(select p.monthly_billing_amount from market.vendor_profiles p where p.email=lower(trim(both ' ,' from i.email))) monthly_billing_amount,null::text paypal_subscription_id,null::text paypal_subscription_status,null::text paypal_plan_id,i.created_at,i.category,'pdf' source,(select json_build_object('business',p.business,'name',p.name,'category_id',p.category_id,'description',p.description,'phone',p.phone,'address',p.address,'space_preference',p.space_preference,'website',p.website,'social_links',p.social_links) from market.vendor_profiles p where p.email=lower(trim(both ' ,' from i.email))) profile,
   count(*) over(partition by lower(coalesce(nullif(i.email,''),i.name)))::int shows,
   0::int booking_spend,
   coalesce((select sum(vp.amount)::int from market.vendor_payments vp where (i.vendor_id is not null and vp.vendor_id=i.vendor_id) or vp.imported_attendee_id in (select i2.id from market.imported_attendees i2 where lower(coalesce(nullif(i2.email,''),i2.name))=lower(coalesce(nullif(i.email,''),i.name)))),0)::int recorded_payments,
@@ -1184,6 +1187,10 @@ trinitycraftersmarket@gmail.com`;
   if(amount!==null&&(!Number.isInteger(amount)||amount<0||amount>10000000))throw Error('Enter a valid monthly billing amount.');
   if(p.source==='pdf'){
    await sql`update market.imported_attendees set name=coalesce(nullif(trim(${p.name||''}),''),name),business=coalesce(nullif(trim(${p.business||''}),''),business),email=lower(trim(${p.email||''})),phone=trim(${p.phone||''}),category=trim(${p.category||''}) where id=${p.id}`;
+   // §47: imported vendors have no application row for the flags to land
+   // on — their profile is the flag store (server/profiles.mjs note 3),
+   // keyed by the email just saved so the Directory reads back this tick.
+   await saveVendorFlags(sql,{email:p.email,regularVendor:p.regular_vendor===true,monthlyBillingAmount:amount});
   }else{
    await sql`update market.applications set name=coalesce(nullif(trim(${p.name||''}),''),name),business=coalesce(nullif(trim(${p.business||''}),''),business),email=lower(trim(${p.email||''})),phone=trim(${p.phone||''}),regular_vendor=${p.regular_vendor===true},monthly_billing_amount=${amount},paypal_subscription_status=case when ${p.regular_vendor===true} then paypal_subscription_status else '' end where id=${p.id}`;
   }
