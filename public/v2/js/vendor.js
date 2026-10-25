@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261024-35';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261024-35';
+import { api, fn, esc, nice, money } from './api.js?v=20261024-36';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261024-36';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -165,8 +165,51 @@ async function openMoveSheet(ctx, r, rerender) {
   });
 }
 
+// ------------------------------------------------------------------ §42 ---
+// Silent-ban restriction notice: a banned vendor keeps a signed-in
+// shell (boot exposes state.user.banned via the ban-status action) and
+// sees this neutral card on Home and Apply. The organizer's ban
+// reason is a private note and is NEVER rendered here. "Find out why"
+// files one inquiry email to the organizer (the ban-inquiry action);
+// the server throttles to one per 7 days and the card mirrors that
+// state honestly — spent means spent, in neutral words.
+function banNoticeCard(ctx) {
+  const asked = ctx.state.user?.banCanInquire === false;
+  return `<section class="card">
+    <h3 class="section-title">Your vendor access is restricted.</h3>
+    <p class="note">Your vendor account can't apply for markets or manage bookings right now. If you'd like to ask the organizer about it, tap below — your question goes to the organizer by email, and they can reply to you personally if they choose.</p>
+    ${asked
+      ? '<p class="note"><strong>Asked — the organizer will see your message.</strong> You can ask again in a few days.</p>'
+      : '<div class="vendor-actions"><button type="button" class="btn primary small" id="v2-ban-inquiry">Find out why</button></div>'}
+  </section>`;
+}
+function wireBanNotice(ctx, root, rerender) {
+  const b = root.querySelector('#v2-ban-inquiry');
+  if (!b) return;
+  b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const res = await api('ban-inquiry', {});
+      ctx.state.user.banCanInquire = false;
+      ctx.state.user.banInquirySentAt = res.inquiry_sent_at || new Date().toISOString();
+      ctx.toast(res.sent ? 'Your question was sent to the organizer.' : 'You already asked recently — the organizer has your message.');
+      rerender();
+    } catch (e) {
+      ctx.toast(e.message, true);
+      b.disabled = false;
+    }
+  };
+}
+
 // ----------------------------------------------------------------- home ---
 export function renderVendorHome(ctx, root) {
+  if (ctx.state.user?.banned) {
+    root.innerHTML = `
+    <p class="eyebrow">Vendor home</p>
+    ${banNoticeCard(ctx)}`;
+    wireBanNotice(ctx, root, () => renderVendorHome(ctx, root));
+    return;
+  }
   const rows = ctx.state.vendorRows || [];
   const next = rows.filter(r => booked(r) && upcoming(r)).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
   const pending = rows.filter(r => r.status === 'pending').length;
@@ -238,6 +281,13 @@ This Vendor Participation Agreement ("Agreement") is entered into between Trinit
 const REFERRALS = ['Facebook', 'Friend or vendor', 'Google search', 'Returning vendor', 'Other'];
 
 export function renderVendorApply(ctx, root) {
+  if (ctx.state.user?.banned) {
+    root.innerHTML = `
+    <p class="eyebrow">Apply</p>
+    ${banNoticeCard(ctx)}`;
+    wireBanNotice(ctx, root, () => renderVendorApply(ctx, root));
+    return;
+  }
   const pub = ctx.state.publicData;
   if (!pub) { root.innerHTML = '<div class="card empty-card">Application data could not load. Check your connection and reload.</div>'; return; }
   const events = (pub.events || []).filter(e => String(e.date) >= todayStr()).sort((a, b) => String(a.date).localeCompare(String(b.date)));

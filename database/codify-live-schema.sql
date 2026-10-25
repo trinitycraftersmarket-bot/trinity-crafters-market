@@ -522,6 +522,14 @@ alter table market.shopper_rsvps add column if not exists reminder_sent_at times
 alter table market.categories drop constraint if exists categories_vendor_limit_check;
 alter table market.categories add constraint categories_vendor_limit_check check (vendor_limit >= 0);
 
+-- market.bans: §42 (Oct 24, 2026) "Find out why" throttle stamp — the
+-- last time the banned vendor asked the organizer why they were banned
+-- (one inquiry per vendor per 7 days). Read/written by the ban-status /
+-- ban-inquiry actions (netlify/functions/api.mjs); added at runtime by
+-- identityWithBan (server/core.mjs) via add-column-if-not-exists, the
+-- same pattern as the §35 RSVP reminder stamp above.
+alter table market.bans add column if not exists inquiry_sent_at timestamptz;
+
 -- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------

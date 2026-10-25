@@ -1,10 +1,10 @@
 import {staffActionAllowed,hasStaffPermission} from '../../server/permissions.mjs';
-import {ready,db,supa,identity,banned,expire,audit,queue,publicData,flushMail,isUserError} from '../../server/core.mjs';
+import {ready,db,supa,identity,identityWithBan,banned,expire,audit,queue,publicData,flushMail,isUserError} from '../../server/core.mjs';
 import {normalizePhone} from '../../server/rules.mjs';
 import {eventInventory,categoryUsed,assertCapacity,vendorIdentityKey} from '../../server/counts.mjs';
 import {syncInspection} from '../../server/twins.mjs';
 import {acceptOffer,declineOffer,ensureWaitlistSchema,offerAnyway,resolveOffers,scanWaitlist} from '../../server/waitlist.mjs';
-import {decisionEmail,banEmail} from '../../server/notifications.mjs';
+import {decisionEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
 import {claimImported,ensureProfileSchema,ensureImportedProfiles,saveVendorFlags,upsertProfileFromApplication} from '../../server/profiles.mjs';
 import {vendorPaymentHistory,recordManualPayment,ensureVendorPaymentColumns} from '../../server/vendor-payments.mjs';
@@ -372,6 +372,50 @@ ${description}`;
   // callers (floor_plans permission) the full editor payload.
   const who=await identity(req).catch(()=>null);
   return await getAreaPlans(db(),url,who);
+ }
+ if(action==='ban-inquiry'&&req.method==='POST'){
+  // §42 "Find out why": a verified-banned vendor asks the organizer
+  // why. Handled ahead of the identity wall via identityWithBan —
+  // identity() itself refuses banned vendors on every action, this
+  // one included if it sat behind the wall. Queues ONE email to the
+  // organizer; the recorded ban reason is the organizer's PRIVATE
+  // note and is never read into it — Scott decides what (if
+  // anything) to tell the vendor, personally. Throttle: one inquiry
+  // per vendor per 7 days, stamped inquiry_sent_at on every matching
+  // active ban row; a repeat inside the window queues nothing and
+  // reports the throttle honestly instead of erroring. Audited.
+  const who=await identityWithBan(req),sql=db();
+  if(!who.banned)throw Error('Your vendor access is not restricted.');
+  let outcome;
+  await sql.begin(async tx=>{
+   await tx`select pg_advisory_xact_lock(708821)`;
+   const matches=await tx`select id,name,inquiry_sent_at from market.bans where active and (user_id=${who.id} or email=${who.email} or phone in (select phone from market.applications where user_id=${who.id})) order by created_at desc`;
+   if(!matches.length)throw Error('Your vendor access is not restricted.');
+   const recent=matches.find(b=>b.inquiry_sent_at&&Date.now()-new Date(b.inquiry_sent_at).getTime()<=7*24*3600*1000);
+   if(recent){outcome={sent:false,throttled:true,inquiry_sent_at:new Date(recent.inquiry_sent_at).toISOString()};return;}
+   const name=matches[0].name||who.email;
+   await queue(tx,'trinitycraftersmarket@gmail.com','Ban inquiry — '+name,`Vendor ${name} (${who.email}) asked why they were banned.\n\nThey sent this from the "Find out why" button in the vendor app. Your ban reason is your private note and was not shown to them. If you want to answer, email the vendor directly at ${who.email}.`);
+   await tx`update market.bans set inquiry_sent_at=now() where active and (user_id=${who.id} or email=${who.email} or phone in (select phone from market.applications where user_id=${who.id}))`;
+   await audit(tx,who,'ban inquiry',{ban_id:matches[0].id,email:who.email});
+   outcome={sent:true,throttled:false,inquiry_sent_at:new Date().toISOString()};
+  });
+  if(outcome.sent)await flushMail();
+  return json({ok:true,...outcome});
+ }
+ if(action==='ban-status'){
+  // §42 bootstrap probe: the v2 shell calls this when 'me' refuses, to
+  // tell "signed in but banned" apart from "signed out" — identity()
+  // refuses a banned vendor outright, so without this probe the shell
+  // could only bounce them to the sign-in form. Reports state ONLY:
+  // never the ban reason, never any other vendor data. The inquiry
+  // fields mirror the throttle so the notice can render the button
+  // or the already-asked state without a second call.
+  const who=await identityWithBan(req),sql=db();
+  if(!who.banned)return json({banned:false});
+  const rows=await sql`select inquiry_sent_at from market.bans where active and (user_id=${who.id} or email=${who.email} or phone in (select phone from market.applications where user_id=${who.id}))`;
+  const stamps=rows.map(b=>b.inquiry_sent_at?new Date(b.inquiry_sent_at).getTime():0).filter(Boolean);
+  const lastMs=stamps.length?Math.max(...stamps):0;
+  return json({banned:true,email:who.email,inquiry_sent_at:lastMs?new Date(lastMs).toISOString():null,can_inquire:!lastMs||Date.now()-lastMs>7*24*3600*1000});
  }
  const u=await identity(req),sql=db();
  if(action==='me')return json(u);
@@ -1467,14 +1511,17 @@ trinitycraftersmarket@gmail.com`;
   await sql`update market.bookings set checked_in=${checked},no_show=${absent} where id=${p.id}`;await audit(sql,u,'attendance',{id:p.id,state:p.state});return json({ok:true});
  }
  if(action==='ban'){
+ // §42: banning is SILENT — this action never emails the vendor, on
+ // create or on re-activation (the old send branch queued a "you
+ // have been banned" notice Scott never wanted sent). Enforcement,
+ // the ban record and the audits are unchanged; a banned vendor who
+ // asks why comes through the ban-inquiry action instead, and Scott
+ // answers personally if he chooses.
  await sql.begin(async tx=>{
  await tx`select pg_advisory_xact_lock(708821)`;
- let target,send=false;
- if(p.id){const [previous]=await tx`select * from market.bans where id=${p.id} for update`;if(!previous)throw Error('Banned vendor not found.');target=previous;send=p.active===true&&!previous.active;await tx`update market.bans set active=${p.active===true} where id=${p.id}`;await audit(tx,u,'ban status',{id:p.id,active:p.active===true});}
+ if(p.id){const [previous]=await tx`select * from market.bans where id=${p.id} for update`;if(!previous)throw Error('Banned vendor not found.');await tx`update market.bans set active=${p.active===true} where id=${p.id}`;await audit(tx,u,'ban status',{id:p.id,active:p.active===true});}
  else{required(p.name,'name');required(p.reason,'reason',2000);if(!p.email&&!p.phone&&!p.user_id)throw Error('Add an email or phone number.');
- [target]=await tx`insert into market.bans(user_id,name,email,phone,reason) values(${p.user_id||null},${p.name},${p.email?.trim().toLowerCase()||null},${normalizePhone(p.phone)||null},${p.reason}) returning *`;send=true;await audit(tx,u,'ban',p);}
- if(send){let email=target.email;if(!email){const [app]=await tx`select email from market.applications where user_id=${target.user_id||null} or phone=${target.phone||null} order by created_at desc limit 1`;email=app?.email;}
- if(email){const mail=banEmail(target.name);await queue(tx,email,mail.subject,mail.body);}else await audit(tx,u,'ban notification unavailable',{id:target.id,reason:'No known vendor email address'});}
+ await tx`insert into market.bans(user_id,name,email,phone,reason) values(${p.user_id||null},${p.name},${p.email?.trim().toLowerCase()||null},${normalizePhone(p.phone)||null},${p.reason})`;await audit(tx,u,'ban',p);}
  });return json({ok:true});
  }
  if(action==='location'){

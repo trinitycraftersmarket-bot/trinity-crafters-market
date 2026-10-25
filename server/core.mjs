@@ -18,12 +18,15 @@ export const ready=()=>!!(process.env.DATABASE_URL&&process.env.SUPABASE_URL&&pr
 let connection;
 export const db=()=>connection ||= postgres(process.env.DATABASE_URL,{ssl:'require',max:2,prepare:false,idle_timeout:20});
 export const supa=()=>createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SECRET_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
-export async function identity(req){
+async function resolveUser(req){
  const token=req.headers.get('authorization')?.replace(/^Bearer /,'');
  if(!token) throw Error('Sign in to continue.');
  const {data,error}=await supa().auth.getUser(token);
  if(error||!data.user?.email_confirmed_at) throw Error('Please sign in with a verified email.');
- const u=data.user; const admin=u.email.toLowerCase()===process.env.ADMIN_EMAIL.toLowerCase();
+ return data.user;
+}
+export async function identity(req){
+ const u=await resolveUser(req); const admin=u.email.toLowerCase()===process.env.ADMIN_EMAIL.toLowerCase();
  if(!admin){const bans=await db()`select id from market.bans where active and (user_id=${u.id} or email=${u.email.toLowerCase()} or phone in (select phone from market.applications where user_id=${u.id}))`;if(bans.length)throw Error('Your vendor access is restricted. Contact the market organizer.');}
  let manager=false,permissions=[];
  if(!admin){
@@ -32,6 +35,25 @@ export async function identity(req){
   permissions=manager&&Array.isArray(staff.permissions)?staff.permissions:[];
  }
  return {id:u.id,email:u.email.toLowerCase(),admin,manager,permissions};
+}
+// §42: ban-tolerant identity for the two ban-bootstrap actions ONLY
+// (ban-status / ban-inquiry in netlify/functions/api.mjs). Same token
+// resolution as identity(), but an active ban is REPORTED on the
+// returned object instead of thrown — a banned vendor must be able to
+// learn that they are banned and ask why, while identity() keeps
+// refusing them on every data action. Never gate a data action on
+// this. Also lazily ensures the §42 throttle column (inquiry_sent_at)
+// before reading it — the add-column-if-not-exists pattern the §35
+// RSVP stamp uses; codified in database/codify-live-schema.sql §13.
+export async function identityWithBan(req){
+ const u=await resolveUser(req); const admin=u.email.toLowerCase()===process.env.ADMIN_EMAIL.toLowerCase();
+ let banned=false,ban=null;
+ if(!admin){
+  await db()`alter table market.bans add column if not exists inquiry_sent_at timestamptz`;
+  const bans=await db()`select id,name,inquiry_sent_at from market.bans where active and (user_id=${u.id} or email=${u.email.toLowerCase()} or phone in (select phone from market.applications where user_id=${u.id})) order by created_at desc`;
+  if(bans.length){banned=true;ban=bans[0];}
+ }
+ return {id:u.id,email:u.email.toLowerCase(),admin,banned,ban};
 }
 export async function banned(tx,u,phone){return (await tx`select id from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${normalizePhone(phone)})`).length>0;}
 export async function expire(tx=db()){await tx`update market.bookings set status='expired' where status='held' and hold_until<=now()`;}
