@@ -2,17 +2,21 @@
 // labels so who I mark regular vendors that are approved by me for
 // monthly billing showed up and I want it added to monthly billing as a
 // drop down to pick. Once billed I want it marked as billed in the drop
-// down so I don't miss anyone."
+// down so I don't miss anyone." Refinement, same evening: "in monthly
+// billing can I see and select regular vendors" — the roster IS the
+// regular vendors.
 //
 // The Monthly Billing screen gains a "Monthly billing vendors" roster
-// for the selected period: every vendor whose monthly_billing_amount is
-// set (the §46/§47 approval flag as it exists in the flag store today —
-// there is no separate approved boolean; the amount IS the flag, set in
-// Vendors → Edit information; integer cents), each entry marked Billed
-// (with the invoice status) when a non-cancelled monthly invoice exists
-// for that vendor+period, else "Not billed yet". Picking a not-billed
-// vendor starts their bill in the Add Bill form prefilled with their
-// monthly amount; picking a billed vendor opens that invoice.
+// for the selected period: every vendor flagged regular_vendor (the
+// unified §47 flag store — market.applications for application vendors,
+// market.vendor_profiles for imported ones; vendor-list surfaces it for
+// everyone), each entry marked Billed (with the invoice status) when a
+// non-cancelled monthly invoice exists for that vendor+period, else
+// "Not billed yet". A regular vendor with no monthly_billing_amount set
+// is still listed, marked "no monthly amount set"; picking them starts
+// their bill with the amount left blank for Scott to enter. Picking a
+// billed vendor opens that invoice. A vendor with a monthly amount but
+// no regular flag is NOT on the roster — regular is the roster.
 //
 // The roster computation is pure and lives in public/v2/js/roster.js so
 // it is behaviorally testable without a DOM; billing.js renders it.
@@ -37,6 +41,7 @@ test('§48: billing.js renders the roster dropdown from roster.js', () => {
   assert.ok(BILL.includes('v2-bill-roster-slot'), 'the roster has its own slot so period changes do not disturb the Add Bill form');
   assert.ok(BILL.includes('Not billed yet'), 'unbilled entries say so');
   assert.ok(BILL.includes("'Billed (' + esc(r.status) + ')'"), 'billed entries carry the invoice status');
+  assert.ok(BILL.includes('no monthly amount set'), 'regular vendors without a monthly amount are marked as such');
   assert.ok(BILL.includes('monthlyRoster(vendors, invoices, period)'), 'the roster is computed from the loaded vendors + invoices');
 });
 
@@ -45,15 +50,15 @@ test('§48: the roster recomputes when the billing period changes', () => {
   assert.ok(BILL.includes('const period = view.month || currentMonth;'), 'the roster period follows the selected month (current month when All months)');
 });
 
-test('§48: empty state points at the vendor settings flag', () => {
-  assert.ok(BILL.includes('No vendors are set up for monthly billing yet'), 'empty state renders');
-  assert.ok(BILL.includes('Monthly billing amount'), 'empty state names the setting');
+test('§48: empty state points at the regular-vendor flag', () => {
+  assert.ok(BILL.includes('No regular vendors yet'), 'empty state renders when nobody is flagged regular');
+  assert.ok(BILL.includes('Regular vendor'), 'empty state names the flag');
   assert.ok(BILL.includes('Vendors → Edit information'), 'empty state says where to set it');
 });
 
 test('§48: picking a vendor starts a prefilled bill or opens the invoice', () => {
   assert.ok(BILL.includes('rosterPrefill(entry, period)'), 'the prefill comes from the roster entry');
-  assert.ok(BILL.includes("slot.querySelector('#v2-bill-amount').value = pre.amount;"), 'the monthly amount lands in the Add Bill amount field');
+  assert.ok(BILL.includes("slot.querySelector('#v2-bill-amount').value = pre.amount;"), 'the monthly amount lands in the Add Bill amount field (blank when none is set)');
   assert.ok(BILL.includes('periodInput.value = pre.billing_period;'), 'the selected period lands in the Add Bill period field');
   assert.ok(BILL.includes('if (opt) vendorSel.value = opt.value;'), 'the vendor lands in the Add Bill vendor select');
   assert.ok(BILL.includes('openInvoice(entry.invoice)'), 'a billed vendor opens their invoice');
@@ -62,22 +67,27 @@ test('§48: picking a vendor starts a prefilled bill or opens the invoice', () =
 });
 
 // ---------------------------------------------------------------- behavioral
-const V = (email, amount, extra = {}) => ({ email, name: extra.name || '', business: extra.business || '', monthly_billing_amount: amount, ...extra });
+const V = (email, amount, extra = {}) => ({ email, name: extra.name || '', business: extra.business || '', monthly_billing_amount: amount, regular_vendor: true, ...extra });
 const I = (email, period, status, extra = {}) => ({ vendor_email: email, billing_period: period, status, ...extra });
 
-test('§48: the roster lists exactly the vendors with a monthly amount set', () => {
+test('§48: the roster lists exactly the regular vendors — amount or not', () => {
   const roster = monthlyRoster([
     V('saltylunaco@gmail.com', 10000, { business: 'Salty Luna Co' }),
-    V('pbriscoe.pb@gmail.com', 6000, { business: 'Handmade with Love by Pam' }),
-    V('walkin@example.com', null, { business: 'Walk-in Wendy' }),
-    V('zero@example.com', 0, { business: 'Zero Zelda' }),
-    V('unset@example.com', undefined, { business: 'Unset Uma' })
+    V('pbriscoe.pb@gmail.com', null, { business: 'Handmade with Love by Pam' }),
+    V('amountonly@example.com', 5000, { business: 'Amount-Only Andy', regular_vendor: false }),
+    V('plain@example.com', null, { business: 'Plain Paula', regular_vendor: false })
   ], [], '2026-11');
-  assert.deepEqual(roster.map(r => r.email), ['pbriscoe.pb@gmail.com', 'saltylunaco@gmail.com'], 'only amount>0 vendors, sorted by name');
+  assert.deepEqual(roster.map(r => r.email), ['pbriscoe.pb@gmail.com', 'saltylunaco@gmail.com'], 'only regular vendors, sorted by name; the amount-only vendor is excluded');
+  const pam = roster.find(r => r.email === 'pbriscoe.pb@gmail.com');
+  assert.equal(pam.hasAmount, false, 'a regular vendor with no monthly amount is still listed, flagged as such');
+  assert.equal(pam.amountCents, 0);
+  const salty = roster.find(r => r.email === 'saltylunaco@gmail.com');
+  assert.equal(salty.hasAmount, true);
+  assert.equal(salty.amountCents, 10000);
   assert.ok(roster.every(r => !r.billed && !r.invoice), 'nobody is billed without invoices');
 });
 
-test('§48: a duplicate vendor row (application + import) yields one roster entry', () => {
+test('§48: a duplicate regular vendor row (application + import) yields one roster entry', () => {
   const roster = monthlyRoster([
     V('dup@example.com', 5000, { business: 'Dup Dairy' }),
     V('dup@example.com', 5000, { business: 'Dup Dairy' })
@@ -124,4 +134,12 @@ test('§48: the prefill carries the monthly amount (dollars), vendor and period'
   assert.equal(pre.vendor_name, 'Ashley');
   assert.equal(pre.business, 'Salty Luna Co');
   assert.equal(pre.billing_period, '2026-11', 'the selected period carries into the bill');
+});
+
+test('§48: the prefill for a regular vendor with no monthly amount leaves the amount blank', () => {
+  const [entry] = monthlyRoster([V('pbriscoe.pb@gmail.com', null, { name: 'Pam Briscoe', business: 'Handmade with Love by Pam' })], [], '2026-11');
+  const pre = rosterPrefill(entry, '2026-11');
+  assert.equal(pre.amount, '', 'no stored amount → the field is left for Scott to enter');
+  assert.equal(pre.vendor_email, 'pbriscoe.pb@gmail.com');
+  assert.equal(pre.billing_period, '2026-11');
 });

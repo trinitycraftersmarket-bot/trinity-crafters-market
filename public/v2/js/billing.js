@@ -6,8 +6,8 @@
 // (amount − discount + late fee; cancelled invoices are due $0). The
 // classic filters only show/hide invoice cards — here they re-render
 // just the list, so the Add Bill form is never disturbed.
-import { api, esc, getToken, nice } from './api.js?v=20261024-27';
-import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-27';
+import { api, esc, getToken, nice } from './api.js?v=20261024-28';
+import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-28';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
@@ -387,8 +387,8 @@ export function renderBilling(ctx, root) {
       mutate(() => miCall('add-bill', payload), 'Bill added. You can print or email the invoice.');
     };
 
-    // §48 — Monthly billing roster: every vendor with a monthly billing
-    // amount (Vendors → Edit information) for the selected period, each
+    // §48 — Monthly billing roster: every regular vendor (the flag set
+    // in Vendors → Edit information) for the selected period, each
     // marked Billed / Not billed yet so nobody gets missed. Lives in its
     // own slot and re-renders alone on period changes — the Add Bill
     // form above is never disturbed.
@@ -400,7 +400,7 @@ export function renderBilling(ctx, root) {
       if (!roster.length) {
         rslot.innerHTML = `<section class="card">
           <h3 class="section-title first">Monthly billing vendors</h3>
-          <p class="note">No vendors are set up for monthly billing yet. Set a vendor's Monthly billing amount (Vendors → Edit information) and they'll appear here each month so nobody gets missed.</p>
+          <p class="note">No regular vendors yet. Mark a vendor as a Regular vendor (Vendors → Edit information) and they'll appear here each month so nobody gets missed.</p>
         </section>`;
         return;
       }
@@ -409,9 +409,9 @@ export function renderBilling(ctx, root) {
         <h3 class="section-title first">Monthly billing vendors</h3>
         <label class="sheet-field">Bill or open for ${esc(monthLabel(period))}<select id="v2-bill-roster-sel">
           <option value="">Choose vendor — ${billedCount} of ${roster.length} billed</option>
-          ${roster.map(r => `<option value="${esc(r.email)}">${esc(r.name)} — ${r.billed ? 'Billed (' + esc(r.status) + ')' : 'Not billed yet'}</option>`).join('')}
+          ${roster.map(r => `<option value="${esc(r.email)}">${esc(r.name)} — ${r.billed ? 'Billed (' + esc(r.status) + ')' : 'Not billed yet' + (r.hasAmount ? '' : ' — no monthly amount set')}</option>`).join('')}
         </select></label>
-        <p class="note">${billedCount} of ${roster.length} monthly billing vendors billed for ${esc(monthLabel(period))}. Picking a vendor who isn't billed yet starts their bill in the Add Bill form, prefilled with their monthly amount.</p>
+        <p class="note">${billedCount} of ${roster.length} monthly billing vendors billed for ${esc(monthLabel(period))}. Picking a vendor who isn't billed yet starts their bill in the Add Bill form, prefilled with their monthly amount when one is set.</p>
       </section>`;
       rslot.querySelector('#v2-bill-roster-sel').onchange = e => {
         const entry = roster.find(r => r.email === e.target.value);
@@ -440,8 +440,8 @@ export function renderBilling(ctx, root) {
       setTimeout(() => card.classList.remove('roster-flash'), 2000);
     }
     // A not-yet-billed vendor starts their bill in the Add Bill form:
-    // vendor, monthly amount and period prefilled — Scott adds the
-    // market dates it covers and submits as usual.
+    // vendor and period prefilled, plus the monthly amount when one is
+    // set — Scott adds the market dates it covers and submits as usual.
     function startRosterBill(entry, period) {
       const pre = rosterPrefill(entry, period);
       const search = slot.querySelector('#v2-bill-vsearch');
@@ -455,7 +455,9 @@ export function renderBilling(ctx, root) {
       const desc = slot.querySelector('#v2-bill-desc');
       if (desc && !desc.value) desc.value = 'Monthly billing — ' + monthLabel(period);
       slot.querySelector('#v2-bill-add-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
-      ctx.toast(entry.name + ' — bill started in the Add Bill form with their monthly amount. Tick the market dates it covers, then Add Bill.');
+      ctx.toast(entry.hasAmount
+        ? entry.name + ' — bill started in the Add Bill form with their monthly amount. Tick the market dates it covers, then Add Bill.'
+        : entry.name + ' — bill started in the Add Bill form. Enter the amount, tick the market dates it covers, then Add Bill.');
     }
     drawRoster();
     drawList();
