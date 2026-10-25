@@ -7,8 +7,8 @@
 // (vendor-payment) the Attendees panel uses, and a receipts strip fed by
 // vendor-list payments (vendor-receipt, with receipt_sent_at shown).
 // Mutations re-fetch the admin payload, then re-render (§1 rule 1).
-import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261024-39';
-import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261024-39';
+import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261025-40';
+import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261025-40';
 
 let view = { q: '', status: '', eventId: '' };
 

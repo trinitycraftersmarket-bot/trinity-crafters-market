@@ -6,7 +6,7 @@
 // in the shared sheet system, every mutation re-fetches, and a save only
 // ever sends the fields it means to change (§5 R-7: the event-capacity
 // floor now bites only when capacity is actually reduced, server-side).
-import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261024-39';
+import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261025-40';
 
 const stamp = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 const intOr = (v, f) => { const n = parseInt(v, 10); return Number.isInteger(n) && n >= 0 ? n : f; };
@@ -111,7 +111,8 @@ export function renderDates(ctx, root) {
         <label class="sheet-field">Venue name<input name="name" required value="${esc(x.name || '')}"></label>
         <label class="sheet-field">Full address<input name="address" required value="${esc(x.address || '')}"></label>
         ${capacityFields(x)}
-        <p class="note">These defaults apply to new dates. Existing dates keep their own prices and capacity.</p>
+        <label class="sheet-field">Regular-vendor indoor price ($) — blank = no regular rate<input name="regular_indoor_price" type="number" min="0" step="0.01" value="${x.regular_indoor_price != null ? x.regular_indoor_price / 100 : ''}"></label>
+        <p class="note">Vendors you flag as <strong>Regular</strong> pay this indoor price at this venue instead of the standard indoor price, on new bookings and charges. Outdoor has no regular rate — regulars pay the standard outdoor price. These defaults apply to new dates. Existing dates keep their own prices and capacity.</p>
         <p class="note flag-note" data-form-msg hidden></p>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Save location</button></div>
       </form>`);
@@ -122,7 +123,8 @@ export function renderDates(ctx, root) {
         await api('location', {
           ...(x.id ? { id: x.id } : {}),
           market_name: f.get('market_name'), name: f.get('name'), address: f.get('address'),
-          ...readCapacity(f)
+          ...readCapacity(f),
+          regular_indoor_price: String(f.get('regular_indoor_price') ?? '').trim() === '' ? null : centsOf(f.get('regular_indoor_price'))
         });
         ctx.closeSheet();
         ctx.toast('Location saved.');
@@ -157,7 +159,7 @@ export function renderDates(ctx, root) {
       <div class="vendor-list">${(a.locations || []).map(l => `
         <article class="card vendor">
           <div class="vendor-top"><div><h3>${esc(l.name)}</h3><div class="contact">${esc(l.market_name || '')}</div></div></div>
-          <p class="note">${esc(l.address || '')}<br>Defaults: ${l.indoor_capacity} indoor at ${money(l.indoor_price)} · ${l.outdoor_capacity} outdoor at ${money(l.outdoor_price)}</p>
+          <p class="note">${esc(l.address || '')}<br>Defaults: ${l.indoor_capacity} indoor at ${money(l.indoor_price)} · ${l.outdoor_capacity} outdoor at ${money(l.outdoor_price)}${l.regular_indoor_price != null ? `<br>Regular vendors: indoor ${money(l.regular_indoor_price)}` : ''}</p>
           <div class="vendor-actions"><button class="btn small" data-edit-location="${esc(l.id)}">Edit location defaults</button></div>
         </article>`).join('') || '<div class="card empty-card">No locations yet.</div>'}</div>`;
     root.querySelectorAll('[data-edit-date]').forEach(b => b.onclick = () => dateSheet((admin().allEvents || []).find(e => String(e.id) === String(b.dataset.editDate)) || {}));

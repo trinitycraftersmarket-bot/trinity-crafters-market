@@ -53,7 +53,10 @@ test('§41: edit-item accepts date_amounts and sums them into the charge', () =>
 });
 
 test('§41: create-from-bookings stamps each market_dates entry with the booking amount', () => {
-  assert.ok(SRC.includes('market_dates:[{id:x.event_id,date:x.date,location:x.location,amount:Number(x.price||0)}]'), 'create stamps a one-entry market_dates with the real booking price');
+  // §50: the stamped amount is priceOf(x) — the booking's price, with
+  // the regular-rate override for regular-flagged vendors (§50 tests
+  // pin priceOf itself; the §41 contract is the one-entry stamp).
+  assert.ok(SRC.includes('market_dates:[{id:x.event_id,date:x.date,location:x.location,amount:priceOf(x)}]'), 'create stamps a one-entry market_dates with the booking price (via §50 priceOf)');
 });
 
 test('§41: add-bill leaves market_dates entries amount-less (legacy even split until edited)', () => {
@@ -106,7 +109,10 @@ const queue=async(tx,to,subject,body,htmlBody=null)=>{const id=globalThis.__uuid
 const flushMail=async()=>{await globalThis.__db.query('update market.outbox set sent_at=now() where sent_at is null and error is null');};
 const audit=async(tx,u,action,detail)=>{globalThis.__audits.push([action,detail]);};
 `;
-  ({ default: handler } = await import('data:text/javascript;base64,' + Buffer.from(mock + source).toString('base64')));
+  // §50: monthly-invoices imports server/pricing.mjs for create's
+  // regular-rate override — inline it (import-free by design).
+  const pricing = (await readFile(join(root, 'server/pricing.mjs'), 'utf8')).replace(/^export /gm, '');
+  ({ default: handler } = await import('data:text/javascript;base64,' + Buffer.from(mock + pricing + source).toString('base64')));
 
   db = new PGlite();
   await db.exec(`create schema market;
@@ -128,7 +134,11 @@ const audit=async(tx,u,action,detail)=>{globalThis.__audits.push([action,detail]
       attachments jsonb, sent_at timestamptz, error text, created_at timestamptz not null default now());
     create table market.applications(
       id uuid primary key, name text, business text, email text,
-      billing_day integer, billing_notes text, monthly_billing_active boolean not null default false);
+      billing_day integer, billing_notes text, monthly_billing_active boolean not null default false,
+      regular_vendor boolean not null default false);
+    create table market.vendor_profiles(
+      id uuid primary key default gen_random_uuid(), email text unique,
+      regular_vendor boolean not null default false);
     create unique index vendor_invoices_email_period_key on market.vendor_invoices(lower(vendor_email), billing_period);
     create table market.locations(id uuid primary key, name text, market_name text);
     create table market.events(id uuid primary key, date date, location_id uuid);

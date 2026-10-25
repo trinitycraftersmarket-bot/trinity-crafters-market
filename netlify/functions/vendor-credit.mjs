@@ -1,6 +1,7 @@
 import {db,identity,audit,queue,flushMail,isUserError} from '../../server/core.mjs';
 import {eventInventory,categoryUsed,vendorIdentityKey} from '../../server/counts.mjs';
 import {ensureProfileSchema} from '../../server/profiles.mjs';
+import {isRegularVendor,regularAwarePrice} from '../../server/pricing.mjs';
 import {syncCancellation} from '../../server/twins.mjs';
 import {scanWaitlist} from '../../server/waitlist.mjs';
 
@@ -39,6 +40,9 @@ export async function eligibleEvents(sql,credit,u){
  const [cat]=await sql`select id,name,vendor_limit,active from market.categories where id=${credit.category_id}`;
  if(!cat?.active)return [];
  const events=await sql`select e.*,l.name location,l.address,l.market_name,o.vendor_limit override_limit from market.events e join market.locations l on l.id=e.location_id left join market.event_category_limits o on o.event_id=e.id and o.category_id=${credit.category_id} where e.open and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and e.id<>${credit.source_event_id} order by e.date,e.start_time`;
+ // §50: a regular-flagged vendor's redemption prices at their rate —
+ // eligibility and the amount burned both use it (redeemCredit too).
+ const regular=await isRegularVendor(sql,{email:u.email});
  const out=[];
  for(const e of events){
   const dup=await sql`select 1 from (select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${e.id} and lower(trim(a.email))=lower(${u.email}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())) union all select i.id from market.imported_attendees i where i.event_id=${e.id} and lower(trim(i.email))=lower(${u.email}) and not coalesce(i.cancelled,false)) q limit 1`;
@@ -47,7 +51,7 @@ export async function eligibleEvents(sql,credit,u){
   const spaces=[];
   for(const space of ['indoor','outdoor']){
    if(space==='indoor'&&e.indoor_open===false)continue;if(space==='outdoor'&&e.outdoor_open===false)continue;
-   const counts=await categoryAndSpaceCounts(sql,e.id,credit.category_id,space),capacity=Number(e[space+'_capacity']||0),price=Number(e[space+'_price']||0);
+   const counts=await categoryAndSpaceCounts(sql,e.id,credit.category_id,space),capacity=Number(e[space+'_capacity']||0),price=await regularAwarePrice(sql,{locationId:e.location_id,space,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,regular});
    if(Number(counts.space_used)<capacity&&price>0&&price<=Number(credit.remaining_amount||0))spaces.push({space,price});
   }
   if(spaces.length)out.push({id:e.id,date:dateOnly(e.date),title:e.title,location:e.location,address:e.address,market_name:e.market_name,spaces});
@@ -102,7 +106,7 @@ export async function redeemCredit(sql,{credit_id,event_id,space},u){
   const [e]=await tx`select e.*,l.name location,l.address,l.market_name,o.vendor_limit override_limit from market.events e join market.locations l on l.id=e.location_id left join market.event_category_limits o on o.event_id=e.id and o.category_id=${credit.category_id} where e.id=${event_id} and e.open and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') for update of e`;if(!e||e.sold_out)throw Error('That market date is no longer available.');
   const dup=await tx`select 1 from (select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${e.id} and lower(trim(a.email))=lower(${u.email}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())) union all select i.id from market.imported_attendees i where i.event_id=${e.id} and lower(trim(i.email))=lower(${u.email}) and not coalesce(i.cancelled,false)) q limit 1`;if(dup.length)throw Error('You already have a booking or application for that market date.');
   const counts=await categoryAndSpaceCounts(tx,e.id,credit.category_id,space),limit=categoryCap(e.override_limit,cat.vendor_limit);if(limit>0&&Number(counts.category_used)>=limit)throw Error('Your category just filled for that date. Choose another market date.');if(space==='indoor'&&e.indoor_open===false)throw Error('Indoor spaces are closed for that date.');if(space==='outdoor'&&e.outdoor_open===false)throw Error('Outdoor spaces are closed for that date.');if(Number(counts.space_used)>=Number(e[space+'_capacity']||0))throw Error('That space just sold out. Choose another option.');
-  const price=Number(e[space+'_price']||0);if(price<=0)throw Error('That space does not have a valid price.');if(price>Number(credit.remaining_amount))throw Error('This credit does not fully cover that space. Choose a lower-priced space or contact the organizer.');
+  const price=await regularAwarePrice(tx,{locationId:e.location_id,space,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,regular:await isRegularVendor(tx,{email:u.email})});if(price<=0)throw Error('That space does not have a valid price.');if(price>Number(credit.remaining_amount))throw Error('This credit does not fully cover that space. Choose a lower-priced space or contact the organizer.');
   const v=await sourceRecord(tx,credit.source_id,credit.source_type==='imported');if(!v)throw Error('The original vendor record could not be found.');
   const [row]=await tx`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state,payment_status,invoice_amount,selling,payment_method,payment_reference,paid_at,vendor_id) values(${e.id},${v.name||v.business||'Vendor'},${v.business||v.name||'Vendor'},${u.email},${v.phone||''},${cat.name},${cat.id},false,${space},'Vendor credit','not_marked','paid',${price},${v.description||''},'Credit',${'CREDIT-'+String(credit.id).slice(0,8)},now(),${credit.vendor_id||v.vendor_id||null}) returning id`;
   await tx`insert into market.imported_category_reservations(imported_attendee_id,event_id,category_id,space) values(${row.id},${e.id},${cat.id},${space}) on conflict(imported_attendee_id,category_id) do nothing`;

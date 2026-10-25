@@ -16,7 +16,7 @@
 //     charge against the booking amount, so a combined multi-date charge
 //     can never match. The amount override is editable only for a single
 //     date; for several dates it shows the combined total, read-only.
-import { esc, getToken, nice } from './api.js?v=20261024-39';
+import { esc, getToken, nice } from './api.js?v=20261025-40';
 
 // The legacy panel shows cents ($45.00); keep that exact formatting here.
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
@@ -68,7 +68,7 @@ export function renderManualBooking(ctx, root) {
           <legend>Market dates — tick every date to book</legend>
           <div class="mb-list">${(d.events || []).map(e => `
             <div class="mb-row">
-              <label class="mb-pick"><input type="checkbox" class="mb-check" value="${esc(e.id)}" data-label="${esc(nice(e.date))}" data-inside="${e.indoor_price}" data-outside="${e.outdoor_price}"><span>${esc(nice(e.date))} — ${esc(e.market_name || e.title || e.location || 'Crafters Market')}</span></label>
+              <label class="mb-pick"><input type="checkbox" class="mb-check" value="${esc(e.id)}" data-label="${esc(nice(e.date))}" data-inside="${e.indoor_price}" data-outside="${e.outdoor_price}" data-regular="${e.regular_indoor_price ?? ''}"><span>${esc(nice(e.date))} — ${esc(e.market_name || e.title || e.location || 'Crafters Market')}</span></label>
               <select class="mb-space" aria-label="Space"><option value="Inside">Inside</option><option value="Outside">Outside</option></select>
               <span class="mb-rate"></span>
             </div>`).join('') || '<p class="note">No upcoming market dates.</p>'}
@@ -108,7 +108,15 @@ export function renderManualBooking(ctx, root) {
       space: row.querySelector('.mb-space'),
       rate: row.querySelector('.mb-rate')
     }));
-    const rowCents = r => r.space.value === 'Inside' ? Number(r.check.dataset.inside || 0) : Number(r.check.dataset.outside || 0);
+    // §50: a selected REGULAR vendor pays the location's regular
+    // indoor rate on Inside rows (the server applies the same rule
+    // when the amount arrives untouched, so the two never disagree).
+    let selectedRegular = false, selectedEmail = '';
+    const rowCents = r => {
+      if (r.space.value !== 'Inside') return Number(r.check.dataset.outside || 0);
+      if (selectedRegular && r.check.dataset.regular !== '') return Number(r.check.dataset.regular || 0);
+      return Number(r.check.dataset.inside || 0);
+    };
     const picked = () => rows.filter(r => r.check.checked);
     const fields = ['name', 'business', 'email', 'phone', 'selling', 'category_id'];
     let searchVersion = 0, timer = null, busy = false;
@@ -119,6 +127,8 @@ export function renderManualBooking(ctx, root) {
       status.textContent = 'Type at least 2 characters to search.';
     };
     const selectVendor = v => {
+      selectedRegular = v.regular_vendor === true;
+      selectedEmail = String(v.email || '').trim().toLowerCase();
       fields.forEach(key => { form.elements.namedItem(key).value = v[key] || ''; });
       const missing = ['email', 'phone'].filter(key => !String(v[key] || '').trim());
       clearSearch();
@@ -130,6 +140,7 @@ export function renderManualBooking(ctx, root) {
     newVendor.onclick = () => {
       if (busy) return;
       clearSearch();
+      selectedRegular = false; selectedEmail = '';
       fields.forEach(key => { form.elements.namedItem(key).value = ''; });
       selection.textContent = 'New vendor — enter their details below. They will be added when you save the booking.';
       form.elements.namedItem('name').focus();
@@ -171,7 +182,8 @@ export function renderManualBooking(ctx, root) {
       cardBox.hidden = !isCard;
       cardRef.required = isCard && sel.length === 1;
       cardAmount.textContent = 'Process ' + usd(total) + ' securely with GoDaddy Payments. Card details are never entered or stored on this website. After approval, return here and enter the GoDaddy Txn ID shown on the receipt (for example, 92892acb).';
-      summary.textContent = sel.length ? sel.length + ' date' + (sel.length === 1 ? '' : 's') + ' ticked — total ' + usd(total) + '.' : 'No dates ticked yet.';
+      const regApplied = selectedRegular && sel.some(r => r.space.value === 'Inside' && r.check.dataset.regular !== '');
+      summary.textContent = sel.length ? sel.length + ' date' + (sel.length === 1 ? '' : 's') + ' ticked — total ' + usd(total) + '.' + (regApplied ? ' Regular vendor rate applied.' : '') : 'No dates ticked yet.';
       note.textContent = !sel.length ? 'Tick at least one market date.'
         : sel.length > 1 ? 'Each ticked date is booked at its own rate for the space picked on its row; the amount above is the combined total.'
           + (form.elements.namedItem('payment_method').value === 'monthly billing' ? ' Monthly Billing selected — an amount due is recorded per date.' : isCard ? ' Credit card bookings are one date at a time so the GoDaddy charge matches the booking.' : '')
@@ -180,6 +192,13 @@ export function renderManualBooking(ctx, root) {
     };
     rows.forEach(r => { r.check.onchange = price; r.space.onchange = price; });
     form.elements.namedItem('payment_method').onchange = price;
+    form.elements.namedItem('email').addEventListener('input', e => {
+      // §50: typing a different email than the selected vendor's
+      // drops their regular rate — the selection no longer vouches
+      // for the identity. (Server-side, an untouched amount still
+      // follows the flag for the email actually booked.)
+      if (selectedRegular && e.target.value.trim().toLowerCase() !== selectedEmail) { selectedRegular = false; price(); }
+    });
     price();
 
     form.onsubmit = async e => {
