@@ -6,7 +6,7 @@
 // reason, and Mark Paid settles the $35. The classic prompt() dialogs
 // become bottom sheets here. The public application form stays on the
 // classic public page; this screen is the organizer side.
-import { esc, getToken, nice } from './api.js?v=20261024-36';
+import { esc, getToken, nice } from './api.js?v=20261024-37';
 
 async function ftCall(method, body) {
   const r = await fetch('/.netlify/functions/food-trucks' + (method === 'GET' ? '?admin=1' : ''), {

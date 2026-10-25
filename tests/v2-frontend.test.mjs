@@ -261,7 +261,7 @@ test('stage-3b messages screens use the legacy endpoints', () => {
   for (const s of ["fnq('communications', 'events')", "fnq('communications', 'history')", "fnq('communications', 'preview'", "fnq('communications', 'send'", '{{name}}', 'Use again as a template'])
     assert.ok(comms.includes(s), `comms.js must include ${s}`);
   const threads = read('threads.js');
-  assert.ok(threads.includes("api('messages')"), 'threads.js must use the messages action');
+  assert.ok(threads.includes("api('messages'"), 'threads.js must use the messages action');
   const chat = read('chat.js');
   for (const s of ["'admin-dashboard'", "'admin-search'", "'admin-messages'", "'admin-reply'", "'admin-close'", "'admin-reopen'", "'admin-toggle'", "'admin-create-upload'", "'status'", "'start'", "'messages'", "'send'", "'create-upload'", 'uploadChatFile'])
     assert.ok(chat.includes(s), `chat.js must use the live-chat action ${s}`);

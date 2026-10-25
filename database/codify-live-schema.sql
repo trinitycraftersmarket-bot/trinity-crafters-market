@@ -530,6 +530,14 @@ alter table market.categories add constraint categories_vendor_limit_check check
 -- same pattern as the §35 RSVP reminder stamp above.
 alter table market.bans add column if not exists inquiry_sent_at timestamptz;
 
+-- market.applications: §43 (Oct 24, 2026) new-message alert throttle —
+-- the last time a vendor message in this application's thread queued
+-- an organizer alert email (at most one per thread per hour; reset
+-- when the organizer reads or replies in the thread). Read/written by
+-- the api 'messages' action (netlify/functions/api.mjs), which also
+-- adds it at runtime via add-column-if-not-exists.
+alter table market.applications add column if not exists message_alert_sent_at timestamptz;
+
 -- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------

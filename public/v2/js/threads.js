@@ -5,7 +5,7 @@
 // vendor's own `mine` rows). A message's sender is the author's email,
 // so "mine" below means "sent from the signed-in account". Posting
 // re-fetches the whole thread list before re-rendering (state rule).
-import { api, esc } from './api.js?v=20261024-36';
+import { api, esc } from './api.js?v=20261024-37';
 
 export function renderThreads(ctx, root, { eyebrow = 'Messages', title = 'Vendor Messages', apps = [] } = {}) {
   const list = (apps || []).filter(a => a && a.application_id);
@@ -24,7 +24,10 @@ export function renderThreads(ctx, root, { eyebrow = 'Messages', title = 'Vendor
   async function load() {
     let messages;
     try {
-      messages = await api('messages');
+      // §43: naming the opened thread lets the server reset the
+      // organizer's new-message alert clock for it (admin reads only —
+      // the server ignores this for vendor/staff callers).
+      messages = await api('messages', undefined, { read_application_id: selected });
     } catch (e) {
       box.innerHTML = `<div class="card empty-card"><p><strong>Messages couldn't load.</strong></p><p class="muted">${esc(e.message)}</p></div>`;
       return;
