@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261024-31';
+import { esc } from './api.js?v=20261024-32';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
@@ -21,9 +21,17 @@ const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 // the print page is a same-webview navigation, so Back returns to the
 // app screen as the user left it); only if STILL open after a further
 // ~400ms does it fall back to reloading the app URL.
-const PRINT_CONTROLS_CSS = `:root{color-scheme:light}.print-controls{margin:0 0 12px}.print-controls button{padding:8px 12px;margin:0 8px 0 0}.print-controls p{margin:8px 0 0;font-size:9pt;color:#555}@media print{.print-controls{display:none}}`;
+// §51: the cascade tested green as markup but failed in Scott's hand —
+// small targets on a zoomed-out wide-table page, Print a platform
+// no-op in the app WebView, and Close depending entirely on JS the app
+// window may not honor. The row is robust by construction now: BIG
+// targets (min-height 44px, larger text, full-width wrap on narrow
+// screens) and a third control that is a PLAIN ANCHOR ("← Back to the
+// app", button-styled) — zero JavaScript, always navigates — as the
+// guaranteed floor under the JS Close cascade.
+const PRINT_CONTROLS_CSS = `:root{color-scheme:light}.print-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:0 0 12px}.print-controls button,.print-controls .print-back{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 18px;font-size:12pt;font-family:inherit;cursor:pointer}.print-controls .print-back{border:1px solid #888;border-radius:4px;background:#f0f0f0;color:#111;text-decoration:none}.print-controls p{flex:1 1 100%;margin:4px 0 0;font-size:10pt;color:#555}@media(max-width:600px){.print-controls button,.print-controls .print-back{flex:1 1 100%}}@media print{.print-controls{display:none}}`;
 function printControls() {
-  return `<div class="print-controls"><button type="button" onclick="window.print()">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/'},700)">Close</button><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF.</p></div>`;
+  return `<div class="print-controls"><button type="button" onclick="window.print()">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/'},700)">Close</button> <a class="print-back" href="https://trinitylutzmarkets.com/v2/">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>`;
 }
 const dateKey = v => String(v || '').slice(0, 10);
 const niceShortDate = v => {
