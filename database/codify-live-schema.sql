@@ -586,6 +586,24 @@ begin
   end if;
 end $$;
 
+-- §50 (Oct 25, 2026) regular-vendor rates: a per-location REGULAR
+-- indoor price (integer cents, nullable — null means the location has
+-- no regular pricing and regular vendors pay the standard rate).
+-- Vendors flagged regular (applications.regular_vendor /
+-- vendor_profiles.regular_vendor, §47) pay this rate for indoor
+-- spaces on NEW bookings and charges; outdoor has no regular rate.
+-- Seeded by venue match — Hampton Inn (Trinity) $40, Hilton Garden
+-- Inn (Lutz) $60 — only where the price is still unset, so a rate
+-- edited in Setup → Locations is never overwritten. Mirrored by the
+-- lazy heal in server/pricing.mjs (ensureLocationRegularPrice).
+alter table market.locations add column if not exists regular_indoor_price integer;
+update market.locations set regular_indoor_price = 4000
+  where regular_indoor_price is null
+    and (lower(name) like '%hampton%' or lower(coalesce(market_name, '')) like '%hampton%');
+update market.locations set regular_indoor_price = 6000
+  where regular_indoor_price is null
+    and (lower(name) like '%hilton%' or lower(coalesce(market_name, '')) like '%hilton%');
+
 -- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------

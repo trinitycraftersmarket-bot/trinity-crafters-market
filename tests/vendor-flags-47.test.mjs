@@ -75,12 +75,15 @@ test.before(async () => {
   const profiles = strip(await readFile(join(root, 'server/profiles.mjs'), 'utf8'));
   const payments = strip(await readFile(join(root, 'server/vendor-payments.mjs'), 'utf8'));
   const permissions = strip(await readFile(join(root, 'server/permissions.mjs'), 'utf8'));
+  // §50: api.mjs imports server/pricing.mjs (vendor-list heals the
+  // locations regular-price column through it) — inline it too.
+  const pricing = strip(await readFile(join(root, 'server/pricing.mjs'), 'utf8'));
   const db = new PGlite();
   await db.exec('create role anon; create role authenticated; create schema storage; create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);');
   for (const f of ['database/setup.sql', 'database/codify-live-schema.sql', 'database/vendor-credits.sql', 'database/waitlist-offers.sql', 'database/vendor-profiles.sql'])
     await db.exec(await readFile(join(root, f), 'utf8'));
   sql = pgliteSql(db);
-  const mock = rules + counts + profiles + payments + permissions + `
+  const mock = rules + counts + profiles + payments + permissions + pricing + `
 const ready=()=>true;
 const identity=async()=>globalThis.__who;
 const db=()=>globalThis.__sql;

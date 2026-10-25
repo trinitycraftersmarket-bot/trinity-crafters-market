@@ -1,4 +1,5 @@
 import {db,identity,queue,flushMail,audit} from '../../server/core.mjs';
+import {ensureLocationRegularPrice,isRegularVendor,regularAwarePrice,regularIndoorPriceFor} from '../../server/pricing.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const money=n=>'$'+(Number(n||0)/100).toFixed(2);
 const dateOnly=v=>{const s=String(v??'');const m=s.match(/^(\d{4}-\d{2}-\d{2})/);if(m)return m[1];const d=new Date(s);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10);};
@@ -46,9 +47,12 @@ export default async req=>{
      or strpos(lower(coalesce(email,'')),${q})>0 or strpos(lower(coalesce(phone,'')),${q})>0
      or (length(${digits})>=3 and strpos(regexp_replace(coalesce(phone,''),'[^0-9]','','g'),${digits})>0)
     order by lower(coalesce(nullif(business,''),name,'')),id limit 25`;
+    // §50: flag regular vendors so the form prices their rate.
+    for(const v of vendors)v.regular_vendor=v.email?await isRegularVendor(sql,{email:v.email}):false;
     return json({vendors});
    }
-   const events=await sql`select e.id,e.date,e.title,e.indoor_price,e.outdoor_price,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date`;
+   await ensureLocationRegularPrice(sql);
+   const events=await sql`select e.id,e.date,e.title,e.indoor_price,e.outdoor_price,l.regular_indoor_price,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date`;
    const categories=await sql`select id,name from market.categories where active order by name`;
    return json({events,categories});
   }
@@ -114,7 +118,24 @@ export default async req=>{
   let [cat]=p.category_id?await sql`select id,name from market.categories where id=${p.category_id} and active`:[];
   if(!cat)[cat]=await sql`select id,name from market.categories where active and lower(name) like 'other%' order by name limit 1`;
   if(!cat)throw Error('No active vendor category is available.');
-  const amount=p.amount==null||p.amount===''?(p.space==='Inside'?Number(event.indoor_price):Number(event.outdoor_price)):Math.round(Number(p.amount)*100);
+  // §50: a regular-flagged vendor's Inside booking prices at the
+  // location's regular rate. Three cases: (1) no amount sent — the
+  // rate is computed here; (2) the amount sent IS the standard price
+  // (both booking forms prefill it untouched) — the regular rate is
+  // the truth, so it replaces the prefill for cash / monthly billing;
+  // (3) any other amount is a deliberate override and stands. Credit
+  // card is excluded from (2): the GoDaddy charge was already verified
+  // against the amount sent, so the record must match the charge.
+  let amount;
+  if(p.amount==null||p.amount===''){
+   amount=await regularAwarePrice(sql,{locationId:event.location_id,space:p.space==='Inside'?'indoor':'outdoor',indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,regular:await isRegularVendor(sql,{email})});
+  }else{
+   amount=Math.round(Number(p.amount)*100);
+   if(p.payment_method!=='credit card'&&p.space==='Inside'&&amount===Number(event.indoor_price)&&await isRegularVendor(sql,{email})){
+    const rp=await regularIndoorPriceFor(sql,event.location_id);
+    if(rp!=null)amount=rp;
+   }
+  }
   if(!Number.isFinite(amount)||amount<0)throw Error('Enter a valid payment amount.');
   let vendorId=null;{
    // Email is required for manual bookings, so only an exact email match may attach an existing master vendor.
