@@ -10,8 +10,8 @@
 // email-receipt against the shared vendor_payments ledger. Due is the
 // BALANCE (total − paid_total, which the list attaches per invoice); a
 // partially covered invoice carries the stored status 'partial'.
-import { api, esc, getToken, nice } from './api.js?v=20261024-35';
-import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-35';
+import { api, esc, getToken, nice } from './api.js?v=20261024-36';
+import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-36';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];

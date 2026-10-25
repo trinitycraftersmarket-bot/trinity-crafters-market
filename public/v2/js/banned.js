@@ -1,11 +1,12 @@
 // Banned Vendors: the private organizer ban list. Native v2 port of the
 // classic Banned vendors tab — same admin-payload `bans` rows, same 'ban'
-// action: toggling flips `active` (unban / reapply ban; reapplying
-// re-sends the notification email server-side), and the add form creates
-// a new ban exactly like the classic ban form (name required, email or
-// phone required by the server, private reason, notification emailed
-// when an address is available).
-import { api, esc } from './api.js?v=20261024-35';
+// action: toggling flips `active` (unban / reapply ban), and the add form
+// creates a new ban exactly like the classic ban form (name required,
+// email or phone required by the server, private reason). §42: banning
+// is silent — neither creating nor re-applying a ban emails the vendor;
+// if a banned vendor asks why from the app, that question arrives by
+// email instead (the ban-inquiry action).
+import { api, esc } from './api.js?v=20261024-36';
 
 export function renderBanned(ctx, root) {
   root.innerHTML = `
@@ -28,7 +29,7 @@ export function renderBanned(ctx, root) {
   function banSheet() {
     ctx.openSheet(`
       <h3 class="sheet-title">Ban vendor</h3>
-      <p class="note">The reason stays private. A ban notification will be emailed if an email address is available. Review existing bookings separately.</p>
+      <p class="note">The reason stays private — it is never shown to the vendor. Banning does not email the vendor. Review existing bookings separately.</p>
       <form id="v2-ban-form">
         <label class="sheet-field">Vendor name<input name="name" required></label>
         <label class="sheet-field">Email<input name="email" type="email"></label>

@@ -11,7 +11,7 @@
 // the device so the user stays signed in across app restarts and
 // windows. api.js only re-exports its API; existing importers of
 // getToken/setToken/clearToken/TOKEN_KEY are unchanged.
-import { getToken, setToken, clearToken, TOKEN_KEY } from './token.js?v=20261024-35';
+import { getToken, setToken, clearToken, TOKEN_KEY } from './token.js?v=20261024-36';
 export { getToken, setToken, clearToken, TOKEN_KEY };
 
 // --- formatting helpers (ported semantics from the legacy UI) -------------
@@ -150,8 +150,17 @@ export async function verifySignInCode(email, code) {
   const v = await r.json().catch(() => ({}));
   if (!r.ok || !v.access_token) throw Error('That code is invalid or expired.');
   setToken(v.access_token);
+  // §42: for a banned vendor the server refuses 'me' — that refusal IS
+  // the enforcement, not a failed sign-in: the code verified and the
+  // token is stored. Report the restricted state so boot() can probe
+  // ban-status and land the vendor on the restriction notice instead
+  // of leaving them on the sign-in form.
+  let user;
+  try { user = await api('me'); } catch (e) {
+    if (String(e?.message || '').includes('vendor access is restricted')) return { banned: true, email };
+    throw e;
+  }
   // Managers get a staff-login audit row, mirroring the legacy flow.
-  const user = await api('me');
   if (user.manager) { try { await api('staff-login', {}); } catch { /* audit only */ } }
   return user;
 }
