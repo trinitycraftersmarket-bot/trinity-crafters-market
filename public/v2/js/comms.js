@@ -6,7 +6,7 @@
 // vendors are excluded from a Market Date email server-side. Past sends
 // double as templates: "Use again" loads a previous subject + body into
 // the composer. Sending re-fetches the history, per the state rule.
-import { fnq, esc, nice } from './api.js?v=20261024-26';
+import { fnq, esc, nice } from './api.js?v=20261024-27';
 
 export function renderComms(ctx, root) {
   root.innerHTML = `

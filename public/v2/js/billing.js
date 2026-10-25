@@ -6,7 +6,8 @@
 // (amount − discount + late fee; cancelled invoices are due $0). The
 // classic filters only show/hide invoice cards — here they re-render
 // just the list, so the Add Bill form is never disturbed.
-import { api, esc, getToken, nice } from './api.js?v=20261024-26';
+import { api, esc, getToken, nice } from './api.js?v=20261024-27';
+import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-27';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
@@ -324,6 +325,7 @@ export function renderBilling(ctx, root) {
     const periods = [...new Set(invoices.map(i => String(i.billing_period || '')).filter(Boolean))].sort().reverse();
     slot.innerHTML = `
       ${addBillCard()}
+      <div id="v2-bill-roster-slot"></div>
       <section>
         <h3 class="section-title">Invoices</h3>
         <div class="card filter-card">
@@ -338,7 +340,7 @@ export function renderBilling(ctx, root) {
       </section>`;
     slot.querySelector('#v2-bill-fmonth').value = view.month;
     slot.querySelector('#v2-bill-fstatus').value = view.status;
-    slot.querySelector('#v2-bill-fmonth').onchange = e => { view.month = e.target.value; drawList(); };
+    slot.querySelector('#v2-bill-fmonth').onchange = e => { view.month = e.target.value; drawList(); drawRoster(); };
     slot.querySelector('#v2-bill-fstatus').onchange = e => { view.status = e.target.value; drawList(); };
     slot.querySelector('#v2-bill-find').oninput = e => { view.q = e.target.value.trim().toLowerCase(); drawList(); };
 
@@ -384,6 +386,78 @@ export function renderBilling(ctx, root) {
       selectedEvents.clear();
       mutate(() => miCall('add-bill', payload), 'Bill added. You can print or email the invoice.');
     };
+
+    // §48 — Monthly billing roster: every vendor with a monthly billing
+    // amount (Vendors → Edit information) for the selected period, each
+    // marked Billed / Not billed yet so nobody gets missed. Lives in its
+    // own slot and re-renders alone on period changes — the Add Bill
+    // form above is never disturbed.
+    function drawRoster() {
+      const rslot = slot.querySelector('#v2-bill-roster-slot');
+      if (!rslot) return;
+      const period = view.month || currentMonth;
+      const roster = monthlyRoster(vendors, invoices, period);
+      if (!roster.length) {
+        rslot.innerHTML = `<section class="card">
+          <h3 class="section-title first">Monthly billing vendors</h3>
+          <p class="note">No vendors are set up for monthly billing yet. Set a vendor's Monthly billing amount (Vendors → Edit information) and they'll appear here each month so nobody gets missed.</p>
+        </section>`;
+        return;
+      }
+      const billedCount = roster.filter(r => r.billed).length;
+      rslot.innerHTML = `<section class="card">
+        <h3 class="section-title first">Monthly billing vendors</h3>
+        <label class="sheet-field">Bill or open for ${esc(monthLabel(period))}<select id="v2-bill-roster-sel">
+          <option value="">Choose vendor — ${billedCount} of ${roster.length} billed</option>
+          ${roster.map(r => `<option value="${esc(r.email)}">${esc(r.name)} — ${r.billed ? 'Billed (' + esc(r.status) + ')' : 'Not billed yet'}</option>`).join('')}
+        </select></label>
+        <p class="note">${billedCount} of ${roster.length} monthly billing vendors billed for ${esc(monthLabel(period))}. Picking a vendor who isn't billed yet starts their bill in the Add Bill form, prefilled with their monthly amount.</p>
+      </section>`;
+      rslot.querySelector('#v2-bill-roster-sel').onchange = e => {
+        const entry = roster.find(r => r.email === e.target.value);
+        e.target.value = '';
+        if (!entry) return;
+        if (entry.billed && entry.invoice) openInvoice(entry.invoice);
+        else startRosterBill(entry, period);
+      };
+    }
+    // A billed vendor opens their invoice: scroll to its card and flash
+    // it (clearing a status/search filter first if it hides the card);
+    // if the card still isn't rendered, open the Edit Charges sheet.
+    function openInvoice(inv) {
+      const findCard = () => [...slot.querySelectorAll('[data-bill-card]')].find(c => c.dataset.billCard === String(inv.id));
+      let card = findCard();
+      if (!card && (view.status || view.q)) {
+        view.status = ''; view.q = '';
+        slot.querySelector('#v2-bill-fstatus').value = '';
+        slot.querySelector('#v2-bill-find').value = '';
+        drawList();
+        card = findCard();
+      }
+      if (!card) { editChargesSheet(inv); return; }
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('roster-flash');
+      setTimeout(() => card.classList.remove('roster-flash'), 2000);
+    }
+    // A not-yet-billed vendor starts their bill in the Add Bill form:
+    // vendor, monthly amount and period prefilled — Scott adds the
+    // market dates it covers and submits as usual.
+    function startRosterBill(entry, period) {
+      const pre = rosterPrefill(entry, period);
+      const search = slot.querySelector('#v2-bill-vsearch');
+      if (search) search.value = '';
+      fillVendors('');
+      const opt = [...vendorSel.options].find(o => cleanEmail(o.value) === entry.email);
+      if (opt) vendorSel.value = opt.value;
+      slot.querySelector('#v2-bill-amount').value = pre.amount;
+      periodInput.value = pre.billing_period;
+      if ([...eventMonthSel.options].some(o => o.value === periodInput.value)) { eventMonthSel.value = periodInput.value; syncEventRows(); }
+      const desc = slot.querySelector('#v2-bill-desc');
+      if (desc && !desc.value) desc.value = 'Monthly billing — ' + monthLabel(period);
+      slot.querySelector('#v2-bill-add-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      ctx.toast(entry.name + ' — bill started in the Add Bill form with their monthly amount. Tick the market dates it covers, then Add Bill.');
+    }
+    drawRoster();
     drawList();
   }
 
