@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261024-26';
+import { esc } from './api.js?v=20261024-27';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
