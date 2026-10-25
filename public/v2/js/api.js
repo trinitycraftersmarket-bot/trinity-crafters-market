@@ -11,7 +11,7 @@
 // the device so the user stays signed in across app restarts and
 // windows. api.js only re-exports its API; existing importers of
 // getToken/setToken/clearToken/TOKEN_KEY are unchanged.
-import { getToken, setToken, clearToken, TOKEN_KEY } from './token.js?v=20261024-34';
+import { getToken, setToken, clearToken, TOKEN_KEY } from './token.js?v=20261024-35';
 export { getToken, setToken, clearToken, TOKEN_KEY };
 
 // --- formatting helpers (ported semantics from the legacy UI) -------------
