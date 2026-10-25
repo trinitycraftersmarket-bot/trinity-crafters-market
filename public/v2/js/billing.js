@@ -6,7 +6,7 @@
 // (amount − discount + late fee; cancelled invoices are due $0). The
 // classic filters only show/hide invoice cards — here they re-render
 // just the list, so the Add Bill form is never disturbed.
-import { api, esc, getToken, nice } from './api.js?v=20261024-24';
+import { api, esc, getToken, nice } from './api.js?v=20261024-25';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
