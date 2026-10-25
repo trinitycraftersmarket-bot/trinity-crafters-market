@@ -29,12 +29,21 @@
 // working until they expire); the persistent copy is the fallback a
 // fresh app launch reads. Writes go to both stores so the two never
 // disagree about the current token.
+//
+// Every store reference sits INSIDE its try/catch: in an environment
+// where a storage global is absent entirely (not just throwing), the
+// identifier lookup itself raises — the accessor must read that as
+// "no token", never propagate it into api() (the audit-batch-31 A3
+// regression: zero fetches, a silently empty screen).
 export const TOKEN_KEY = 'market-token';
 
-const read = store => { try { return store.getItem(TOKEN_KEY); } catch { return null; } };
-const write = (store, value) => { try { store.setItem(TOKEN_KEY, value); } catch { /* storage unavailable */ } };
-const remove = store => { try { store.removeItem(TOKEN_KEY); } catch { /* storage unavailable */ } };
+const readLocal = () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
+const readSession = () => { try { return sessionStorage.getItem(TOKEN_KEY); } catch { return null; } };
+const writeLocal = value => { try { localStorage.setItem(TOKEN_KEY, value); } catch { /* storage unavailable */ } };
+const writeSession = value => { try { sessionStorage.setItem(TOKEN_KEY, value); } catch { /* storage unavailable */ } };
+const removeLocal = () => { try { localStorage.removeItem(TOKEN_KEY); } catch { /* storage unavailable */ } };
+const removeSession = () => { try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* storage unavailable */ } };
 
-export const getToken = () => read(sessionStorage) || read(localStorage);
-export const setToken = t => { if (!t) return; write(localStorage, t); write(sessionStorage, t); };
-export const clearToken = () => { remove(localStorage); remove(sessionStorage); };
+export const getToken = () => readSession() || readLocal();
+export const setToken = t => { if (!t) return; writeLocal(t); writeSession(t); };
+export const clearToken = () => { removeLocal(); removeSession(); };

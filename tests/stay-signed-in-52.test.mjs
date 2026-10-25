@@ -130,6 +130,28 @@ test('§52 (behavioral): a storage failure never breaks the token API', async ()
   tok.clearToken();    // must not throw
 });
 
+test('§52 (behavioral): absent storage globals read as signed out, never a throw (A3 regression)', async () => {
+  // Regression for the first §52 build: getToken evaluated the
+  // localStorage identifier OUTSIDE the try/catch, so in an environment
+  // with no such global at all (the node test harness that mocks only
+  // sessionStorage — audit-batch-31's A3 tests) the lookup itself threw,
+  // api() died before fetching, and the vendor floor plan rendered
+  // silently empty. Every reference now sits inside its try/catch.
+  delete globalThis.localStorage;
+  delete globalThis.sessionStorage;
+  const tok = await import(new URL('../public/v2/js/token.js', import.meta.url));
+  assert.equal(tok.getToken(), null, 'no storage globals at all reads as signed out');
+  tok.setToken('x');   // must not throw
+  tok.clearToken();    // must not throw
+  // The api() transport must still fetch with no token header at all.
+  const seen = [];
+  globalThis.fetch = async (url, opts = {}) => { seen.push(opts); return { ok: true, json: async () => ({ events: [] }) }; };
+  const api = await import(new URL('../public/v2/js/api.js', import.meta.url));
+  await api.api('public');
+  assert.equal(seen.length, 1, 'api() fetched despite the absent storage globals');
+  assert.ok(!('Authorization' in (seen[0].headers || {})), 'no token, no Authorization header');
+});
+
 // ------------------------------------------- email-code sign-in, end to end
 test('§52 (behavioral): email-code sign-in stores the token persistently; the next boot is signed in without a code', async () => {
   const persistent = makeStore(), session = makeStore();
