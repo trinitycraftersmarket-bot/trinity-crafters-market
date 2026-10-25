@@ -12,13 +12,13 @@ export default async req=>{
    if(admin){
     if(!u.admin&&!u.manager)return json({error:'Organizer access required.'},403);
     const rows=await sql`select * from (
-      select 'booking'::text source,b.id record_id,e.id event_id,e.date,e.start_time,e.title,l.name location,l.market_name,a.name,a.business,a.email,b.space,b.status,to_char(b.setup_arrival_time,'HH24:MI') setup_arrival_time,b.setup_checkin_at,
+      select 'booking'::text source,b.id record_id,e.id event_id,e.date,e.start_time,e.title,l.name location,l.market_name,a.name,a.business,a.email,b.space,b.status,to_char(b.setup_arrival_time,'HH24:MI') setup_arrival_time,b.setup_checkin_at,c.name products,
       (((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') cutoff,
       (now()<(((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours')) checkin_open
-      from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id
+      from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id join market.categories c on c.id=a.category_id
       where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and b.status in ('approved','held','paid')
       union all
-      select 'imported'::text source,i.id record_id,e.id event_id,e.date,e.start_time,e.title,l.name location,l.market_name,i.name,i.business,i.email,i.space,'paid'::text status,to_char(i.setup_arrival_time,'HH24:MI') setup_arrival_time,i.setup_checkin_at,
+      select 'imported'::text source,i.id record_id,e.id event_id,e.date,e.start_time,e.title,l.name location,l.market_name,i.name,i.business,i.email,i.space,'paid'::text status,to_char(i.setup_arrival_time,'HH24:MI') setup_arrival_time,i.setup_checkin_at,coalesce(nullif(i.selling,''),nullif(i.category,''),'Local handmade goods') products,
       (((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') cutoff,
       (now()<(((e.date+coalesce(e.start_time,time '10:00')) at time zone 'America/New_York')-interval '24 hours')) checkin_open
       from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id
