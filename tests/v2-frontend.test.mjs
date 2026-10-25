@@ -45,7 +45,9 @@ test('one version stamp across all v2 assets', () => {
 test('v2 never references legacy front-end internals or patch techniques', () => {
   const banned = [
     'MutationObserver',          // audit §1 rule 2: no patch layers
-    'localStorage',              // token lives in sessionStorage; no local copies of business data
+    // 'localStorage' is NOT blanket-banned anymore (§52): the auth token
+    // persists on the device through the one allowlisted accessor —
+    // enforced precisely by the §52 confinement test below.
     'account-hotfix', 'system-tools', 'attendance-hotfix', 'app-controls',
     '/app.js',                   // the legacy entry point (also catches /v2/js/app.js loader typos below)
     "from '../", 'from "..'      // imports must stay inside public/v2
@@ -58,6 +60,22 @@ test('v2 never references legacy front-end internals or patch techniques', () =>
       assert.ok(m[1].startsWith('./'), `${f} imports outside v2: ${m[1]}`);
       assert.ok(m[1].includes('?v='), `${f} import lacks a version stamp: ${m[1]}`);
     }
+  }
+});
+
+test('§52: localStorage is confined to the token accessor (one module, one key)', () => {
+  // The old blanket ban narrowed (audit §52, Scott's directive): app DATA
+  // still never touches localStorage — the server is the source of truth —
+  // but the auth token (a credential, not data) persists on the device so
+  // the user stays signed in. Exactly one module may reference
+  // localStorage: js/token.js, and it may use exactly one key.
+  const offenders = jsFiles.filter(f => readFileSync(f, 'utf8').includes('localStorage')).map(f => f.split('/').pop());
+  assert.deepEqual(offenders, ['token.js'], `only token.js may reference localStorage, found: ${offenders.join(', ') || 'none'}`);
+  const src = readFileSync(join(v2, 'js', 'token.js'), 'utf8');
+  assert.ok(src.includes("export const TOKEN_KEY = 'market-token'"), 'token.js defines the single storage key');
+  assert.equal(src.split("'market-token'").length - 1, 1, 'the key literal appears once (its definition)');
+  for (const m of src.matchAll(/(?:localStorage|sessionStorage|store)\.(?:getItem|setItem|removeItem)\(([^)]*)\)/g)) {
+    assert.equal(m[1].split(',')[0].trim(), 'TOKEN_KEY', `every storage call must go through TOKEN_KEY: ${m[0]}`);
   }
 });
 

@@ -10,7 +10,7 @@
 // survives sign-in, so boot()/route() return them to #rsvp with the
 // form (the §24 return-to pattern). The events list comes from
 // api('public'), the same anonymous-safe payload vapply uses.
-import { api, esc, nice } from './api.js?v=20261024-32';
+import { api, esc, nice } from './api.js?v=20261024-33';
 
 const SOURCES = ['Facebook', 'Instagram', 'Friend or family', 'Hotel', 'Flyer', 'Google', 'Other'];
 
