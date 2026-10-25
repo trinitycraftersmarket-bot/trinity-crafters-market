@@ -88,7 +88,7 @@ test.before(async () => {
   const mock = `
 const db=()=>globalThis.__sql;
 const identity=async()=>globalThis.__who;
-const queue=async(...a)=>{globalThis.__queued.push(a);};
+const queue=async(...a)=>{globalThis.__queued.push(a);const id='00000000-0000-4000-8000-0000000000e1';await globalThis.__db.query('insert into market.outbox(id,recipient,subject,sent_at) values($1,$2,$3,now()) on conflict (id) do update set sent_at=now()',[id,a[1],a[2]]);return {id};};
 const flushMail=async()=>{};
 const audit=async(...a)=>{globalThis.__audits.push(a);};
 `;
@@ -101,9 +101,13 @@ const audit=async(...a)=>{globalThis.__audits.push(a);};
       billing_period text, amount integer not null default 0, discount integer not null default 0,
       late_fee integer not null default 0, items jsonb, due_date date, status text not null default 'draft',
       payment_method text, payment_reference text, payment_comment text, cancel_reason text,
-      sent_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now());`);
+      sent_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+    create table market.outbox(
+      id uuid primary key, recipient text, subject text, body text, html_body text,
+      attachments jsonb, sent_at timestamptz, error text, created_at timestamptz not null default now());`);
   sql = pgliteSql(db);
   globalThis.__sql = sql;
+  globalThis.__db = db;
   const items = [
     { description: 'Vendor space', amount: 4500, market_dates: [{ date: '2026-11-07', location: 'Hampton Inn Odessa Trinity' }] },
     { description: 'Vendor space', amount: 4500, market_dates: [{ date: '2026-11-21', location: 'Hampton Inn Odessa Trinity' }] },
@@ -136,7 +140,9 @@ test('§34 (behavioral): email sends, strips the controls, flips status to email
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: ID })
   }));
   assert.equal(res.status, 200, 'email action must succeed (was the html TDZ 400 before the fix)');
-  assert.deepEqual(await res.json(), { ok: true });
+  const emailBody = await res.json();
+  assert.equal(emailBody.ok, true);
+  assert.equal(emailBody.email_delivery.sent, true, '§40: success is only reported with a confirmed delivery');
 
   assert.equal(globalThis.__queued.length, 1, 'exactly one email queued');
   const [, to, subject, plain, emailedHtml] = globalThis.__queued[0];
