@@ -17,7 +17,8 @@
 //    into bookings — the twin model stays, and server/counts.mjs dedupes.
 //
 // 3. Organizer vendor flags (§47) — regular_vendor + monthly_billing_amount
-//    live on market.applications for application-sourced vendors (their
+//    (§46 adds monthly_billing_active) live on market.applications for
+//    application-sourced vendors (their
 //    canonical store, unchanged), and HERE for imported vendors, who have
 //    no application row. Before §47 the vendor-save action wrote the flags
 //    to applications only, so a tick on an imported vendor's settings sheet
@@ -59,6 +60,9 @@ export async function ensureProfileSchema(sql) {
   // Organizer vendor flags for imported vendors (§47) — see header note 3.
   await sql`alter table market.vendor_profiles add column if not exists regular_vendor boolean not null default false`;
   await sql`alter table market.vendor_profiles add column if not exists monthly_billing_amount integer`;
+  // §46: the Monthly billing flag lives here too (applications carry it
+  // for application-sourced vendors) — the late ladder reads both stores.
+  await sql`alter table market.vendor_profiles add column if not exists monthly_billing_active boolean not null default false`;
   await sql`create index if not exists vendor_profiles_user_idx on market.vendor_profiles(user_id)`;
 }
 
@@ -81,6 +85,7 @@ export function presentProfile(row) {
     linked_imported_ids: Array.isArray(row.linked_imported_ids) ? row.linked_imported_ids : [],
     regular_vendor: row.regular_vendor === true,
     monthly_billing_amount: row.monthly_billing_amount ?? null,
+    monthly_billing_active: row.monthly_billing_active === true,
     claimed_at: row.claimed_at || null, updated_at: row.updated_at || null,
     completeness: profileCompleteness(row)
   };
@@ -161,18 +166,19 @@ async function writeProfile(sql, existing, row) {
       space_preference = ${row.space_preference}, website = ${row.website}, social_links = ${row.social_links},
       linked_imported_ids = ${JSON.stringify(row.linked_imported_ids || [])}::jsonb,
       regular_vendor = ${row.regular_vendor === true}, monthly_billing_amount = ${row.monthly_billing_amount ?? null},
+      monthly_billing_active = ${row.monthly_billing_active === true},
       claimed_at = ${row.claimed_at}, updated_at = now()
       where id = ${existing.id} returning *`;
     return saved;
   }
   const [saved] = await sql`insert into market.vendor_profiles
-    (user_id, email, vendor_id, name, business, category_id, description, phone, address, space_preference, website, social_links, linked_imported_ids, regular_vendor, monthly_billing_amount, claimed_at)
-    values (${row.user_id}, ${row.email}, ${row.vendor_id}, ${row.name}, ${row.business}, ${row.category_id}, ${row.description}, ${row.phone}, ${row.address}, ${row.space_preference}, ${row.website}, ${row.social_links}, ${JSON.stringify(row.linked_imported_ids || [])}::jsonb, ${row.regular_vendor === true}, ${row.monthly_billing_amount ?? null}, ${row.claimed_at})
+    (user_id, email, vendor_id, name, business, category_id, description, phone, address, space_preference, website, social_links, linked_imported_ids, regular_vendor, monthly_billing_amount, monthly_billing_active, claimed_at)
+    values (${row.user_id}, ${row.email}, ${row.vendor_id}, ${row.name}, ${row.business}, ${row.category_id}, ${row.description}, ${row.phone}, ${row.address}, ${row.space_preference}, ${row.website}, ${row.social_links}, ${JSON.stringify(row.linked_imported_ids || [])}::jsonb, ${row.regular_vendor === true}, ${row.monthly_billing_amount ?? null}, ${row.monthly_billing_active === true}, ${row.claimed_at})
     returning *`;
   return saved;
 }
 
-const blankRow = email => ({user_id: null, email, vendor_id: null, name: '', business: '', category_id: null, description: '', phone: '', address: '', space_preference: '', website: '', social_links: '', linked_imported_ids: [], regular_vendor: false, monthly_billing_amount: null, claimed_at: null});
+const blankRow = email => ({user_id: null, email, vendor_id: null, name: '', business: '', category_id: null, description: '', phone: '', address: '', space_preference: '', website: '', social_links: '', linked_imported_ids: [], regular_vendor: false, monthly_billing_amount: null, monthly_billing_active: false, claimed_at: null});
 
 // Find the canonical profile for an account: the row keyed by the current
 // verified email wins; a row found only by user_id is the same vendor
@@ -261,14 +267,17 @@ export async function findImportedMatches(sql, email) {
 // Organizer vendor flags for an imported vendor (§47): the profile is the
 // store (header note 3). Creates the stub when the vendor has none yet.
 // A blank email is a no-op — the flags have no key to live under.
-export async function saveVendorFlags(sql, {email, regularVendor, monthlyBillingAmount}) {
+export async function saveVendorFlags(sql, {email, regularVendor, monthlyBillingAmount, monthlyBillingActive}) {
   await ensureProfileSchema(sql);
   const key = emailKey(email);
   if (!key) return null;
   const existing = await getProfile(sql, {email: key});
   const row = {...blankRow(key), ...(existing || {}), email: key,
     regular_vendor: regularVendor === true,
-    monthly_billing_amount: monthlyBillingAmount ?? null};
+    monthly_billing_amount: monthlyBillingAmount ?? null,
+    // §46: an omitted flag keeps the stored value — only a caller that
+    // passes it (the vendor settings sheet) changes it.
+    monthly_billing_active: monthlyBillingActive === undefined ? (existing?.monthly_billing_active === true) : monthlyBillingActive === true};
   return writeProfile(sql, existing, row);
 }
 

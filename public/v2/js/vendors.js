@@ -5,7 +5,7 @@
 // profile, market dates and recorded payments). Writes go through
 // vendor-profile organizer-save / vendor-save / vendor-payment /
 // vendor-receipt, then the list is re-fetched and re-rendered (§1 rule 1).
-import { api, fn, esc, money, nice } from './api.js?v=20261024-38';
+import { api, fn, esc, money, nice } from './api.js?v=20261024-39';
 
 let rows = null;          // vendor-list payload for this screen session
 let creditSources = null; // vendor-credit admin-sources: paid records a credit can be issued from
@@ -247,6 +247,7 @@ export function renderVendors(ctx, root) {
         <label class="sheet-field">Phone<input name="phone" value="${esc(v.phone || '')}"></label>
         <label class="sheet-field">Category<input name="category" value="${esc(v.category || '')}" ${v.source === 'pdf' ? '' : 'readonly'}></label>
         <label class="checkline"><input type="checkbox" name="regular_vendor" ${v.regular_vendor ? 'checked' : ''}> Regular Vendor</label>
+        <label class="checkline"><input type="checkbox" name="monthly_billing" ${v.monthly_billing_active ? 'checked' : ''}> Monthly billing — invoices due the 1st, $25 late fee on the 3rd, unpaid bookings cancelled on the 5th</label>
         <label class="sheet-field">Monthly billing amount ($)<input name="monthly_amount" type="number" min="0" step="0.01" value="${v.monthly_billing_amount == null ? '' : (v.monthly_billing_amount / 100).toFixed(2)}"></label>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Save vendor information</button></div>
       </form>`);
@@ -261,6 +262,7 @@ export function renderVendors(ctx, root) {
         email: String(f.get('email')).trim(), phone: String(f.get('phone')).trim(),
         category: String(f.get('category')).trim(),
         regular_vendor: f.get('regular_vendor') === 'on',
+        monthly_billing: f.get('monthly_billing') === 'on',
         monthly_billing_amount: raw === '' ? null : Math.round(Number(raw) * 100)
       }), 'Vendor information saved.');
     };

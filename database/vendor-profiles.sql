@@ -52,5 +52,11 @@ alter table market.vendor_profiles
 alter table market.vendor_profiles
   add column if not exists monthly_billing_amount integer;
 
+-- Monthly billing flag (§46): the late ladder reads it from here for
+-- imported vendors (application-sourced vendors carry it on
+-- market.applications.monthly_billing_active).
+alter table market.vendor_profiles
+  add column if not exists monthly_billing_active boolean not null default false;
+
 alter table market.vendor_profiles enable row level security;
 revoke all on market.vendor_profiles from anon, authenticated;

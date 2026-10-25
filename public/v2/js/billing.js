@@ -10,8 +10,8 @@
 // email-receipt against the shared vendor_payments ledger. Due is the
 // BALANCE (total − paid_total, which the list attaches per invoice); a
 // partially covered invoice carries the stored status 'partial'.
-import { api, esc, getToken, nice } from './api.js?v=20261024-38';
-import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-38';
+import { api, esc, getToken, nice } from './api.js?v=20261024-39';
+import { monthlyRoster, rosterPrefill, cleanEmail } from './roster.js?v=20261024-39';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
@@ -103,6 +103,11 @@ export function renderBilling(ctx, root) {
       </div>
       <p class="note">Subtotal: ${usd(i.amount)} · Discount: ${usd(i.discount || 0)}${Number(i.paid_total || 0) ? ` · Paid: ${usd(i.paid_total)}` : ''} · <strong>${Number(i.paid_total || 0) ? 'Balance' : 'Due'}: ${usd(dueOf(i))}</strong></p>
       <label class="sheet-field">Discount ($)<input type="number" min="0" step="0.01" data-f="discount" value="${esc(fVal('discount', (Number(i.discount || 0) / 100).toFixed(2)))}"></label>
+      <label class="sheet-field">Late fee ($)<input type="number" min="0" step="0.01" data-f="latefee" value="${esc(fVal('latefee', (Number(i.late_fee || 0) / 100).toFixed(2)))}"></label>
+      ${i.late_fee_waived_at ? `<p class="note">Late fee waived — the automatic $25 fee will not be re-applied to this invoice. Set a fee above to charge one manually.</p>` : ''}
+      <label class="sheet-field">Promised pay date<input type="date" data-f="promised" value="${esc(fVal('promised', i.promised_pay_date ? String(i.promised_pay_date).slice(0, 10) : ''))}"></label>
+      ${i.promised_pay_date ? `<p class="note">A promised pay date is set — the automatic cancellation holds off until then. Clear the date and save to remove it.</p>` : ''}
+      ${i.due_email_sent_at ? `<p class="note"><strong>Due-date email:</strong> Sent ${esc(new Date(i.due_email_sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' }))}</p>` : ''}
       ${i.discount_reason ? `<p class="note">Discount reason: ${esc(i.discount_reason)}${i.discount_note ? ' — ' + esc(i.discount_note) : ''}</p>` : ''}
       <label class="sheet-field">Comments<textarea data-f="comment" rows="2">${esc(fVal('comment', i.payment_comment || ''))}</textarea></label>
       <label class="sheet-field">Status<select data-f="status">
@@ -361,6 +366,8 @@ export function renderBilling(ctx, root) {
         if (act === 'save') mutate(() => miCall('update', {
           id: inv.id,
           discount: card.querySelector('[data-f="discount"]').value || 0,
+          late_fee: card.querySelector('[data-f="latefee"]').value || 0,
+          promised_pay_date: card.querySelector('[data-f="promised"]').value || '',
           comment: card.querySelector('[data-f="comment"]').value || '',
           status: card.querySelector('[data-f="status"]').value || 'draft',
           payment_method: card.querySelector('[data-f="method"]').value || ''
