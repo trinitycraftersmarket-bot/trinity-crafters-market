@@ -303,6 +303,8 @@ create table if not exists market.vendor_invoices(
   billing_period text not null,
   amount integer not null default 0,
   discount integer not null default 0,
+  discount_reason text,
+  discount_note text,
   late_fee integer not null default 0,
   late_fee_applied_at timestamptz,
   items jsonb not null default '[]'::jsonb,
@@ -325,6 +327,11 @@ create unique index if not exists vendor_invoices_email_period_key
   on market.vendor_invoices(lower(vendor_email),billing_period);
 alter table market.vendor_invoices enable row level security;
 revoke all on market.vendor_invoices from anon,authenticated;
+-- Discount reason/note (§37 addendum 2, Oct 24, 2026): written by the
+-- monthly-invoices update action (preserve-when-absent); runtime ALTERs
+-- in monthly-invoices.mjs keep live installs healed.
+alter table market.vendor_invoices add column if not exists discount_reason text;
+alter table market.vendor_invoices add column if not exists discount_note text;
 
 -- ----------------------------------------------------------------------------
 -- 10. market.vendor_surveys — post-market vendor surveys (token link).

@@ -2,13 +2,14 @@
 // edit charges, mark GoDaddy invoices sent, print and email. Native v2
 // port of the classic Monthly Billing panel (organizer-tools): same
 // monthly-invoices function, same actions (list / add-bill / update /
-// cancel / edit-item / email / godaddy-sent / print), same due math
+// cancel / edit-item / delete-item / email / godaddy-sent / print), same due math
 // (amount − discount + late fee; cancelled invoices are due $0). The
 // classic filters only show/hide invoice cards — here they re-render
 // just the list, so the Add Bill form is never disturbed.
-import { api, esc, getToken, nice } from './api.js?v=20261024-23';
+import { api, esc, getToken, nice } from './api.js?v=20261024-24';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
+const DISCOUNT_REASONS = ['Barter', 'Free day', 'Credit applied', 'Rate adjustment', 'Tumbler credit', 'Other'];
 const monthLabel = m => new Date(m + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 const dueOf = i => i.status === 'cancelled' ? 0 : Math.max(0, Number(i.amount || 0) - Number(i.discount || 0) + Number(i.late_fee || 0));
 
@@ -96,6 +97,7 @@ export function renderBilling(ctx, root) {
       </div>
       <p class="note">Subtotal: ${usd(i.amount)} · Discount: ${usd(i.discount || 0)} · <strong>Due: ${usd(dueOf(i))}</strong></p>
       <label class="sheet-field">Discount ($)<input type="number" min="0" step="0.01" data-f="discount" value="${esc(fVal('discount', (Number(i.discount || 0) / 100).toFixed(2)))}"></label>
+      ${i.discount_reason ? `<p class="note">Discount reason: ${esc(i.discount_reason)}${i.discount_note ? ' — ' + esc(i.discount_note) : ''}</p>` : ''}
       <label class="sheet-field">Comments<textarea data-f="comment" rows="2">${esc(fVal('comment', i.payment_comment || ''))}</textarea></label>
       <label class="sheet-field">Status<select data-f="status">
         ${[['draft', 'Draft / Unpaid'], ['emailed', 'Emailed / Outstanding'], ['paid', 'Paid'], ['cancelled', 'Cancelled']].map(([v, t]) => `<option value="${v}" ${fVal('status', i.status || 'draft') === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -117,17 +119,79 @@ export function renderBilling(ctx, root) {
     </article>`;
   }
 
-  function editChargesSheet(i) {
+  // Confirm before a destructive charge delete (the vendors.js sheet pattern).
+  const confirmSheet = (title, text, confirmLabel) => new Promise(resolve => {
+    ctx.openSheet(`
+      <h3 class="sheet-title">${esc(title)}</h3>
+      <p class="note">${esc(text)}</p>
+      <div class="sheet-actions">
+        <button class="btn" id="v2-bill-cf-no">Cancel</button>
+        <button class="btn danger" id="v2-bill-cf-yes">${esc(confirmLabel)}</button>
+      </div>`);
+    ctx.sheetEl.querySelector('#v2-bill-cf-no').onclick = () => resolve(false);
+    ctx.sheetEl.querySelector('#v2-bill-cf-yes').onclick = () => resolve(true);
+  });
+
+  // The Edit Charges sheet holds unsaved per-field edits (per-charge Save
+  // model). A delete re-renders the sheet from the server invoice, so the
+  // current field values are snapshotted first: restored when a delete is
+  // cancelled, and used to warn when unsaved edits would be discarded.
+  function snapshotSheet() {
+    const snap = { charges: {}, discount: undefined };
+    if (!ctx.sheetEl) return snap;
+    ctx.sheetEl.querySelectorAll('[data-item-desc]').forEach(el => { (snap.charges[el.dataset.itemDesc] = snap.charges[el.dataset.itemDesc] || {}).desc = el.value; });
+    ctx.sheetEl.querySelectorAll('[data-item-amount]').forEach(el => { (snap.charges[el.dataset.itemAmount] = snap.charges[el.dataset.itemAmount] || {}).amount = el.value; });
+    const d = ctx.sheetEl.querySelector('[data-invoice-discount]');
+    if (d) snap.discount = d.value;
+    const dr = ctx.sheetEl.querySelector('[data-discount-reason]');
+    if (dr) snap.discountReason = dr.value;
+    const dn = ctx.sheetEl.querySelector('[data-discount-note]');
+    if (dn) snap.discountNote = dn.value;
+    return snap;
+  }
+  function sheetDirty(i, snap, skipIdx) {
     const items = i.items || [];
+    for (const [n, c] of Object.entries(snap.charges || {})) {
+      if (Number(n) === skipIdx) continue;
+      const it = items[Number(n)];
+      if (!it) continue;
+      if (c.desc !== undefined && c.desc !== (it.description || it.space || 'Charge')) return true;
+      if (c.amount !== undefined && c.amount !== (Number(it.amount || 0) / 100).toFixed(2)) return true;
+    }
+    if (snap.discount !== undefined && snap.discount !== (Number(i.discount || 0) / 100).toFixed(2)) return true;
+    if (snap.discountReason !== undefined && snap.discountReason !== (i.discount_reason || '')) return true;
+    if (snap.discountNote !== undefined && snap.discountNote !== (i.discount_note || '')) return true;
+    return false;
+  }
+
+  function editChargesSheet(i, edits) {
+    const items = i.items || [];
+    const chargeVal = (n, key, saved) => edits && edits.charges && edits.charges[n] && edits.charges[n][key] !== undefined ? edits.charges[n][key] : saved;
+    const discountVal = edits && edits.discount !== undefined ? edits.discount : (Number(i.discount || 0) / 100).toFixed(2);
+    const reasonVal = edits && edits.discountReason !== undefined ? edits.discountReason : (i.discount_reason || '');
+    const noteVal = edits && edits.discountNote !== undefined ? edits.discountNote : (i.discount_note || '');
     ctx.openSheet(`
       <h3 class="sheet-title">Edit charges</h3>
       <p><strong>${esc(i.business || i.vendor_name || 'Vendor')}</strong> · ${esc(i.billing_period || '')}</p>
       ${items.map((it, n) => `
         <div class="bill-item-edit">
-          <label class="sheet-field">Charge ${n + 1} — description<input data-item-desc="${n}" value="${esc(it.description || it.space || 'Charge')}"></label>
-          <label class="sheet-field">Amount ($)<input data-item-amount="${n}" type="number" min="0" step="0.01" value="${(Number(it.amount || 0) / 100).toFixed(2)}"></label>
-          <div class="vendor-actions"><button class="btn small" data-item-save="${n}">Save charge ${n + 1}</button></div>
+          <label class="sheet-field">Charge ${n + 1} — description<input data-item-desc="${n}" value="${esc(chargeVal(n, 'desc', it.description || it.space || 'Charge'))}"></label>
+          <label class="sheet-field">Amount ($)<input data-item-amount="${n}" type="number" min="0" step="0.01" value="${esc(chargeVal(n, 'amount', (Number(it.amount || 0) / 100).toFixed(2)))}"></label>
+          <div class="vendor-actions"><button class="btn small" data-item-save="${n}">Save charge ${n + 1}</button><button class="btn small ghost" data-item-delete="${n}">Delete charge ${n + 1}</button></div>
         </div>`).join('') || '<p class="note">This invoice has no charge lines.</p>'}
+      <div class="bill-item-edit">
+        <h4 class="mini-title">Discount</h4>
+        <p class="note">Charges subtotal: ${usd(i.amount)}</p>
+        <label class="sheet-field">Discount ($)<input data-invoice-discount type="number" min="0" step="0.01" value="${esc(discountVal)}"></label>
+        <label class="sheet-field">Reason<select data-discount-reason>
+          <option value="" ${reasonVal === '' ? 'selected' : ''}>No reason</option>
+          ${DISCOUNT_REASONS.map(r => `<option value="${esc(r)}" ${reasonVal === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+        </select></label>
+        <label class="sheet-field">Note<textarea data-discount-note rows="2">${esc(noteVal)}</textarea></label>
+        ${Number(i.late_fee || 0) ? `<p class="note">Late fee: ${usd(i.late_fee)}</p>` : ''}
+        <p class="note"><strong>Total due: ${usd(dueOf(i))}</strong></p>
+        <div class="vendor-actions"><button class="btn small" data-discount-save>Save discount</button></div>
+      </div>
       <div class="sheet-actions"><button class="btn" data-sheet-close>Done</button></div>`);
     ctx.sheetEl.querySelectorAll('[data-item-save]').forEach(btn => btn.onclick = () => {
       const n = btn.dataset.itemSave;
@@ -136,6 +200,47 @@ export function renderBilling(ctx, root) {
       ctx.closeSheet();
       mutate(() => miCall('edit-item', { id: i.id, index: Number(n), description, amount }), 'Invoice charge updated.');
     });
+    ctx.sheetEl.querySelectorAll('[data-item-delete]').forEach(btn => btn.onclick = async () => {
+      const n = Number(btn.dataset.itemDelete);
+      const it = items[n];
+      if (!it) return;
+      const snap = snapshotSheet();
+      const remaining = items.reduce((a, x, k) => k === n ? a : a + Number(x.amount || 0), 0);
+      const newDue = dueOf({ ...i, amount: remaining });
+      const desc = it.description || it.space || 'Charge';
+      let text = `Delete "${desc}" (${usd(it.amount)}) from this invoice? The total due will become ${usd(newDue)}.`;
+      if (sheetDirty(i, snap, n)) text += ' Unsaved edits to other charges will be lost.';
+      const ok = await confirmSheet(`Delete charge ${n + 1}?`, text, 'Delete charge');
+      if (!ok) { editChargesSheet(i, snap); return; }
+      ctx.closeSheet();
+      mutate(async () => {
+        const v = await miCall('delete-item', { id: i.id, index: n });
+        if (v.invoice) editChargesSheet(v.invoice);
+      }, 'Charge deleted.');
+    });
+    const discBtn = ctx.sheetEl.querySelector('[data-discount-save]');
+    if (discBtn) discBtn.onclick = async () => {
+      const discount = ctx.sheetEl.querySelector('[data-invoice-discount]').value;
+      const discountReason = ctx.sheetEl.querySelector('[data-discount-reason]').value;
+      const discountNote = ctx.sheetEl.querySelector('[data-discount-note]').value;
+      const snap = snapshotSheet();
+      // The update action also writes status, payment_method and
+      // payment_comment — pass the invoice's current values for all three
+      // so saving a discount never silently resets them. Reason + note ride
+      // along (the server preserves stored values only when keys are absent;
+      // the billing card's Save Changes omits them on purpose).
+      await mutate(() => miCall('update', {
+        id: i.id,
+        discount,
+        discount_reason: discountReason,
+        discount_note: discountNote,
+        comment: i.payment_comment || '',
+        status: i.status || 'draft',
+        payment_method: i.payment_method || ''
+      }), 'Discount saved.');
+      const fresh = invoices.find(x => String(x.id) === String(i.id));
+      if (fresh) editChargesSheet(fresh, { charges: snap.charges });
+    };
   }
   function cancelSheet(i) {
     ctx.openSheet(`
