@@ -71,6 +71,11 @@ const money=n=>'$'+(Number(n||0)/100).toFixed(2);
 // format, matching monthly-invoices.mjs's long-date rendering.
 const nice=d=>{const ymd=marketDateOnly(d);if(!ymd)return '';const dt=new Date(ymd+'T12:00:00');return Number.isNaN(dt.getTime())?'':dt.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});};
 const marketDateLabel=d=>{const ymd=marketDateOnly(d),x=ymd?new Date(ymd+'T12:00:00Z'):new Date(NaN);return Number.isNaN(x.getTime())?'Market date':x.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/New_York'});};
+// §43: organizer new-message alerts carry a preview, never the whole
+// message — long enough to triage from the inbox, short enough that a
+// 4,000-character thread post does not become a second copy in email.
+const MESSAGE_ALERT_PREVIEW_CHARS=500;
+const messageAlertPreview=body=>{const text=String(body||'').trim();return text.length<=MESSAGE_ALERT_PREVIEW_CHARS?text:text.slice(0,MESSAGE_ALERT_PREVIEW_CHARS).trimEnd()+'\n[Message truncated — open Messages to read the full message.]';};
 const setupEmail=s=>String(s||'').trim().toLowerCase().replace(/[;,]+$/,'').trim();
 const setupRowKey=v=>v.vendor_id?'vendor:'+v.vendor_id:setupEmail(v.email)?'email:'+setupEmail(v.email):String(v.phone||'').replace(/\D/g,'')?'phone:'+String(v.phone||'').replace(/\D/g,''):'name:'+String(v.business||v.name||v.id||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
 function dedupeSetupRows(rows){const map=new Map(),rank=v=>v.status==='paid'||v.payment_status==='paid'?5:v.status==='held'?4:v.status==='approved'?3:v.status==='pending'?2:1;for(const v of rows||[]){const k=setupRowKey(v),old=map.get(k);if(!old||rank(v)>rank(old))map.set(k,v);}return [...map.values()];}
@@ -535,12 +540,53 @@ ${description}`;
  return json({ok:true});
  }
  if(action==='messages'){
+ // §43: the per-thread alert throttle lives on the application row
+ // (one application = one message thread). Lazily ensured here, the
+ // add-column-if-not-exists pattern; codified in
+ // database/codify-live-schema.sql §13.
+ await sql`alter table market.applications add column if not exists message_alert_sent_at timestamptz`;
  if(req.method==='POST'){
- const p=await req.json();required(p.body,'message',4000);
- const [a]=await sql`select id,user_id from market.applications where id=${p.application_id}`;
- if(!a||(!u.admin&&!hasStaffPermission(u,'vendor_messages')&&a.user_id!==u.id))return json({error:'Access denied'},403);
- await sql`insert into market.vendor_messages(application_id,sender,body) values(${a.id},${u.email},${p.body.trim()})`;
- await audit(sql,u,'vendor message',{application_id:a.id});return json({ok:true});
+ const p=await req.json();const body=required(p.body,'message',4000);
+ const [access]=await sql`select id,user_id from market.applications where id=${p.application_id}`;
+ if(!access||(!u.admin&&!hasStaffPermission(u,'vendor_messages')&&access.user_id!==u.id))return json({error:'Access denied'},403);
+ await sql.begin(async tx=>{
+ // Lock the thread row so two rapid vendor sends cannot both pass
+ // the throttle check and queue duplicate alerts.
+ const [a]=await tx`select id,user_id,name,business,email,message_alert_sent_at from market.applications where id=${access.id} for update`;
+ if(!a)throw Error('Application not found.');
+ const staffAuthored=u.admin||hasStaffPermission(u,'vendor_messages');
+ const vendorAuthored=!staffAuthored&&String(a.user_id)===String(u.id);
+ await tx`insert into market.vendor_messages(application_id,sender,body) values(${a.id},${u.email},${body})`;
+ if(vendorAuthored){
+  const lastAlert=a.message_alert_sent_at?new Date(a.message_alert_sent_at).getTime():0;
+  if(!lastAlert||Date.now()-lastAlert>=60*60*1000){
+   const vendorLabel=String(a.business||a.name||u.email||'Vendor').replace(/[\r\n]+/g,' ').trim().slice(0,160)||'Vendor';
+   const markets=await tx`select e.date,l.name location from market.bookings b join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where b.application_id=${a.id} and b.status in ('pending','waitlist','approved','held','paid') order by e.date`;
+   const marketLines=markets.slice(0,3).map(m=>`${marketDateLabel(m.date)} — ${m.location}`);
+   if(markets.length>3)marketLines.push(`+${markets.length-3} more market date${markets.length-3===1?'':'s'}`);
+   const marketContext=marketLines.length?marketLines.join('; '):'No market booking is attached to this application yet.';
+   await queue(tx,'trinitycraftersmarket@gmail.com',`New message from ${vendorLabel}`,`A vendor sent a new message in Trinity Crafters Market Messages.\n\nVendor: ${vendorLabel}${a.name&&a.name!==vendorLabel?` (${a.name})`:''}\nEmail: ${a.email||u.email}\nThread: ${vendorLabel} application messages\nMarket: ${marketContext}\n\nMessage:\n${messageAlertPreview(body)}\n\nOpen Messages: https://trinitylutzmarkets.com/v2/#messages`);
+   await tx`update market.applications set message_alert_sent_at=now() where id=${a.id}`;
+  }
+ }else if(staffAuthored){
+  // An organizer-side reply re-arms the alert clock: the vendor's
+  // next message is a new conversation beat, not a repeat.
+  await tx`update market.applications set message_alert_sent_at=null where id=${a.id}`;
+ }
+ await audit(tx,u,'vendor message',{application_id:a.id});
+ });
+ await flushMail();
+ return json({ok:true});
+ }
+ // §43 read reset: only the organizer (admin) opening a specific
+ // thread in v2 — signalled with read_application_id — spends the
+ // throttle. A vendor reading their own thread, or a bare list load
+ // with no thread named, resets nothing.
+ if(u.admin){
+  const readApplicationId=url.searchParams.get('read_application_id');
+  if(readApplicationId&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(readApplicationId)){
+   await sql`update market.applications set message_alert_sent_at=null where id=${readApplicationId}`;
+  }
  }
  return json(await sql`select m.id,m.application_id,m.sender,m.body,m.created_at from market.vendor_messages m join market.applications a on a.id=m.application_id where a.user_id=${u.id} or ${u.admin||hasStaffPermission(u,'vendor_messages')} order by m.created_at`);
  }

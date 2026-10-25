@@ -10,8 +10,8 @@
 // transaction column, so its reconciliation total covers all money.
 // The per-date vendor/event report itself lives in Attendees — one
 // place per job, as everywhere else in v2.
-import { esc, nice, marketName } from './api.js?v=20261024-36';
-import { printTable } from './print.js?v=20261024-36';
+import { esc, nice, marketName } from './api.js?v=20261024-37';
+import { printTable } from './print.js?v=20261024-37';
 
 // The classic reports format money with cents; keep that exact format.
 const usd = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(n) || 0) / 100);
