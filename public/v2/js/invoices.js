@@ -7,8 +7,15 @@
 // (vendor-payment) the Attendees panel uses, and a receipts strip fed by
 // vendor-list payments (vendor-receipt, with receipt_sent_at shown).
 // Mutations re-fetch the admin payload, then re-render (§1 rule 1).
-import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261103-44';
-import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261103-44';
+// §58: every unpaid card — regular, monthly AND imported — carries a
+// real Record payment form (amount prefilled with the balance, method,
+// Date paid defaulting to today, note), each wired to the same server
+// path its kind already uses elsewhere (vendor-payment for bookings and
+// imported rows, monthly-invoices record-payment for monthly rows).
+// Cancelled monthly invoices no longer appear here at all (money.js:
+// they are due $0, not receivables).
+import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261103-45';
+import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261103-45';
 
 let view = { q: '', status: '', eventId: '' };
 
@@ -46,6 +53,11 @@ export function renderInvoices(ctx, root) {
     if (!r.ok) throw Error(v.error || 'Invoice request failed.');
     return v;
   }
+  // §58: Date paid defaults to today (Eastern); the picked day is sent
+  // as mid-afternoon UTC so it renders back on that same calendar day —
+  // the convention the vendor-payment flow already uses (vendors.js).
+  const todayET = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const paidAtIso = day => new Date(String(day || todayET()) + 'T16:00:00').toISOString();
   const mutate = async (call, okMsg) => {
     try {
       await call();
@@ -73,6 +85,7 @@ export function renderInvoices(ctx, root) {
       <form id="v2-inv-pay-form">
         <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" value="${(x.amount / 100).toFixed(2)}" required></label>
         <label class="sheet-field">Payment method<select name="payment_method"><option>GoDaddy Payments</option><option>PayPal</option><option>Cash</option><option>Check</option><option>Other</option></select></label>
+        <label class="sheet-field">Date paid<input name="paid_at" type="date" value="${todayET()}" required></label>
         <label class="sheet-field">Note<input name="note" placeholder="Optional note or transaction reference"></label>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Record payment &amp; mark paid</button></div>
       </form>`);
@@ -82,8 +95,34 @@ export function renderInvoices(ctx, root) {
       ctx.closeSheet();
       mutate(() => api('vendor-payment', {
         application_id: x.application_id, source: 'application', booking_id: x.id,
-        amount: Number(f.get('amount')), payment_method: f.get('payment_method'), note: f.get('note')
+        amount: Number(f.get('amount')), payment_method: f.get('payment_method'), paid_at: paidAtIso(f.get('paid_at')), note: f.get('note')
       }), 'Payment recorded and booking marked paid.');
+    };
+  }
+  // §58: imported invoices get the same form (before §58 the card had
+  // only the imported-invoice-status toggle, which flips paid/unpaid
+  // with no amount, method or ledger row). Wired to the vendor-payment
+  // endpoint's pdf branch — the exact call the Attendees panel makes —
+  // so the ledger row, recorded-by and audit match that flow.
+  function importedPaySheet(x) {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Record payment</h3>
+      <p><strong>${esc(x.business || x.name || 'Vendor')}</strong>${x.event ? '<br>' + esc(nice(x.event.date)) : ''}</p>
+      <form id="v2-inv-imp-pay-form">
+        <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" value="${(x.amount / 100).toFixed(2)}" required></label>
+        <label class="sheet-field">Payment method<select name="payment_method"><option>GoDaddy Payments</option><option>PayPal</option><option>Cash</option><option>Check</option><option>Other</option></select></label>
+        <label class="sheet-field">Date paid<input name="paid_at" type="date" value="${todayET()}" required></label>
+        <label class="sheet-field">Note<input name="note" placeholder="Optional note or transaction reference"></label>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Record payment &amp; mark paid</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-inv-imp-pay-form').onsubmit = e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      ctx.closeSheet();
+      mutate(() => api('vendor-payment', {
+        application_id: x.id, source: 'pdf', imported_attendee_id: x.id,
+        amount: Number(f.get('amount')), payment_method: f.get('payment_method'), paid_at: paidAtIso(f.get('paid_at')), note: f.get('note')
+      }), 'Payment recorded and invoice marked paid.');
     };
   }
   // §49: record a (partial) payment on a monthly invoice, prefilled
@@ -95,6 +134,7 @@ export function renderInvoices(ctx, root) {
       <form id="v2-inv-mi-pay-form">
         <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" value="${(x.amount / 100).toFixed(2)}" required></label>
         <label class="sheet-field">Payment method<select name="payment_method"><option>Cash</option><option>Credit Card</option><option>GoDaddy Payments</option><option>GoDaddy Invoice</option><option>PayPal</option><option>Check</option><option>Other</option></select></label>
+        <label class="sheet-field">Date paid<input name="paid_at" type="date" value="${todayET()}" required></label>
         <label class="sheet-field">Comment<input name="comment" placeholder="Optional note (e.g. paid at the market)"></label>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Record payment</button></div>
       </form>`);
@@ -102,7 +142,7 @@ export function renderInvoices(ctx, root) {
       e.preventDefault();
       const f = new FormData(e.target);
       ctx.closeSheet();
-      mutate(() => miCall('record-payment', { id: x.id, amount: Number(f.get('amount')), payment_method: f.get('payment_method'), comment: f.get('comment') }), 'Payment recorded.');
+      mutate(() => miCall('record-payment', { id: x.id, amount: Number(f.get('amount')), payment_method: f.get('payment_method'), paid_at: String(f.get('paid_at') || todayET()), comment: f.get('comment') }), 'Payment recorded.');
     };
   }
   // §41: the same per-date item editor as Monthly Billing's Edit
@@ -160,6 +200,7 @@ export function renderInvoices(ctx, root) {
   function actionsHtml(x) {
     const id = esc(x.id), kind = esc(x.kind);
     if (x.kind === 'imported') return `
+      ${x.paystatus !== 'paid' ? `<button class="btn primary small" data-act="imp-record" data-kind="${kind}" data-id="${id}">Record payment</button>` : ''}
       <button class="btn primary small" data-act="imp-status" data-kind="${kind}" data-id="${id}" data-status="${x.paystatus === 'paid' ? 'unpaid' : 'paid'}">${x.paystatus === 'paid' ? 'Mark unpaid' : 'Mark invoice paid'}</button>
       <button class="btn small" data-act="imp-email" data-kind="${kind}" data-id="${id}">Email invoice</button>
       <button class="btn small" data-act="imp-edit" data-kind="${kind}" data-id="${id}">Edit invoice</button>
@@ -231,7 +272,8 @@ export function renderInvoices(ctx, root) {
       const x = findRow(btn.dataset.kind, btn.dataset.id);
       if (!x) { ctx.toast('That invoice is no longer in the list — reloading.', true); ctx.refreshAdmin().then(draw); return; }
       const act = btn.dataset.act;
-      if (act === 'imp-status') mutate(() => api('imported-invoice-status', { id: x.id, status: btn.dataset.status }), 'Invoice updated.');
+      if (act === 'imp-record') importedPaySheet(x);
+      else if (act === 'imp-status') mutate(() => api('imported-invoice-status', { id: x.id, status: btn.dataset.status }), 'Invoice updated.');
       else if (act === 'imp-email') confirmSheet('Email this invoice?', `Send the invoice for <strong>${esc(x.business || x.name || 'this vendor')}</strong> (${money(x.amount)}) to ${esc(x.email || 'their email')} now?`, 'Email invoice', false,
         () => mutate(() => api('imported-invoice-email', { id: x.id }), 'Invoice emailed.'));
       else if (act === 'imp-edit') editSheet(x);
