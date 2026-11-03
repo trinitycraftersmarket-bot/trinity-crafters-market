@@ -164,6 +164,8 @@ button.stat-btn:active{transform:scale(.99)}
 .vendor .contact{color:var(--muted);font-size:13.5px;margin-top:2px}
 .badge{font-size:11px;font-weight:800;letter-spacing:.06em;padding:5px 8px;border-radius:999px;white-space:nowrap}
 .badge.inside{background:var(--green);color:#fff}
+.badge.hallway{background:#e8f0fe;color:#1a56db;border:1px solid #a8c2f5}
+@media (prefers-color-scheme: dark){ .badge.hallway{background:#16233f;color:#9db9f5} }
 .badge.outside{background:#fef9e7;color:#7c5a00;border:1px solid #f0d48a}
 @media (prefers-color-scheme: dark){ .badge.outside{background:#2f2a12;color:var(--gold)} }
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}

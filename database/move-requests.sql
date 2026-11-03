@@ -14,7 +14,7 @@ create table if not exists market.move_requests (
   vendor_email text not null,
   from_event_id uuid not null references market.events(id),
   to_event_id uuid not null references market.events(id),
-  space text not null check (space in ('indoor','outdoor')),
+  space text not null check (space in ('indoor','outdoor','hallway')),
   reason text not null default '',
   status text not null default 'pending'
     check (status in ('pending','approved','declined','cancelled')),

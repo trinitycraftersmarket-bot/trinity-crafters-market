@@ -8,6 +8,7 @@ import {decisionEmail} from '../../server/notifications.mjs';
 import {syncCalendar} from '../../server/sync.mjs';
 import {claimImported,ensureProfileSchema,ensureImportedProfiles,saveVendorFlags,upsertProfileFromApplication} from '../../server/profiles.mjs';
 import {ensureLocationRegularPrice,isRegularVendor,regularAwarePrice} from '../../server/pricing.mjs';
+import {ensureHallway,hallwayFallbackSpace} from '../../server/hallway.mjs';
 import {vendorPaymentHistory,recordManualPayment,ensureVendorPaymentColumns} from '../../server/vendor-payments.mjs';
 import {pickAreaAttachment,allAreaAttachments,blockedRecipients} from '../../server/floorplan-mail.mjs';
 const paypalBase=()=>process.env.PAYPAL_ENV==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';
@@ -195,7 +196,7 @@ async function ensureAppUsage(sql){
 }
 function cleanAttemptSnapshot(raw={}){
  const s=v=>String(v??'').trim(),clip=(v,n)=>s(v).slice(0,n),uuid=v=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s(v))?s(v):'';
- const dates=Array.isArray(raw.dates)?raw.dates.slice(0,50).map(d=>({id:uuid(d?.id),space:['indoor','outdoor'].includes(d?.space)?d.space:''})).filter(d=>d.id):[];
+ const dates=Array.isArray(raw.dates)?raw.dates.slice(0,50).map(d=>({id:uuid(d?.id),space:['indoor','outdoor','hallway'].includes(d?.space)?d.space:''})).filter(d=>d.id):[];
  const photos=Array.isArray(raw.photos)?raw.photos.slice(0,5).map(x=>clip(x,500)).filter(Boolean):[];
  const photo_names=Array.isArray(raw.photo_names)?raw.photo_names.slice(0,5).map(x=>clip(x,200)).filter(Boolean):[];
  const agreements={};for(const k of ['nonrefundable','rain','nomlm','facebook','stayuntil3','hurricane','paymentready','contract'])agreements[k]=raw.agreements?.[k]===true;
@@ -499,7 +500,7 @@ ${description}`;
  const smartScan=await smartVendorCategoryScan(sql,{description:p.description,categoryId:p.category,dateIds:p.dates.map(d=>d.id)});
  p.agreements={...p.agreements,category_scan:smartScan};
  const result=await sql.begin(async tx=>{
- await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);await ensureWaitlistSchema(tx);await ensureProfileSchema(tx);if(await banned(tx,u,phone))throw Error('Your vendor access is restricted. Contact the organizer.');
+ await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);await ensureWaitlistSchema(tx);await ensureProfileSchema(tx);await ensureHallway(tx);if(await banned(tx,u,phone))throw Error('Your vendor access is restricted. Contact the organizer.');
  const recent=await tx`select count(*)::int n from market.applications where user_id=${u.id} and created_at>now()-interval '1 day'`;if(recent[0].n>=10)throw Error('Daily application limit reached.');
  const [cat]=await tx`select * from market.categories where id=${p.category} and active`;if(!cat)throw Error('Choose an active category.');// NOTE: vendor_limit 0 means NO per-category cap (owner ruling, Holly case Oct 22 — several live categories sit at 0 with vendors actively booked); it must never block an application. A genuinely full date lands the booking on the wait-list below instead of refusing the submission.
  const banMatches=await tx`select name,email,phone from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${phone})`;const banReason=banMatches.map(b=>b.email===u.email?'email match':b.phone===phone?'phone match':'account match').join(', ');
@@ -511,20 +512,27 @@ ${description}`;
  // prices indoor dates at the location's regular rate, not the
  // standard event price. Resolved once for the whole application.
  const regularVendor=await isRegularVendor(tx,{email:u.email});
- for(const d of p.dates){if(!['indoor','outdoor'].includes(d.space))throw Error('Choose indoor or outdoor for every date.');
+ for(const d of p.dates){if(!['indoor','outdoor','hallway'].includes(d.space))throw Error('Choose indoor, outdoor or hallway for every date.');
  const [event]=await tx`select * from market.events where id=${d.id} and open and (date + coalesce(end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('A selected date is no longer accepting applications.');
  // All availability numbers come from the single counting function
  // (server/counts.mjs): pending does not reserve, twins count once.
  const inv=await eventInventory(tx,event.id);
  const [override]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`; const effectiveCategoryLimit=override?.vendor_limit??cat.vendor_limit; const categoryFull=Number(effectiveCategoryLimit)>0&&!p.exception?.trim()&&(inv.categories.get(String(cat.id))||0)>=Number(effectiveCategoryLimit);
  const spaceFull=(inv[d.space]||0)>=event[d.space+'_capacity'];
- const areaClosed=d.space==='indoor'?event.indoor_open===false:event.outdoor_open===false;
+ const areaClosed=d.space==='indoor'?event.indoor_open===false:d.space==='hallway'?event.hallway_open===false:event.outdoor_open===false;
  const waitlist=event.sold_out||areaClosed||categoryFull||spaceFull;
- if(!waitlist)try{await assertCapacity(tx,event,{space:d.space,categoryId:cat.id,limit:Number(effectiveCategoryLimit)>0?Number(effectiveCategoryLimit):null,exception:!!p.exception?.trim(),selfKey:vendorIdentityKey({vendor_id:vendorId,email:u.email,phone,business:p.business,name:p.name})});}catch(e){throw Error(event.date+': '+e.message);}
+ // §55: when Indoor itself is the ONLY blocker (space full — not a
+ // sold-out market, not a closed area, not a full category) and the
+ // hallway has an open spot, the booking lands in the hallway at the
+ // hallway price instead of the waitlist. §54 still binds: a full
+ // category never routes into the hallway.
+ const bookedSpace=waitlist?hallwayFallbackSpace({space:d.space,soldOut:!!event.sold_out,areaClosed,categoryFull,spaceFull,event,hallwayUsed:inv.hallway||0}):null;
+ const effSpace=bookedSpace||d.space,effWaitlist=waitlist&&!bookedSpace;
+ if(!effWaitlist)try{await assertCapacity(tx,event,{space:effSpace,categoryId:cat.id,limit:Number(effectiveCategoryLimit)>0?Number(effectiveCategoryLimit):null,exception:!!p.exception?.trim(),selfKey:vendorIdentityKey({vendor_id:vendorId,email:u.email,phone,business:p.business,name:p.name})});}catch(e){throw Error(event.date+': '+e.message);}
  const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and a.user_id=${u.id} and b.status in ('pending','waitlist','approved','held','paid')`;if(duplicate.length)throw Error('You already have an application for this date.');
  const importedDuplicate=await tx`select id from market.imported_attendees where event_id=${event.id} and not coalesce(cancelled,false) and (lower(trim(both ' ,' from email))=lower(${u.email}) or (${normalizePhone(phone)}<>'' and regexp_replace(phone,'[^0-9]','','g')=${normalizePhone(phone)})) limit 1`;if(importedDuplicate.length)throw Error('You already have a vendor record for this date. Contact the organizer if it needs to be changed.');
- const bookingPrice=await regularAwarePrice(tx,{locationId:event.location_id,space:d.space,indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,regular:regularVendor});
- await tx`insert into market.bookings(application_id,event_id,space,price,status,waitlisted_at) values(${app.id},${event.id},${d.space},${bookingPrice},${waitlist?'waitlist':'pending'},${waitlist?new Date():null})`;}
+ const bookingPrice=await regularAwarePrice(tx,{locationId:event.location_id,space:effSpace,indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,hallwayPrice:event.hallway_price,regular:regularVendor});
+ await tx`insert into market.bookings(application_id,event_id,space,price,status,waitlisted_at) values(${app.id},${event.id},${effSpace},${bookingPrice},${effWaitlist?'waitlist':'pending'},${effWaitlist?new Date():null})`;}
  await queue(tx,'trinitycraftersmarket@gmail.com','New market application: '+p.business,`${p.name}\n${u.email}\n${phone}\n${p.description}\nReview dates and private photos: ${process.env.SITE_URL}/#admin`);await audit(tx,u,'apply',{id:app.id});return app;
  });return json(result);
  }
@@ -810,7 +818,7 @@ ${description}`;
   return json(await sql`select s.*,e.date,l.name location from market.vendor_surveys s join market.events e on e.id=s.event_id join market.locations l on l.id=e.location_id order by e.date desc,s.submitted_at desc nulls last,s.business,s.vendor_name`);
  }
  if(action==='admin'){
-  await ensureApplicationAttempts(sql);await ensureWaitlistSchema(sql);
+  await ensureApplicationAttempts(sql);await ensureWaitlistSchema(sql);await ensureHallway(sql);
   const applicationAttempts=await sql`select aa.*,c.name category_name from market.application_attempts aa left join market.categories c on c.id=aa.category_id where aa.last_seen_at>now()-interval '45 days' and aa.status<>'completed' order by case when aa.status in ('failed','draft','submitting') then 0 else 1 end,aa.last_seen_at desc limit 250`;
   await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz, add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists payment_recorded_at timestamptz, add column if not exists payment_recorded_by text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
   await sql`alter table market.bookings add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
@@ -975,19 +983,19 @@ trinitycraftersmarket@gmail.com`;
  }
  if(action==='recover-application'){
   if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const attemptId=String(p.id||''),override=p.data||{};const [attempt]=await sql`select * from market.application_attempts where id=${attemptId} and status in ('failed','draft','submitting','dismissed')`;if(!attempt)throw Error('This application attempt is no longer available for recovery.');
-  const base=cleanAttemptSnapshot(attempt.snapshot||{}),merged=cleanAttemptSnapshot({...base,...override,dates:Array.isArray(override.dates)?override.dates:base.dates,photos:base.photos,photo_names:base.photo_names,agreements:base.agreements}),name=required(merged.name,'vendor name'),business=required(merged.business,'business name'),description=merged.description||'Product description was not captured before the failed submission.',phone=normalizePhone(merged.phone);if(phone.length<10||phone.length>15)throw Error('A valid vendor phone number is required before recovery.');if(!merged.category)throw Error('Choose a product category before recovery.');if(!merged.dates.length||merged.dates.some(d=>!d.id||!['indoor','outdoor'].includes(d.space)))throw Error('Choose at least one market date and space before recovery.');
-  const result=await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);if(await banned(tx,{id:attempt.user_id,email:attempt.email},phone))throw Error('This vendor is banned. Unban them before recovering the application.');const [cat]=await tx`select * from market.categories where id=${merged.category}`;if(!cat)throw Error('Choose a valid product category.');
+  const base=cleanAttemptSnapshot(attempt.snapshot||{}),merged=cleanAttemptSnapshot({...base,...override,dates:Array.isArray(override.dates)?override.dates:base.dates,photos:base.photos,photo_names:base.photo_names,agreements:base.agreements}),name=required(merged.name,'vendor name'),business=required(merged.business,'business name'),description=merged.description||'Product description was not captured before the failed submission.',phone=normalizePhone(merged.phone);if(phone.length<10||phone.length>15)throw Error('A valid vendor phone number is required before recovery.');if(!merged.category)throw Error('Choose a product category before recovery.');if(!merged.dates.length||merged.dates.some(d=>!d.id||!['indoor','outdoor','hallway'].includes(d.space)))throw Error('Choose at least one market date and space before recovery.');
+  const result=await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);await ensureHallway(tx);if(await banned(tx,{id:attempt.user_id,email:attempt.email},phone))throw Error('This vendor is banned. Unban them before recovering the application.');const [cat]=await tx`select * from market.categories where id=${merged.category}`;if(!cat)throw Error('Choose a valid product category.');
    const masters=await tx`select id from market.vendors where lower(trim(email))=lower(${attempt.email}) or regexp_replace(phone,'[^0-9]','','g')=${phone} limit 2`;let vendorId=masters.length===1?masters[0].id:null;if(masters.length===0){const [nv]=await tx`insert into market.vendors(name,business,email,phone,billing_address,description,category_id) values(${name},${business},${attempt.email},${phone},${merged.billing_address},${description},${cat.id}) returning id`;vendorId=nv.id;}else if(vendorId)await tx`update market.vendors set name=${name},business=${business},email=${attempt.email},phone=${phone},billing_address=${merged.billing_address},description=${description},category_id=${cat.id},updated_at=now() where id=${vendorId}`;
    const photos=merged.photos.filter(path=>path.startsWith(String(attempt.user_id)+'/')&&!path.includes('..'));const agreements={...merged.agreements,signature:merged.signature||name,admin_recovery_override:true,admin_recovery_by:u.email};const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,photos,agreements,vendor_id,review_notes) values(${attempt.user_id},${name},${attempt.email},${phone},${merged.billing_address},${business},${description},${cat.id},${merged.exception},${merged.referral_source||'Recovered application'},${merged.referral_group},${tx.json(photos)},${tx.json(agreements)},${vendorId},${'Recovered from failed/abandoned application '+attempt.id}) returning id`;
    const regularVendor=await isRegularVendor(tx,{email:attempt.email});
-   const created=[];for(const d of merged.dates){const [event]=await tx`select e.*,l.name location,l.address,l.market_name,l.name title from market.events e join market.locations l on l.id=e.location_id where e.id=${d.id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('One selected market date is no longer available.');if(event.sold_out)throw Error(marketDateLabel(event.date)+': the market is marked sold out.');if(d.space==='indoor'&&event.indoor_open===false)throw Error(marketDateLabel(event.date)+': indoor vendor space is closed.');if(d.space==='outdoor'&&event.outdoor_open===false)throw Error(marketDateLabel(event.date)+': outdoor vendor space is closed.');
+   const created=[];for(const d of merged.dates){const [event]=await tx`select e.*,l.name location,l.address,l.market_name,l.name title from market.events e join market.locations l on l.id=e.location_id where e.id=${d.id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('One selected market date is no longer available.');if(event.sold_out)throw Error(marketDateLabel(event.date)+': the market is marked sold out.');if(d.space==='indoor'&&event.indoor_open===false)throw Error(marketDateLabel(event.date)+': indoor vendor space is closed.');if(d.space==='outdoor'&&event.outdoor_open===false)throw Error(marketDateLabel(event.date)+': outdoor vendor space is closed.');if(d.space==='hallway'&&event.hallway_open===false)throw Error(marketDateLabel(event.date)+': hallway vendor space is closed.');
     // Availability from the single counting function (server/counts.mjs):
     // pending does not reserve, twins count once. The duplicate check below
     // still includes pending — it guards double submission, not capacity.
     const inv=await eventInventory(tx,event.id);if((inv[d.space]||0)>=event[d.space+'_capacity'])throw Error(marketDateLabel(event.date)+': '+d.space+' space is sold out.');
     const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('pending','waitlist','approved','held','paid') and (a.user_id=${attempt.user_id} or lower(a.email)=lower(${attempt.email}) or regexp_replace(a.phone,'[^0-9]','','g')=${phone}) limit 1`;if(duplicate.length)throw Error(marketDateLabel(event.date)+': this vendor already has an application or booking.');
     const [limitOverride]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;const categoryLimit=limitOverride?.vendor_limit??cat.vendor_limit,categoryException=Number(categoryLimit)>0&&(inv.categories.get(String(cat.id))||0)>=Number(categoryLimit);
-    const [booking]=await tx`insert into market.bookings(application_id,event_id,space,price,status,category_exception) values(${app.id},${event.id},${d.space},${await regularAwarePrice(tx,{locationId:event.location_id,space:d.space,indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,regular:regularVendor})},'approved',${categoryException}) returning *`;created.push({...booking,date:event.date,location:event.location,address:event.address,title:event.title});
+    const [booking]=await tx`insert into market.bookings(application_id,event_id,space,price,status,category_exception) values(${app.id},${event.id},${d.space},${await regularAwarePrice(tx,{locationId:event.location_id,space:d.space,indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,hallwayPrice:event.hallway_price,regular:regularVendor})},'approved',${categoryException}) returning *`;created.push({...booking,date:event.date,location:event.location,address:event.address,title:event.title});
     const mail=decisionEmail({...booking,name,email:attempt.email,business,status:'approved'},event,'');await queue(tx,attempt.email,mail.subject,mail.body);
    }
    await tx`update market.application_attempts set status='overridden',application_id=${app.id},overridden_at=now(),overridden_by=${u.email},reviewed_at=now(),reviewed_by=${u.email},last_seen_at=now() where id=${attempt.id}`;await audit(tx,u,'application recovered',{attempt_id:attempt.id,application_id:app.id,bookings:created.map(x=>x.id),email:attempt.email});return {application_id:app.id,bookings:created};
@@ -1354,9 +1362,9 @@ trinitycraftersmarket@gmail.com`;
   const imported=p.imported===true||p.imported==='1';
   let result;
   await sql.begin(async tx=>{
-   await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);
+   await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);await ensureHallway(tx);
    if(imported){
-    const [i]=await tx`select i.*,e.date,e.start_time,e.end_time,e.indoor_capacity,e.outdoor_capacity,e.title,l.name location,l.address,l.market_name,c.vendor_limit category_limit,
+    const [i]=await tx`select i.*,e.date,e.start_time,e.end_time,e.indoor_capacity,e.outdoor_capacity,e.hallway_capacity,e.title,l.name location,l.address,l.market_name,c.vendor_limit category_limit,
       coalesce(o.vendor_limit,c.vendor_limit) effective_category_limit
       from market.imported_attendees i
       join market.events e on e.id=i.event_id
@@ -1368,7 +1376,7 @@ trinitycraftersmarket@gmail.com`;
     if(!i.cancelled)throw Error('This vendor is already active for that market date.');
     if(new Date(String(i.date).slice(0,10)+'T23:59:59').getTime()<Date.now())throw Error('Past market dates cannot be reinstated.');
     if(await banned(tx,{id:null,email:String(i.email||'').toLowerCase()},i.phone))throw Error('This vendor is banned. Unban them before reinstating.');
-    const space=/^(inside|indoor)$/i.test(String(i.space||''))?'indoor':'outdoor';
+    const space=/^(inside|indoor)$/i.test(String(i.space||''))?'indoor':/^hallway$/i.test(String(i.space||''))?'hallway':'outdoor';
     const email=String(i.email||'').trim().toLowerCase().replace(/,+$/,''),phone=normalizePhone(i.phone),business=String(i.business||i.name||'').trim().toLowerCase();
     const duplicateImported=await tx`select id from market.imported_attendees where event_id=${i.event_id} and id<>${i.id} and not coalesce(cancelled,false) and (
       (${email}<>'' and lower(trim(both ' ,' from email))=${email}) or
@@ -1392,12 +1400,12 @@ trinitycraftersmarket@gmail.com`;
     }
     await tx`update market.imported_attendees set cancelled=false,reinstated_at=now(),reinstated_by=${u.email} where id=${i.id}`;
     const day=marketDateLabel(i.date),paid=String(i.payment_status||'').toLowerCase()==='paid';
-    if(i.email)await queue(tx,String(i.email).replace(/,+\s*$/,'').trim(),'Vendor booking reinstated — '+day,`Hi ${i.name||'Vendor'},\n\nYour vendor booking for ${day} at ${i.market_name||i.title||'Trinity Crafters Market'} has been reinstated.\n\nLocation: ${i.location||''}\nSpace: ${space==='indoor'?'Indoor':'Outdoor'}\nPayment status: ${paid?'PAID':'Payment not recorded'}\n\nYour booth and category inventory have been restored.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);
+    if(i.email)await queue(tx,String(i.email).replace(/,+\s*$/,'').trim(),'Vendor booking reinstated — '+day,`Hi ${i.name||'Vendor'},\n\nYour vendor booking for ${day} at ${i.market_name||i.title||'Trinity Crafters Market'} has been reinstated.\n\nLocation: ${i.location||''}\nSpace: ${space==='indoor'?'Indoor':space==='hallway'?'Hallway':'Outdoor'}\nPayment status: ${paid?'PAID':'Payment not recorded'}\n\nYour booth and category inventory have been restored.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);
     await audit(tx,u,'cancelled imported vendor reinstated',{id:i.id,event_id:i.event_id,restored_payment_status:i.payment_status||'unpaid'});
     result={ok:true,status:paid?'paid':'approved'};
    }else{
     const [b]=await tx`select b.*,a.category_id,a.user_id,a.email,a.phone,a.name,a.business,a.vendor_id,c.vendor_limit,
-      coalesce(o.vendor_limit,c.vendor_limit) effective_category_limit,e.date,e.start_time,e.end_time,e.indoor_capacity,e.outdoor_capacity,e.title,l.name location,l.address,l.market_name
+      coalesce(o.vendor_limit,c.vendor_limit) effective_category_limit,e.date,e.start_time,e.end_time,e.indoor_capacity,e.outdoor_capacity,e.hallway_capacity,e.title,l.name location,l.address,l.market_name
       from market.bookings b
       join market.applications a on a.id=b.application_id
       join market.categories c on c.id=a.category_id
@@ -1409,7 +1417,7 @@ trinitycraftersmarket@gmail.com`;
     if(b.status!=='cancelled')throw Error('This booking is already active.');
     if(new Date(String(b.date).slice(0,10)+'T23:59:59').getTime()<Date.now())throw Error('Past market dates cannot be reinstated.');
     if(await banned(tx,{id:b.user_id,email:b.email},b.phone))throw Error('This vendor is banned. Unban them before reinstating.');
-    const space=/^(inside|indoor)$/i.test(String(b.space||''))?'indoor':'outdoor';
+    const space=/^(inside|indoor)$/i.test(String(b.space||''))?'indoor':/^hallway$/i.test(String(b.space||''))?'hallway':'outdoor';
     const email=String(b.email||'').trim().toLowerCase(),phone=normalizePhone(b.phone),business=String(b.business||b.name||'').trim().toLowerCase();
     const duplicateBooking=await tx`select x.id from market.bookings x join market.applications a on a.id=x.application_id where x.event_id=${b.event_id} and x.id<>${b.id} and
       (x.status in ('pending','approved','paid') or (x.status='held' and x.hold_until>now())) and (
@@ -1439,7 +1447,7 @@ trinitycraftersmarket@gmail.com`;
     const restoredStatus=wasPaid?'paid':'approved';
     await tx`update market.bookings set status=${restoredStatus},hold_until=null,reinstated_at=now(),reinstated_by=${u.email} where id=${b.id}`;
     const day=marketDateLabel(b.date);
-    if(b.email)await queue(tx,b.email,'Vendor booking reinstated — '+day,`Hi ${b.name||'Vendor'},\n\nYour vendor booking for ${day} at ${b.market_name||b.title||'Trinity Crafters Market'} has been reinstated.\n\nLocation: ${b.location||''}\nSpace: ${space==='indoor'?'Indoor':'Outdoor'}\nPayment status: ${wasPaid?'PAID':'Payment not recorded'}\n\nYour booth and category inventory have been restored.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);
+    if(b.email)await queue(tx,b.email,'Vendor booking reinstated — '+day,`Hi ${b.name||'Vendor'},\n\nYour vendor booking for ${day} at ${b.market_name||b.title||'Trinity Crafters Market'} has been reinstated.\n\nLocation: ${b.location||''}\nSpace: ${space==='indoor'?'Indoor':space==='hallway'?'Hallway':'Outdoor'}\nPayment status: ${wasPaid?'PAID':'Payment not recorded'}\n\nYour booth and category inventory have been restored.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);
     await audit(tx,u,'cancelled booking reinstated',{id:b.id,event_id:b.event_id,status:restoredStatus});
     result={ok:true,status:restoredStatus};
    }
@@ -1484,6 +1492,7 @@ trinitycraftersmarket@gmail.com`;
  }
  if(action==='booking'){
  if(u.manager&&(!['approved','declined'].includes(p.status)||p.exception===true))return json({error:'Managers may approve or decline applications only.'},403);
+ await ensureHallway(sql);
  if(p.status==='waitlist'){
   required(p.reason,'the wait-list reason',2000);
   const [pre]=await sql`select status,invoice_reference from market.bookings where id=${p.id}`;if(!pre)throw Error('Booking not found.');
@@ -1588,10 +1597,14 @@ trinitycraftersmarket@gmail.com`;
  // §50: the regular-vendor indoor rate for this location (cents), or
  // null = no regular pricing here. Only the location save writes it;
  // a save that omits the key keeps the stored value.
- await ensureLocationRegularPrice(sql);
+ await ensureLocationRegularPrice(sql);await ensureHallway(sql);
  const hasRegular='regular_indoor_price' in p,regularPrice=p.regular_indoor_price==null||p.regular_indoor_price===''?null:p.regular_indoor_price;
  if(hasRegular&&regularPrice!==null&&(!Number.isInteger(regularPrice)||regularPrice<0))throw Error('Check the regular indoor price.');
- if(p.id){if(hasRegular)await sql`update market.locations set name=${p.name},market_name=${p.market_name||p.name},address=${p.address},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},regular_indoor_price=${regularPrice} where id=${p.id}`;else await sql`update market.locations set name=${p.name},market_name=${p.market_name||p.name},address=${p.address},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price} where id=${p.id}`;}else await sql`insert into market.locations(name,market_name,address,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,regular_indoor_price) values(${p.name},${p.market_name||p.name},${p.address},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${hasRegular?regularPrice:null})`;await audit(sql,u,'location',p);return json({ok:true});
+ // §55: hallway capacity/price ride along when the form sends them; a
+ // save that omits them keeps the stored values (same rule as §50).
+ const hasHallway='hallway_capacity' in p&&'hallway_price' in p;
+ if(hasHallway)for(const k of ['hallway_capacity','hallway_price'])if(!Number.isInteger(p[k])||p[k]<0)throw Error('Check capacity and prices.');
+ if(p.id){if(hasRegular)await sql`update market.locations set name=${p.name},market_name=${p.market_name||p.name},address=${p.address},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},regular_indoor_price=${regularPrice} where id=${p.id}`;else await sql`update market.locations set name=${p.name},market_name=${p.market_name||p.name},address=${p.address},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price} where id=${p.id}`;if(hasHallway)await sql`update market.locations set hallway_capacity=${p.hallway_capacity},hallway_price=${p.hallway_price} where id=${p.id}`;}else await sql`insert into market.locations(name,market_name,address,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,regular_indoor_price,hallway_capacity,hallway_price) values(${p.name},${p.market_name||p.name},${p.address},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${hasRegular?regularPrice:null},${hasHallway?p.hallway_capacity:0},${hasHallway?p.hallway_price:4500})`;await audit(sql,u,'location',p);return json({ok:true});
  }
  if(action==='expense'){
   if(p.id)await sql`delete from market.expenses where id=${p.id}`;
@@ -1599,8 +1612,8 @@ trinitycraftersmarket@gmail.com`;
   await audit(sql,u,p.id?'delete expense':'expense',p);return json({ok:true});
  }
  if(action==='event'){
- if(!/^\d{4}-\d{2}-\d{2}$/.test(p.date))throw Error('Choose a date.');for(const k of ['indoor_capacity','outdoor_capacity','indoor_price','outdoor_price'])if(!Number.isInteger(p[k])||p[k]<0)throw Error('Check spaces and prices.');let capacityRaised=false;
- await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;if(p.id){const inv=await eventInventory(tx,p.id);const used=[{space:'indoor',n:inv.indoor},{space:'outdoor',n:inv.outdoor}].filter(x=>x.n>0);const [cur]=await tx`select indoor_capacity,outdoor_capacity from market.events where id=${p.id}`;for(const x of used)if(p[x.space+'_capacity']<(cur?cur[x.space+'_capacity']:0)&&p[x.space+'_capacity']<x.n)throw Error('Total capacity cannot be lower than the active vendor count ('+x.n+' '+x.space+'). Enter the venue total, not the number of spaces remaining.');await tx`update market.events set date=${p.date},location_id=${p.location_id},title=${p.title||'Trinity Crafters Market'},start_time=${p.start_time||'10:00'},end_time=${p.end_time||'15:00'},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},open=${p.open===true},sold_out=${p.sold_out===true},indoor_open=${p.indoor_open!==false},outdoor_open=${p.outdoor_open!==false},sync_alert=null where id=${p.id}`;if(p.indoor_capacity>(cur?.indoor_capacity??0)||p.outdoor_capacity>(cur?.outdoor_capacity??0))capacityRaised=true;}else await tx`insert into market.events(date,location_id,title,start_time,end_time,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,open,sold_out,indoor_open,outdoor_open) values(${p.date},${p.location_id},${p.title||'Trinity Crafters Market'},${p.start_time||'10:00'},${p.end_time||'15:00'},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${p.open===true},${p.sold_out===true},${p.indoor_open!==false},${p.outdoor_open!==false})`;await audit(tx,u,'event',p);});if(capacityRaised){await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await scanWaitlist(tx,p.id,{actor:u});});await flushMail();}return json({ok:true});
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(p.date))throw Error('Choose a date.');for(const k of ['indoor_capacity','outdoor_capacity','indoor_price','outdoor_price'])if(!Number.isInteger(p[k])||p[k]<0)throw Error('Check spaces and prices.');for(const k of ['hallway_capacity','hallway_price'])if(p[k]!==undefined&&(!Number.isInteger(p[k])||p[k]<0))throw Error('Check spaces and prices.');let capacityRaised=false;
+ await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await ensureHallway(tx);if(p.id){const inv=await eventInventory(tx,p.id);const used=[{space:'indoor',n:inv.indoor},{space:'outdoor',n:inv.outdoor},{space:'hallway',n:inv.hallway||0}].filter(x=>x.n>0);const [cur]=await tx`select indoor_capacity,outdoor_capacity,hallway_capacity from market.events where id=${p.id}`;for(const x of used)if((p[x.space+'_capacity']??cur?.[x.space+'_capacity']??0)<(cur?cur[x.space+'_capacity']:0)&&(p[x.space+'_capacity']??cur?.[x.space+'_capacity']??0)<x.n)throw Error('Total capacity cannot be lower than the active vendor count ('+x.n+' '+x.space+'). Enter the venue total, not the number of spaces remaining.');await tx`update market.events set date=${p.date},location_id=${p.location_id},title=${p.title||'Trinity Crafters Market'},start_time=${p.start_time||'10:00'},end_time=${p.end_time||'15:00'},indoor_capacity=${p.indoor_capacity},outdoor_capacity=${p.outdoor_capacity},indoor_price=${p.indoor_price},outdoor_price=${p.outdoor_price},hallway_capacity=${p.hallway_capacity??cur?.hallway_capacity??0},hallway_price=${p.hallway_price??4500},hallway_open=${p.hallway_open===undefined?(cur?.hallway_open??true):p.hallway_open!==false},open=${p.open===true},sold_out=${p.sold_out===true},indoor_open=${p.indoor_open!==false},outdoor_open=${p.outdoor_open!==false},sync_alert=null where id=${p.id}`;if(p.indoor_capacity>(cur?.indoor_capacity??0)||p.outdoor_capacity>(cur?.outdoor_capacity??0)||(p.hallway_capacity??0)>(cur?.hallway_capacity??0))capacityRaised=true;}else await tx`insert into market.events(date,location_id,title,start_time,end_time,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,hallway_capacity,hallway_price,hallway_open,open,sold_out,indoor_open,outdoor_open) values(${p.date},${p.location_id},${p.title||'Trinity Crafters Market'},${p.start_time||'10:00'},${p.end_time||'15:00'},${p.indoor_capacity},${p.outdoor_capacity},${p.indoor_price},${p.outdoor_price},${p.hallway_capacity??0},${p.hallway_price??4500},${p.hallway_open!==false},${p.open===true},${p.sold_out===true},${p.indoor_open!==false},${p.outdoor_open!==false})`;await audit(tx,u,'event',p);});if(capacityRaised){await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await scanWaitlist(tx,p.id,{actor:u});});await flushMail();}return json({ok:true});
  }
  if(action==='category'){required(p.name,'category');if(!Number.isInteger(p.vendor_limit)||p.vendor_limit<0)throw Error('Limit cannot be below 0.');if(p.id)await sql`update market.categories set name=${p.name},vendor_limit=${p.vendor_limit},active=${p.active===true} where id=${p.id}`;else await sql`insert into market.categories(name,vendor_limit) values(${p.name},${p.vendor_limit})`;await audit(sql,u,'category',p);return json({ok:true});}
  // §32 owner rule: every OPEN (active) category's global default is 1 vendor

@@ -5,9 +5,9 @@
 // `manager` payload does not carry (prices, payment internals,
 // inspection on booking rows) are not rendered at all. Everything
 // renders from the manager payload; every mutation re-fetches it.
-import { api, esc, nice } from './api.js?v=20261103-41';
-import { managerAttendeeRows } from './data.js?v=20261103-41';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261103-41';
+import { api, esc, nice } from './api.js?v=20261103-42';
+import { managerAttendeeRows } from './data.js?v=20261103-42';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261103-42';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 export const MANAGER_SECTIONS = [
@@ -92,7 +92,7 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
       <div class="vendor-list">${rows.map(r => `
         <article class="card vendor">
           <div class="vendor-top"><div><h3>${esc(r.business || r.name || 'Vendor')}</h3>
-          <div class="contact">${esc(r.name || '')} · ${esc(r.category || '')} · ${esc(r.space === 'outdoor' ? 'Outdoor' : 'Indoor')}</div></div>
+          <div class="contact">${esc(r.name || '')} · ${esc(r.category || '')} · ${esc(r.space === 'outdoor' ? 'Outdoor' : r.space === 'hallway' ? 'Hallway' : 'Indoor')}</div></div>
           <span class="status ${r.attendance === 'checked_in' ? 'ok' : r.attendance === 'no_show' ? 'bad' : 'neutral'}">${r.attendance === 'checked_in' ? 'Checked in' : r.attendance === 'no_show' ? 'No-show' : 'Not marked'}</span></div>
           ${r.setup_arrival_time ? `<p class="note">Setup arrival: <strong>${esc(r.setup_arrival_time)}</strong>${r.setup_checkin_at ? ' · checked in online' : ''}</p>` : ''}
           <div class="vendor-actions" role="group" aria-label="Attendance for ${esc(r.business || r.name || 'vendor')}">
@@ -184,7 +184,7 @@ export function renderManagerApplications(ctx, root, { waitlistOnly = false } = 
     box.innerHTML = `<div class="vendor-list">${apps.map(a => `
       <article class="card vendor">
         <div class="vendor-top"><div><h3>${esc(a.business || a.name || 'Vendor')}</h3>
-        <div class="contact">${esc(eventLabel(ctx, a.event_id))} · ${esc(a.category || '')} · ${esc(a.space === 'outdoor' ? 'Outdoor' : 'Indoor')}</div></div>
+        <div class="contact">${esc(eventLabel(ctx, a.event_id))} · ${esc(a.category || '')} · ${esc(a.space === 'outdoor' ? 'Outdoor' : a.space === 'hallway' ? 'Hallway' : 'Indoor')}</div></div>
         <span class="status ${a.status === 'pending' ? 'neutral' : a.status === 'waitlist' ? 'warn' : 'ok'}">${esc(a.status.toUpperCase())}</span></div>
         <p class="note">${esc(a.name || '')} · ${esc(a.email || '')}${a.phone ? ' · ' + esc(a.phone) : ''}</p>
         ${a.description ? `<p class="note">${esc(a.description)}</p>` : ''}
@@ -207,7 +207,7 @@ export function renderManagerApplications(ctx, root, { waitlistOnly = false } = 
     if (!a) return;
     ctx.openSheet(`
       <h3 class="sheet-title">Review application</h3>
-      <p class="note"><strong>${esc(a.business || '')}</strong> — ${esc(a.name || '')}<br>${esc(eventLabel(ctx, a.event_id))} · ${esc(a.category || '')} · ${esc(a.space === 'outdoor' ? 'Outdoor' : 'Indoor')}<br>${esc(a.email || '')}${a.phone ? ' · ' + esc(a.phone) : ''}</p>
+      <p class="note"><strong>${esc(a.business || '')}</strong> — ${esc(a.name || '')}<br>${esc(eventLabel(ctx, a.event_id))} · ${esc(a.category || '')} · ${esc(a.space === 'outdoor' ? 'Outdoor' : a.space === 'hallway' ? 'Hallway' : 'Indoor')}<br>${esc(a.email || '')}${a.phone ? ' · ' + esc(a.phone) : ''}</p>
       ${a.description ? `<p class="note">${esc(a.description)}</p>` : ''}
       <label class="sheet-field">Reason (required to decline)<textarea id="v2-m-reason" rows="2" maxlength="1000" placeholder="The vendor sees this reason"></textarea></label>
       <div class="vendor-actions">

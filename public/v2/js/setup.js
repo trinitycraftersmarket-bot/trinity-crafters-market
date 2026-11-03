@@ -6,7 +6,7 @@
 // in the shared sheet system, every mutation re-fetches, and a save only
 // ever sends the fields it means to change (§5 R-7: the event-capacity
 // floor now bites only when capacity is actually reduced, server-side).
-import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261103-41';
+import { api, esc, money, nice, niceShort, clock, getToken } from './api.js?v=20261103-42';
 
 const stamp = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 const intOr = (v, f) => { const n = parseInt(v, 10); return Number.isInteger(n) && n >= 0 ? n : f; };
@@ -20,13 +20,17 @@ const capacityFields = x => `
     <label class="sheet-field">TOTAL outdoor spaces (not spaces remaining)<input name="outdoor_capacity" type="number" min="0" required value="${x?.outdoor_capacity ?? 3}"></label>
     <label class="sheet-field">Indoor price ($)<input name="indoor_price" type="number" min="0" step="0.01" required value="${(x?.indoor_price ?? 4500) / 100}"></label>
     <label class="sheet-field">Outdoor price ($)<input name="outdoor_price" type="number" min="0" step="0.01" required value="${(x?.outdoor_price ?? 3000) / 100}"></label>
+    <label class="sheet-field">TOTAL hallway spaces (0 = no hallway)<input name="hallway_capacity" type="number" min="0" required value="${x?.hallway_capacity ?? 0}"></label>
+    <label class="sheet-field">Hallway price ($)<input name="hallway_price" type="number" min="0" step="0.01" required value="${(x?.hallway_price ?? 4500) / 100}"></label>
   </div>
   <p class="note"><strong>Capacity means the venue's total booth count.</strong> Do not reduce this number as vendors book; available spaces are calculated automatically from active vendor records.</p>`;
 const readCapacity = f => ({
   indoor_capacity: intOr(f.get('indoor_capacity'), 0),
   outdoor_capacity: intOr(f.get('outdoor_capacity'), 0),
   indoor_price: centsOf(f.get('indoor_price')),
-  outdoor_price: centsOf(f.get('outdoor_price'))
+  outdoor_price: centsOf(f.get('outdoor_price')),
+  hallway_capacity: intOr(f.get('hallway_capacity'), 0),
+  hallway_price: centsOf(f.get('hallway_price'))
 });
 
 // Sheet form error line: server validation messages (e.g. the capacity
@@ -68,6 +72,7 @@ export function renderDates(ctx, root) {
         <label class="checkline"><input type="checkbox" name="sold_out" ${x.sold_out ? 'checked' : ''}> Sold out (leave applications open to collect wait-list requests)</label>
         <label class="checkline"><input type="checkbox" name="indoor_open" ${x.indoor_open !== false ? 'checked' : ''}> Indoor applications open</label>
         <label class="checkline"><input type="checkbox" name="outdoor_open" ${x.outdoor_open !== false ? 'checked' : ''}> Outdoor applications open</label>
+        <label class="checkline"><input type="checkbox" name="hallway_open" ${x.hallway_open !== false ? 'checked' : ''}> Hallway applications open</label>
         <p class="note flag-note" data-form-msg hidden></p>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Save date</button></div>
       </form>`);
@@ -81,6 +86,8 @@ export function renderDates(ctx, root) {
         form.elements.namedItem('outdoor_capacity').value = l.outdoor_capacity;
         form.elements.namedItem('indoor_price').value = l.indoor_price / 100;
         form.elements.namedItem('outdoor_price').value = l.outdoor_price / 100;
+        form.elements.namedItem('hallway_capacity').value = l.hallway_capacity ?? 0;
+        form.elements.namedItem('hallway_price').value = (l.hallway_price ?? 4500) / 100;
       };
     }
     form.onsubmit = async e => {
@@ -93,7 +100,8 @@ export function renderDates(ctx, root) {
           start_time: f.get('start_time'), end_time: f.get('end_time'),
           ...readCapacity(f),
           open: f.get('open') === 'on', sold_out: f.get('sold_out') === 'on',
-          indoor_open: f.get('indoor_open') === 'on', outdoor_open: f.get('outdoor_open') === 'on'
+          indoor_open: f.get('indoor_open') === 'on', outdoor_open: f.get('outdoor_open') === 'on',
+          hallway_open: f.get('hallway_open') === 'on'
         });
         ctx.closeSheet();
         ctx.toast('Market date saved.');
@@ -145,8 +153,8 @@ export function renderDates(ctx, root) {
         <div class="vendor-top"><div><h3>${esc(nice(e.date))}</h3>
         <div class="contact">${esc(locName(e.location_id))} · ${esc(clock(e.start_time))}–${esc(clock(e.end_time))}</div></div>
         ${statusChip(e)}</div>
-        <p class="note">${e.indoor_capacity} indoor at ${money(e.indoor_price)} · ${e.outdoor_capacity} outdoor at ${money(e.outdoor_price)}<br>
-        Booked so far: ${e.indoor_used ?? 0} indoor · ${e.outdoor_used ?? 0} outdoor${e.setup_sent_at ? '<br>Setup email sent ' + esc(stamp(e.setup_sent_at)) : ''}</p>
+        <p class="note">${e.indoor_capacity} indoor at ${money(e.indoor_price)} · ${e.outdoor_capacity} outdoor at ${money(e.outdoor_price)}${Number(e.hallway_capacity || 0) > 0 ? ` · ${e.hallway_capacity} hallway at ${money(e.hallway_price)}` : ''}<br>
+        Booked so far: ${e.indoor_used ?? 0} indoor · ${e.outdoor_used ?? 0} outdoor${Number(e.hallway_capacity || 0) > 0 ? ` · ${e.hallway_used ?? 0} hallway` : ''}${e.setup_sent_at ? '<br>Setup email sent ' + esc(stamp(e.setup_sent_at)) : ''}</p>
         ${e.sync_alert ? `<p class="note flag-note">${esc(e.sync_alert)}</p>` : ''}
         <div class="vendor-actions"><button class="btn small" data-edit-date="${esc(e.id)}">Edit date</button></div>
       </article>`;
@@ -159,7 +167,7 @@ export function renderDates(ctx, root) {
       <div class="vendor-list">${(a.locations || []).map(l => `
         <article class="card vendor">
           <div class="vendor-top"><div><h3>${esc(l.name)}</h3><div class="contact">${esc(l.market_name || '')}</div></div></div>
-          <p class="note">${esc(l.address || '')}<br>Defaults: ${l.indoor_capacity} indoor at ${money(l.indoor_price)} · ${l.outdoor_capacity} outdoor at ${money(l.outdoor_price)}${l.regular_indoor_price != null ? `<br>Regular vendors: indoor ${money(l.regular_indoor_price)}` : ''}</p>
+          <p class="note">${esc(l.address || '')}<br>Defaults: ${l.indoor_capacity} indoor at ${money(l.indoor_price)} · ${l.outdoor_capacity} outdoor at ${money(l.outdoor_price)}${Number(l.hallway_capacity || 0) > 0 ? ` · ${l.hallway_capacity} hallway at ${money(l.hallway_price)}` : ''}${l.regular_indoor_price != null ? `<br>Regular vendors: indoor ${money(l.regular_indoor_price)}` : ''}</p>
           <div class="vendor-actions"><button class="btn small" data-edit-location="${esc(l.id)}">Edit location defaults</button></div>
         </article>`).join('') || '<div class="card empty-card">No locations yet.</div>'}</div>`;
     root.querySelectorAll('[data-edit-date]').forEach(b => b.onclick = () => dateSheet((admin().allEvents || []).find(e => String(e.id) === String(b.dataset.editDate)) || {}));

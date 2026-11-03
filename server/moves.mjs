@@ -10,6 +10,7 @@
 import {audit, queue} from './core.mjs';
 import {eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
 import {scanWaitlist} from './waitlist.mjs';
+import {ensureHallwayColumns} from './hallway.mjs';
 
 export const MOVE_CUTOFF_HOURS = 48;
 const ORGANIZER_EMAIL = 'trinitycraftersmarket@gmail.com';
@@ -18,9 +19,10 @@ const dateOnly = d => d instanceof Date ? d.toISOString().slice(0, 10) : (String
 const fmtDate = d => { const ymd = dateOnly(d), x = ymd ? new Date(ymd + 'T12:00:00Z') : new Date(NaN); return Number.isNaN(x.getTime()) ? 'Market date' : x.toLocaleDateString('en-US', {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York'}); };
 const money = cents => '$' + (Number(cents || 0) / 100).toFixed(2);
 const emailKey = e => String(e || '').trim().toLowerCase().replace(/,+$/, '');
-const spaceLabel = s => s === 'indoor' ? 'Indoor' : 'Outdoor';
+const spaceLabel = s => s === 'indoor' ? 'Indoor' : s === 'hallway' ? 'Hallway' : 'Outdoor';
 
 export async function ensureMoveSchema(sql) {
+  await ensureHallwayColumns(sql);
   await sql`create table if not exists market.move_requests(
     id uuid primary key default gen_random_uuid(),
     source_type text not null check (source_type in ('booking','imported')),
@@ -28,7 +30,7 @@ export async function ensureMoveSchema(sql) {
     vendor_email text not null,
     from_event_id uuid not null references market.events(id),
     to_event_id uuid not null references market.events(id),
-    space text not null check (space in ('indoor','outdoor')),
+    space text not null check (space in ('indoor','outdoor','hallway')),
     reason text not null default '',
     status text not null default 'pending' check (status in ('pending','approved','declined','cancelled')),
     requested_at timestamptz not null default now(),
@@ -86,6 +88,7 @@ export async function targetProblems(tx, source, target) {
   if (target.sold_out) problems.push('That date is marked sold out.');
   if (source.space === 'indoor' && !target.indoor_open) problems.push('Indoor booths are closed for that date.');
   if (source.space === 'outdoor' && !target.outdoor_open) problems.push('Outdoor booths are closed for that date.');
+  if (source.space === 'hallway' && target.hallway_open === false) problems.push('Hallway booths are closed for that date.');
   if (problems.length) return problems;
   const inv = await eventInventory(tx, target.id);
   const key = vendorIdentityKey({vendor_id: source.vendor_id, email: source.email, phone: source.phone, business: source.business, name: source.name});
@@ -102,8 +105,8 @@ export async function targetProblems(tx, source, target) {
     if (sameApp && !problems.length) problems.push('You already have a booking record for that date.');
   }
   if (problems.length) return problems;
-  const used = source.space === 'indoor' ? inv.indoor : inv.outdoor;
-  const capacity = source.space === 'indoor' ? target.indoor_capacity : target.outdoor_capacity;
+  const used = inv[source.space] || 0;
+  const capacity = Number(target[source.space + '_capacity'] || 0);
   if (used >= capacity) problems.push(`${spaceLabel(source.space)} is full for that date.`);
   if (source.category_id) {
     const [lim] = await tx`select coalesce(l.vendor_limit, c.vendor_limit) as lim from market.categories c left join market.event_category_limits l on l.event_id = ${target.id} and l.category_id = c.id where c.id = ${source.category_id}`;
@@ -180,7 +183,7 @@ async function performTransfer(tx, {source, target, space}) {
     if (space !== source.space) await tx`update market.bookings set space = ${space} where id = ${source.source_id}`;
   } else {
     await tx`update market.imported_attendees set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, attendance_state = 'not_marked' where id = ${source.source_id}`;
-    if (space !== source.space) await tx`update market.imported_attendees set space = ${space === 'indoor' ? 'Inside' : 'Outside'} where id = ${source.source_id}`;
+    if (space !== source.space) await tx`update market.imported_attendees set space = ${space === 'indoor' ? 'Inside' : space === 'hallway' ? 'Hallway' : 'Outside'} where id = ${source.source_id}`;
     await tx`delete from market.imported_category_reservations where imported_attendee_id = ${source.source_id}`;
     if (source.category_id) await tx`insert into market.imported_category_reservations(imported_attendee_id, event_id, category_id, space) values(${source.source_id}, ${target.id}, ${source.category_id}, ${space}) on conflict(imported_attendee_id, category_id) do nothing`;
   }
@@ -273,9 +276,9 @@ export async function organizerMoveTargets(tx, source) {
     and (ev.date + coalesce(ev.end_time, time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by ev.date`;
   const orderOf = new Map(ordered.map((r, i) => [String(r.id), i]));
   const perSpace = {};
-  for (const space of ['indoor', 'outdoor']) perSpace[space] = await eligibleTargets(tx, {...source, space});
+  for (const space of ['indoor', 'outdoor', 'hallway']) perSpace[space] = await eligibleTargets(tx, {...source, space});
   const byId = new Map();
-  for (const space of ['indoor', 'outdoor']) {
+  for (const space of ['indoor', 'outdoor', 'hallway']) {
     for (const e of perSpace[space].eligible) {
       if (!byId.has(e.id)) byId.set(e.id, {event: e, spaces: []});
       byId.get(e.id).spaces.push({space, price: e[space + '_price']});
@@ -306,7 +309,7 @@ export async function organizerMove(tx, {sourceType, sourceId, targetEventId, sp
   if (from.ended) throw Error('That market has already ended.');
   const target = await eventRow(tx, targetEventId);
   const effSpace = space == null || space === '' ? source.space : normalizeSpace(space);
-  if (!effSpace) throw Error('Choose an indoor or outdoor space.');
+  if (!effSpace) throw Error('Choose an indoor, outdoor or hallway space.');
   const problems = await targetProblems(tx, effSpace === source.space ? source : {...source, space: effSpace}, target);
   if (problems.length) throw Error(`Cannot move: ${problems[0]}`);
   const [pending] = await tx`select * from market.move_requests where source_type = ${source.source_type} and source_id = ${source.source_id} and status = 'pending' for update`;

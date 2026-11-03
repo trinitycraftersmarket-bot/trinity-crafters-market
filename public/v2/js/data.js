@@ -39,6 +39,7 @@ export function normalizeSpace(value) {
   const s = String(value || '').trim().toLowerCase();
   if (s === 'indoor' || s === 'inside') return 'indoor';
   if (s === 'outdoor' || s === 'outside') return 'outdoor';
+  if (s === 'hallway') return 'hallway'; // §55
   return null;
 }
 
@@ -130,12 +131,14 @@ export function eventStats(admin, event) {
     vendors: rows.length,
     indoor: rows.filter(r => r.spaceNorm === 'indoor').length,
     outdoor: rows.filter(r => r.spaceNorm === 'outdoor').length,
+    hallway: rows.filter(r => r.spaceNorm === 'hallway').length,
     checkedIn: rows.filter(r => r.attendance === 'checked_in').length,
     inspectionsPending: rows.filter(r => r.inspection_status !== 'approved').length,
     unpaidCount: unpaid.length,
     unpaidDue: unpaid.reduce((s, r) => s + r.amount, 0),
     waitlist: (admin.applications || []).filter(b => String(b.event_id) === String(event.id) && b.status === 'waitlist').length,
     indoorOpen: spotsOpen(event, 'indoor'),
-    outdoorOpen: spotsOpen(event, 'outdoor')
+    outdoorOpen: spotsOpen(event, 'outdoor'),
+    hallwayOpen: spotsOpen(event, 'hallway')
   };
 }

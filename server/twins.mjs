@@ -63,7 +63,7 @@ export async function syncSpace(tx,{eventId,key,exclude=null,space}){
  let updated=0;
  for(const t of await findTwins(tx,eventId,key,exclude)){
   if(t.source==='booking')await tx`update market.bookings set space=${norm} where id=${t.id}`;
-  else await tx`update market.imported_attendees set space=${norm==='indoor'?'Inside':'Outside'} where id=${t.id}`;
+  else await tx`update market.imported_attendees set space=${norm==='indoor'?'Inside':norm==='hallway'?'Hallway':'Outside'} where id=${t.id}`;
   updated++;
  }
  return updated;

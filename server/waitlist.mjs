@@ -21,6 +21,9 @@
 import {audit, queue} from './core.mjs';
 import {assertCapacity, categoryFull, effectiveCategoryLimits, eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
 import {decisionEmail} from './notifications.mjs';
+import {ensureHallway} from './hallway.mjs';
+import {isRegularVendor, regularAwarePrice} from './pricing.mjs';
+import {ensureProfileSchema} from './profiles.mjs';
 
 export const OFFER_WINDOW_HOURS = 12;
 
@@ -52,7 +55,7 @@ const effectiveLimits = effectiveCategoryLimits;
 
 function offerEmail(booking, event, expires) {
   const day = fmtDate(event.date);
-  const spaceLabel = booking.space === 'indoor' ? 'Indoor' : 'Outdoor';
+  const spaceLabel = booking.space === 'indoor' ? 'Indoor' : booking.space === 'hallway' ? 'Hallway' : 'Outdoor';
   const deadline = offerDeadlineText(expires);
   return {
     subject: `A spot opened up — Trinity Crafters Market, ${day}`,
@@ -86,18 +89,21 @@ async function setEpisode(tx, eventId, space, when) {
 // Caller owns the transaction + advisory lock. Returns offers created.
 export async function scanWaitlist(tx, eventId, {space = null, actor = 'system'} = {}) {
   await ensureWaitlistSchema(tx);
+  await ensureHallway(tx);
+  await ensureProfileSchema(tx); // §55: the hallway conversion resolves the §50 regular flag
   const event = await eventRow(tx, eventId);
   if (!event || !event.open || event.sold_out) return [];
   const inv = await eventInventory(tx, eventId);
   const limits = await effectiveLimits(tx, eventId);
   const created = [];
-  const spaces = space ? [normalizeSpace(space)] : ['indoor', 'outdoor'];
+  const spaces = space ? [normalizeSpace(space)] : ['indoor', 'outdoor', 'hallway'];
   for (const sp of spaces) {
     if (!sp) continue;
     if (sp === 'indoor' && !event.indoor_open) continue;
     if (sp === 'outdoor' && !event.outdoor_open) continue;
-    const capacity = sp === 'indoor' ? event.indoor_capacity : event.outdoor_capacity;
-    const free = capacity - (sp === 'indoor' ? inv.indoor : inv.outdoor);
+    if (sp === 'hallway' && event.hallway_open === false) continue; // §55
+    const capacity = Number(event[sp + '_capacity'] || 0);
+    const free = capacity - (inv[sp] || 0);
     if (free <= 0) { await setEpisode(tx, eventId, sp, new Date()); continue; }
     const live = await tx`select o.id, o.booking_id, a.category_id from market.waitlist_offers o join market.bookings b on b.id = o.booking_id join market.applications a on a.id = b.application_id where o.event_id = ${eventId} and b.space = ${sp} and b.status = 'waitlist' and o.state = 'offered' and o.expires_at > now()`;
     let offeredCount = live.length;
@@ -111,7 +117,13 @@ export async function scanWaitlist(tx, eventId, {space = null, actor = 'system'}
     // category are not both offered past the limit.
     const catUsed = new Map(inv.categories);
     for (const r of live) if (r.category_id) catUsed.set(String(r.category_id), (catUsed.get(String(r.category_id)) || 0) + 1);
-    const queueRows = await tx`select b.id, b.space, b.price, b.category_exception, a.name, a.email, a.business, a.category_id, a.vendor_id, a.phone from market.bookings b join market.applications a on a.id = b.application_id where b.event_id = ${eventId} and b.space = ${sp} and b.status = 'waitlist' and not exists(select 1 from market.bans bn where bn.active and (bn.user_id = a.user_id or lower(bn.email) = lower(a.email))) order by b.waitlisted_at asc nulls last, b.id asc`;
+    // §55: the hallway queue is the hallway waitlist PLUS the indoor
+    // waitlist (a vendor who asked for Indoor is offered an open hallway
+    // spot — see the cross-area handling in the loop). Every other space
+    // scans only its own queue, as before.
+    const queueRows = sp === 'hallway'
+      ? await tx`select b.id, b.space, b.price, b.category_exception, b.application_id, b.waitlist_offered_at, a.name, a.email, a.business, a.category_id, a.vendor_id, a.phone from market.bookings b join market.applications a on a.id = b.application_id where b.event_id = ${eventId} and b.space in ('hallway', 'indoor') and b.status = 'waitlist' and not exists(select 1 from market.bans bn where bn.active and (bn.user_id = a.user_id or lower(bn.email) = lower(a.email))) order by b.waitlisted_at asc nulls last, b.id asc`
+      : await tx`select b.id, b.space, b.price, b.category_exception, b.application_id, b.waitlist_offered_at, a.name, a.email, a.business, a.category_id, a.vendor_id, a.phone from market.bookings b join market.applications a on a.id = b.application_id where b.event_id = ${eventId} and b.space = ${sp} and b.status = 'waitlist' and not exists(select 1 from market.bans bn where bn.active and (bn.user_id = a.user_id or lower(bn.email) = lower(a.email))) order by b.waitlisted_at asc nulls last, b.id asc`;
     for (const b of queueRows) {
       if (offeredCount >= free) break;
       if (liveIds.has(b.id) || excluded.has(b.id)) continue;
@@ -120,8 +132,23 @@ export async function scanWaitlist(tx, eventId, {space = null, actor = 'system'}
       // §54 shared rule (counts.categoryFull): a vendor whose category is
       // full for this date is SKIPPED — no offer row, no email, no window
       // burned — and keeps their exact queue position for the next opening.
+      // This binds the hallway pass exactly like the others: an open
+      // hallway spot never bypasses a full category (§55).
       if (b.category_id && categoryFull(catUsed.get(String(b.category_id)) || 0, limits.get(String(b.category_id)), b.category_exception)) continue;
-      const offer = await makeOffer(tx, {...b, space: sp}, event, {actor});
+      let row = b;
+      if (sp === 'hallway' && b.space !== 'hallway') {
+        // §55 cross-area offer: an Indoor-waitlisted vendor is offered
+        // the hallway spot. A booking already holding a live offer in
+        // its own space (waitlist_offered_at set) is left alone. On
+        // offer the booking MOVES to the hallway at the hallway price
+        // (§50 mechanism as-is), so the accept re-check, the offer
+        // email and every later view agree it is a hallway booking.
+        if (b.waitlist_offered_at) continue;
+        const price = await regularAwarePrice(tx, {locationId: event.location_id, space: 'hallway', indoorPrice: event.indoor_price, outdoorPrice: event.outdoor_price, hallwayPrice: event.hallway_price, regular: await isRegularVendor(tx, {email: b.email, applicationId: b.application_id})});
+        await tx`update market.bookings set space = 'hallway', price = ${price} where id = ${b.id}`;
+        row = {...b, space: 'hallway', price};
+      }
+      const offer = await makeOffer(tx, {...row, space: sp}, event, {actor});
       created.push(offer);
       offeredCount++;
       if (b.category_id) catUsed.set(String(b.category_id), (catUsed.get(String(b.category_id)) || 0) + 1);
@@ -185,6 +212,7 @@ async function liveOffer(tx, bookingId) {
 // can run the normal invoice flow after commit.
 export async function acceptOffer(tx, bookingId, user) {
   await ensureWaitlistSchema(tx);
+  await ensureHallway(tx);
   const b = await loadWaitlistBooking(tx, bookingId);
   assertOwner(b, user);
   if (b.status !== 'waitlist') throw Error('This booking is no longer on the waitlist.');
@@ -227,13 +255,14 @@ export async function declineOffer(tx, bookingId, user) {
 // spoken for. Writes the 'waitlist offer override' audit entry.
 export async function offerAnyway(tx, bookingId, actor) {
   await ensureWaitlistSchema(tx);
+  await ensureHallway(tx);
   const b = await loadWaitlistBooking(tx, bookingId);
   if (!b) throw Error('That booking could not be found.');
   if (b.status !== 'waitlist') throw Error('That vendor is not on the waitlist for this date.');
   const event = await eventRow(tx, b.event_id);
   const inv = await eventInventory(tx, b.event_id);
-  const used = b.space === 'indoor' ? inv.indoor : inv.outdoor;
-  const capacity = b.space === 'indoor' ? event.indoor_capacity : event.outdoor_capacity;
+  const used = inv[b.space] || 0;
+  const capacity = Number(event[b.space + '_capacity'] || 0);
   const free = capacity - used;
   if (free <= 0) throw Error(`There is no open ${b.space} spot for that date.`);
   const live = await tx`select o.id, o.booking_id from market.waitlist_offers o join market.bookings bk on bk.id = o.booking_id where o.event_id = ${b.event_id} and bk.space = ${b.space} and bk.status = 'waitlist' and o.state = 'offered' and o.expires_at > now() order by o.created_at desc`;

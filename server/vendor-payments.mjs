@@ -24,7 +24,7 @@ import {audit} from './core.mjs';
 import {vendorIdentityKey,normalizeSpace} from './counts.mjs';
 
 const cleanEmail=v=>String(v||'').trim().toLowerCase().replace(/,+$/,'');
-const spaceLabel=s=>{const n=normalizeSpace(s);return n==='indoor'?'Inside':n==='outdoor'?'Outside':String(s||'').trim()||'Booth';};
+const spaceLabel=s=>{const n=normalizeSpace(s);return n==='indoor'?'Inside':n==='outdoor'?'Outside':n==='hallway'?'Hallway':String(s||'').trim()||'Booth';};
 const fmtDay=d=>{const s=String(d||'').slice(0,10);const m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!m)return s;return new Intl.DateTimeFormat('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(Date.UTC(+m[1],+m[2]-1,+m[3],12)));};
 const isCreditMethod=v=>String(v||'').trim().toLowerCase()==='credit';
 

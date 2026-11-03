@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261103-41';
+import { api, esc, nice } from './api.js?v=20261103-42';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -224,12 +224,18 @@ export async function renderVendorFloorPlan(host, eventId, mineRow) {
   const rowIds = new Set();
   if (mineRow?.id) rowIds.add(String(mineRow.id));
   if (mineRow?.vendor_id) rowIds.add(String(mineRow.vendor_id));
+  // §55: hallway booths have no floor-plan position and none is invented
+  // for them — the sheet says so plainly instead of implying a missing
+  // assignment.
+  const isHallway = String(mineRow?.space || '').trim().toLowerCase() === 'hallway';
   const areas = (result.areas || []).map(standardizeArea).filter(area => {
     const assigned = Object.values(area.assignments || {}).some(e => e && e.vendor_id);
     return imageAllowed(area.image_data_url) || assigned;
   });
   if (!areas.length) {
-    host.innerHTML = '<p class="muted">No floor plan has been saved for this market yet. Booth assignments will appear here once the organizer arranges the plan.</p>';
+    host.innerHTML = isHallway
+      ? '<p class="muted">🧭 <strong>Your booth is in the Hallway.</strong> Hallway spots are not marked on the floor plan — check in with the organizer when you arrive and they will show you your spot.</p>'
+      : '<p class="muted">No floor plan has been saved for this market yet. Booth assignments will appear here once the organizer arranges the plan.</p>';
     return;
   }
   const mine = findVendorSpot(areas, [...rowIds]);
@@ -240,7 +246,9 @@ export async function renderVendorFloorPlan(host, eventId, mineRow) {
     const filled = spotIds(area).filter(id => !!area.assignments[id]?.vendor_id).length;
     const head = mine
       ? `<p class="fp-mine-note">🧭 <strong>Your booth: ${esc(mine.spot)}</strong> · ${esc(mine.area.title)}${mine.area === area ? '' : ' — switch back to the highlighted plan to see it'}</p>`
-      : '<p class="fp-mine-note">Your booth has not been placed on the plan yet — you can still look over the layouts below.</p>';
+      : isHallway
+        ? '<p class="fp-mine-note">🧭 <strong>Your booth is in the Hallway</strong> — hallway spots are not marked on the floor plan. Check in with the organizer when you arrive; you can still look over the layouts below.</p>'
+        : '<p class="fp-mine-note">Your booth has not been placed on the plan yet — you can still look over the layouts below.</p>';
     const chips = areas.length > 1
       ? `<div class="filters fp-area-chips" role="group" aria-label="Floor plan areas">${areas.map(a => `<button type="button" class="chip-btn ${a === area ? 'active' : ''}" data-fp-area="${esc(a.area_key)}">${esc(a.title)}${mine && mine.area === a ? ' · your booth' : ''}</button>`).join('')}</div>`
       : '';

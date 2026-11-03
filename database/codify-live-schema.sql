@@ -605,6 +605,31 @@ update market.locations set regular_indoor_price = 6000
     and (lower(name) like '%hilton%' or lower(coalesce(market_name, '')) like '%hilton%');
 
 -- ----------------------------------------------------------------------------
+-- 55. Hallway spaces (Nov 3, 2026 — Scott: 2 hallway spaces at $45 on
+-- every Hampton Inn date; Hilton untouched, it is full). Hallway is a
+-- third bookable space modeled exactly like indoor/outdoor: capacity +
+-- price as DATA on locations (defaults) and events (per-date), plus a
+-- hallway_open flag on events. Mirrored by the lazy heal in
+-- server/hallway.mjs (ensureHallway), whose one-time watermark also
+-- performs the Hampton seed/backfill below against the live DB.
+-- ----------------------------------------------------------------------------
+alter table market.locations add column if not exists hallway_capacity integer not null default 0;
+alter table market.locations add column if not exists hallway_price integer not null default 4500;
+alter table market.events add column if not exists hallway_capacity integer not null default 0;
+alter table market.events add column if not exists hallway_price integer not null default 4500;
+alter table market.events add column if not exists hallway_open boolean not null default true;
+alter table market.bookings drop constraint if exists bookings_space_check;
+alter table market.bookings add constraint bookings_space_check check (space in ('indoor', 'outdoor', 'hallway'));
+update market.locations set hallway_capacity = 2, hallway_price = 4500
+  where hallway_capacity = 0
+    and (lower(name) like '%hampton%' or lower(coalesce(market_name, '')) like '%hampton%');
+update market.events e set hallway_capacity = 2, hallway_price = 4500
+  from market.locations l
+  where e.location_id = l.id and e.hallway_capacity = 0
+    and (lower(l.name) like '%hampton%' or lower(coalesce(l.market_name, '')) like '%hampton%')
+    and (e.date + coalesce(e.end_time, time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York');
+
+-- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------
 -- (a) categories.vendor_limit: RESOLVED Oct 22 2026 — the owner ruled that

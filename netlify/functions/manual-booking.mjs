@@ -1,5 +1,6 @@
 import {db,identity,queue,flushMail,audit} from '../../server/core.mjs';
 import {ensureLocationRegularPrice,isRegularVendor,regularAwarePrice,regularIndoorPriceFor} from '../../server/pricing.mjs';
+import {ensureHallwayColumns} from '../../server/hallway.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const money=n=>'$'+(Number(n||0)/100).toFixed(2);
 const dateOnly=v=>{const s=String(v??'');const m=s.match(/^(\d{4}-\d{2}-\d{2})/);if(m)return m[1];const d=new Date(s);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10);};
@@ -51,8 +52,8 @@ export default async req=>{
     for(const v of vendors)v.regular_vendor=v.email?await isRegularVendor(sql,{email:v.email}):false;
     return json({vendors});
    }
-   await ensureLocationRegularPrice(sql);
-   const events=await sql`select e.id,e.date,e.title,e.indoor_price,e.outdoor_price,l.regular_indoor_price,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date`;
+   await ensureLocationRegularPrice(sql);await ensureHallwayColumns(sql);
+   const events=await sql`select e.id,e.date,e.title,e.indoor_price,e.outdoor_price,e.hallway_price,e.hallway_capacity,l.regular_indoor_price,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') order by e.date`;
    const categories=await sql`select id,name from market.categories where active order by name`;
    return json({events,categories});
   }
@@ -106,7 +107,7 @@ export default async req=>{
   if(!name||!selling||!phone||!email)throw Error('Name, what they sell, phone number, and email address are required.');
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))throw Error('Enter a valid email address.');
   if(!p.event_id)throw Error('Choose a market date.');
-  if(!['Inside','Outside'].includes(p.space))throw Error('Choose Inside or Outside.');
+  if(!['Inside','Outside','Hallway'].includes(p.space))throw Error('Choose Inside, Outside or Hallway.');
   if(!['cash','credit card','monthly billing'].includes(p.payment_method))throw Error('Choose cash, credit card, or Monthly Billing.');
   const [event]=await sql`select e.*,to_char(e.date,'YYYY-MM-DD') event_date,l.name location,l.address,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;
   if(!event)throw Error('That market date has ended or is no longer available.');
@@ -126,12 +127,16 @@ export default async req=>{
   // (3) any other amount is a deliberate override and stands. Credit
   // card is excluded from (2): the GoDaddy charge was already verified
   // against the amount sent, so the record must match the charge.
+  await ensureHallwayColumns(sql);
   let amount;
   if(p.amount==null||p.amount===''){
-   amount=await regularAwarePrice(sql,{locationId:event.location_id,space:p.space==='Inside'?'indoor':'outdoor',indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,regular:await isRegularVendor(sql,{email})});
+   amount=await regularAwarePrice(sql,{locationId:event.location_id,space:p.space==='Inside'?'indoor':p.space==='Hallway'?'hallway':'outdoor',indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,hallwayPrice:event.hallway_price,regular:await isRegularVendor(sql,{email})});
   }else{
    amount=Math.round(Number(p.amount)*100);
-   if(p.payment_method!=='credit card'&&p.space==='Inside'&&amount===Number(event.indoor_price)&&await isRegularVendor(sql,{email})){
+   // §55: the untouched-prefill swap applies to Hallway exactly as it
+   // does to Inside — the prefill is the standard hallway price, and a
+   // regular vendor's truth is the location's regular rate.
+   if(p.payment_method!=='credit card'&&((p.space==='Inside'&&amount===Number(event.indoor_price))||(p.space==='Hallway'&&amount===Number(event.hallway_price)))&&await isRegularVendor(sql,{email})){
     const rp=await regularIndoorPriceFor(sql,event.location_id);
     if(rp!=null)amount=rp;
    }

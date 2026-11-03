@@ -5,11 +5,11 @@
 // Day (Stage 1) so there is one place that runs the day — here they are
 // shown as read-only chips. Same server-is-truth rule: every action is a
 // server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261103-41';
-import { attendeeRows, eventStats } from './data.js?v=20261103-41';
-import { parseAttendeePdf } from './pdfimport.js?v=20261103-41';
-import { printAttendance } from './print.js?v=20261103-41';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261103-41';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261103-42';
+import { attendeeRows, eventStats } from './data.js?v=20261103-42';
+import { parseAttendeePdf } from './pdfimport.js?v=20261103-42';
+import { printAttendance } from './print.js?v=20261103-42';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261103-42';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -70,7 +70,7 @@ export function renderAttendees(ctx, root, params = {}) {
       <div class="vendor-top">
         <div><h3>${esc(r.business || r.name || 'Vendor')}</h3>
         <div class="contact">${esc(r.name || '')}${r.category ? ' · ' + esc(r.category) : ''}</div></div>
-        <span class="badge ${r.spaceNorm === 'outdoor' ? 'outside' : 'inside'}">${r.spaceNorm === 'outdoor' ? 'OUTSIDE' : 'INSIDE'}</span>
+        <span class="badge ${r.spaceNorm === 'outdoor' ? 'outside' : r.spaceNorm === 'hallway' ? 'hallway' : 'inside'}">${r.spaceNorm === 'outdoor' ? 'OUTSIDE' : r.spaceNorm === 'hallway' ? 'HALLWAY' : 'INSIDE'}</span>
       </div>
       <div class="chips">
         <span class="status ${INSP_CLASS[r.inspection_status]}">${INSP_LABEL[r.inspection_status]}</span>
@@ -92,24 +92,28 @@ export function renderAttendees(ctx, root, params = {}) {
   }
 
   function moveSpaceSheet(r) {
-    const other = r.spaceNorm === 'indoor' ? 'outdoor' : 'indoor';
+    // §55: three spaces now — offer a move to each OTHER space (the
+    // server still checks the target has room before moving).
+    const label = s => s === 'outdoor' ? 'Outside' : s === 'hallway' ? 'Hallway' : 'Inside';
+    const others = ['indoor', 'outdoor', 'hallway'].filter(s => s !== r.spaceNorm && Number(event[s + '_capacity'] || 0) > 0);
     ctx.openSheet(`
       <h3 class="sheet-title">Move space</h3>
-      <p><strong>${esc(r.business || r.name || 'Vendor')}</strong> is currently <strong>${r.spaceNorm === 'outdoor' ? 'Outside' : 'Inside'}</strong> for ${esc(nice(event.date))}.</p>
+      <p><strong>${esc(r.business || r.name || 'Vendor')}</strong> is currently <strong>${label(r.spaceNorm)}</strong> for ${esc(nice(event.date))}.</p>
       <p class="note">The server checks that the other space has room before moving — if it's full, you'll see the reason here and nothing changes.</p>
       <div class="sheet-actions">
         <button class="btn" data-sheet-close>Cancel</button>
-        <button class="btn primary" id="v2-move-space-go">Move to ${other === 'outdoor' ? 'Outside' : 'Inside'}</button>
+        ${others.map(s => `<button class="btn primary" data-move-space="${s}">Move to ${label(s)}</button>`).join('')}
       </div>`);
-    ctx.sheetEl.querySelector('#v2-move-space-go').onclick = () => {
+    ctx.sheetEl.querySelectorAll('[data-move-space]').forEach(b => b.onclick = () => {
+      const target = b.dataset.moveSpace;
       ctx.closeSheet();
-      mutate(() => fn('move-space', { id: r.id, imported: r.imported, space: other }), 'Moved to ' + (other === 'outdoor' ? 'Outside' : 'Inside') + '.');
-    };
+      mutate(() => fn('move-space', { id: r.id, imported: r.imported, space: target }), 'Moved to ' + label(target) + '.');
+    });
   }
   function paySheet(r) {
     ctx.openSheet(`
       <h3 class="sheet-title">Record payment</h3>
-      <p><strong>${esc(r.business || r.name || 'Vendor')}</strong><br>${esc(nice(event.date))} · ${r.spaceNorm === 'outdoor' ? 'Outside' : 'Inside'}</p>
+      <p><strong>${esc(r.business || r.name || 'Vendor')}</strong><br>${esc(nice(event.date))} · ${r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'}</p>
       <form id="v2-att-pay-form">
         <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" value="${(r.amount / 100).toFixed(2)}" required></label>
         <label class="sheet-field">Payment method<select name="payment_method"><option>GoDaddy Payments</option><option>PayPal</option><option>Cash</option><option>Check</option><option>Other</option></select></label>
@@ -172,7 +176,7 @@ export function renderAttendees(ctx, root, params = {}) {
   function moreSheet(r) {
     ctx.openSheet(`
       <h3 class="sheet-title">${esc(r.business || r.name || 'Vendor')}</h3>
-      <p class="note">${esc(nice(event.date))} · ${r.spaceNorm === 'outdoor' ? 'Outside' : 'Inside'} · ${esc(r.category || '')}</p>
+      <p class="note">${esc(nice(event.date))} · ${r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'} · ${esc(r.category || '')}</p>
       <div class="sheet-menu">
         ${!r.setup_checkin_at && String(r.email || '').trim() ? `<button class="menu-item" data-more="reminder"><span><b>Send online check-in reminder</b><span>Emails the vendor to complete check-in</span></span><span class="chev">›</span></button>` : ''}
         <button class="menu-item" data-more="featured"><span><b>Create featured vendor post</b><span>Draft, copy and mark them featured</span></span><span class="chev">›</span></button>
@@ -295,7 +299,7 @@ export function renderAttendees(ctx, root, params = {}) {
         summary: rows.length + ' vendors · ' + rows.filter(r => r.payStatus === 'paid').length + ' paid · ' + rows.filter(r => r.attendance === 'checked_in').length + ' checked in',
         headers: ['Space', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection'],
         rows: rows.map(r => [
-          r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : 'Inside'),
+          r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'),
           r.business || '', r.name || '', r.category || '',
           r.phone || 'Not provided',
           String(r.email || '').replace(/,+\s*$/, '').trim() || 'Not provided',

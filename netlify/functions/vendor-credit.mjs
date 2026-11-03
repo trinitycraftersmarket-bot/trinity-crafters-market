@@ -2,6 +2,7 @@ import {db,identity,audit,queue,flushMail,isUserError} from '../../server/core.m
 import {eventInventory,categoryUsed,vendorIdentityKey} from '../../server/counts.mjs';
 import {ensureProfileSchema} from '../../server/profiles.mjs';
 import {isRegularVendor,regularAwarePrice} from '../../server/pricing.mjs';
+import {ensureHallwayColumns} from '../../server/hallway.mjs';
 import {syncCancellation} from '../../server/twins.mjs';
 import {scanWaitlist} from '../../server/waitlist.mjs';
 
@@ -37,6 +38,7 @@ async function categoryAndSpaceCounts(sql,eventId,categoryId,space){
 }
 
 export async function eligibleEvents(sql,credit,u){
+ await ensureHallwayColumns(sql);
  const [cat]=await sql`select id,name,vendor_limit,active from market.categories where id=${credit.category_id}`;
  if(!cat?.active)return [];
  const events=await sql`select e.*,l.name location,l.address,l.market_name,o.vendor_limit override_limit from market.events e join market.locations l on l.id=e.location_id left join market.event_category_limits o on o.event_id=e.id and o.category_id=${credit.category_id} where e.open and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') and e.id<>${credit.source_event_id} order by e.date,e.start_time`;
@@ -49,9 +51,9 @@ export async function eligibleEvents(sql,credit,u){
   if(dup.length||e.sold_out)continue;
   const limit=categoryCap(e.override_limit,cat.vendor_limit);if(limit>0&&await categoryUsed(sql,e.id,credit.category_id)>=limit)continue;
   const spaces=[];
-  for(const space of ['indoor','outdoor']){
-   if(space==='indoor'&&e.indoor_open===false)continue;if(space==='outdoor'&&e.outdoor_open===false)continue;
-   const counts=await categoryAndSpaceCounts(sql,e.id,credit.category_id,space),capacity=Number(e[space+'_capacity']||0),price=await regularAwarePrice(sql,{locationId:e.location_id,space,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,regular});
+  for(const space of ['indoor','outdoor','hallway']){
+   if(space==='indoor'&&e.indoor_open===false)continue;if(space==='outdoor'&&e.outdoor_open===false)continue;if(space==='hallway'&&e.hallway_open===false)continue;
+   const counts=await categoryAndSpaceCounts(sql,e.id,credit.category_id,space),capacity=Number(e[space+'_capacity']||0),price=await regularAwarePrice(sql,{locationId:e.location_id,space,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,hallwayPrice:e.hallway_price,regular});
    if(Number(counts.space_used)<capacity&&price>0&&price<=Number(credit.remaining_amount||0))spaces.push({space,price});
   }
   if(spaces.length)out.push({id:e.id,date:dateOnly(e.date),title:e.title,location:e.location,address:e.address,market_name:e.market_name,spaces});
@@ -100,19 +102,19 @@ export async function issueCredit(sql,{id,imported,amount:amountIn,note},u){
 export async function redeemCredit(sql,{credit_id,event_id,space},u){
  let result;
  await sql.begin(async tx=>{
-  await tx`select pg_advisory_xact_lock(708821)`;
+  await tx`select pg_advisory_xact_lock(708821)`;await ensureHallwayColumns(tx);
   const [credit]=await tx`select * from market.vendor_credits where id=${credit_id} and lower(email)=lower(${u.email}) for update`;if(!credit||credit.status!=='available'||Number(credit.remaining_amount)<=0)throw Error('This credit is no longer available.');if(String(credit.source_event_id)===String(event_id))throw Error('Choose a different market date for this credit.');
   const [cat]=await tx`select id,name,vendor_limit,active from market.categories where id=${credit.category_id}`;if(!cat?.active)throw Error('This category is not currently available.');
   const [e]=await tx`select e.*,l.name location,l.address,l.market_name,o.vendor_limit override_limit from market.events e join market.locations l on l.id=e.location_id left join market.event_category_limits o on o.event_id=e.id and o.category_id=${credit.category_id} where e.id=${event_id} and e.open and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York') for update of e`;if(!e||e.sold_out)throw Error('That market date is no longer available.');
   const dup=await tx`select 1 from (select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${e.id} and lower(trim(a.email))=lower(${u.email}) and (b.status in ('pending','approved','paid') or (b.status='held' and b.hold_until>now())) union all select i.id from market.imported_attendees i where i.event_id=${e.id} and lower(trim(i.email))=lower(${u.email}) and not coalesce(i.cancelled,false)) q limit 1`;if(dup.length)throw Error('You already have a booking or application for that market date.');
-  const counts=await categoryAndSpaceCounts(tx,e.id,credit.category_id,space),limit=categoryCap(e.override_limit,cat.vendor_limit);if(limit>0&&Number(counts.category_used)>=limit)throw Error('Your category just filled for that date. Choose another market date.');if(space==='indoor'&&e.indoor_open===false)throw Error('Indoor spaces are closed for that date.');if(space==='outdoor'&&e.outdoor_open===false)throw Error('Outdoor spaces are closed for that date.');if(Number(counts.space_used)>=Number(e[space+'_capacity']||0))throw Error('That space just sold out. Choose another option.');
-  const price=await regularAwarePrice(tx,{locationId:e.location_id,space,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,regular:await isRegularVendor(tx,{email:u.email})});if(price<=0)throw Error('That space does not have a valid price.');if(price>Number(credit.remaining_amount))throw Error('This credit does not fully cover that space. Choose a lower-priced space or contact the organizer.');
+  const counts=await categoryAndSpaceCounts(tx,e.id,credit.category_id,space),limit=categoryCap(e.override_limit,cat.vendor_limit);if(limit>0&&Number(counts.category_used)>=limit)throw Error('Your category just filled for that date. Choose another market date.');if(space==='indoor'&&e.indoor_open===false)throw Error('Indoor spaces are closed for that date.');if(space==='outdoor'&&e.outdoor_open===false)throw Error('Outdoor spaces are closed for that date.');if(space==='hallway'&&e.hallway_open===false)throw Error('Hallway spaces are closed for that date.');if(Number(counts.space_used)>=Number(e[space+'_capacity']||0))throw Error('That space just sold out. Choose another option.');
+  const price=await regularAwarePrice(tx,{locationId:e.location_id,space,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,hallwayPrice:e.hallway_price,regular:await isRegularVendor(tx,{email:u.email})});if(price<=0)throw Error('That space does not have a valid price.');if(price>Number(credit.remaining_amount))throw Error('This credit does not fully cover that space. Choose a lower-priced space or contact the organizer.');
   const v=await sourceRecord(tx,credit.source_id,credit.source_type==='imported');if(!v)throw Error('The original vendor record could not be found.');
   const [row]=await tx`insert into market.imported_attendees(event_id,name,business,email,phone,category,category_id,category_sold_out,space,source_file,attendance_state,payment_status,invoice_amount,selling,payment_method,payment_reference,paid_at,vendor_id) values(${e.id},${v.name||v.business||'Vendor'},${v.business||v.name||'Vendor'},${u.email},${v.phone||''},${cat.name},${cat.id},false,${space},'Vendor credit','not_marked','paid',${price},${v.description||''},'Credit',${'CREDIT-'+String(credit.id).slice(0,8)},now(),${credit.vendor_id||v.vendor_id||null}) returning id`;
   await tx`insert into market.imported_category_reservations(imported_attendee_id,event_id,category_id,space) values(${row.id},${e.id},${cat.id},${space}) on conflict(imported_attendee_id,category_id) do nothing`;
   await tx`insert into market.vendor_credit_redemptions(credit_id,imported_attendee_id,event_id,amount) values(${credit.id},${row.id},${e.id},${price})`;
   const remaining=Number(credit.remaining_amount)-price;await tx`update market.vendor_credits set remaining_amount=${remaining},status=${remaining===0?'used':'available'},last_redeemed_at=now(),updated_at=now() where id=${credit.id}`;
-  const body='Hi '+(v.name||'Vendor')+',\n\nYour vendor credit has been applied and your new market date is confirmed.\n\nMarket: '+(e.market_name||e.title||'Trinity Crafters Market')+'\nDate: '+fmtDate(e.date)+'\nLocation: '+e.location+'\n'+(e.address||'')+'\nSpace: '+(space==='indoor'?'Indoor':'Outdoor')+'\nAmount applied: '+money(price)+'\nPayment status: PAID\nCategory reserved: '+cat.name+'\nCredit remaining: '+money(remaining)+'\n\nYour booking is approved and paid. Your category is now reserved for this market date.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com';
+  const body='Hi '+(v.name||'Vendor')+',\n\nYour vendor credit has been applied and your new market date is confirmed.\n\nMarket: '+(e.market_name||e.title||'Trinity Crafters Market')+'\nDate: '+fmtDate(e.date)+'\nLocation: '+e.location+'\n'+(e.address||'')+'\nSpace: '+(space==='indoor'?'Indoor':space==='hallway'?'Hallway':'Outdoor')+'\nAmount applied: '+money(price)+'\nPayment status: PAID\nCategory reserved: '+cat.name+'\nCredit remaining: '+money(remaining)+'\n\nYour booking is approved and paid. Your category is now reserved for this market date.\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com';
   await queue(tx,u.email,'Credit applied — '+fmtDate(e.date),body);await audit(tx,u,'vendor credit redeemed',{credit_id:credit.id,imported_attendee_id:row.id,event_id:e.id,space:space,amount:price,remaining});result={ok:true,booking_id:row.id,remaining};
  });
  return result;
@@ -169,7 +171,7 @@ export async function redeemForApplication(sql,{booking_id,credit_id},u){
   await tx`update market.vendor_credits set remaining_amount=${remaining},status=${remaining===0?'used':'available'},last_redeemed_at=now(),updated_at=now() where id=${credit.id}`;
   if(due===0)await tx`update market.bookings set status='paid',paid_at=now(),payment_method='Credit',payment_reference=${reference},hold_until=null where id=${b.id}`;
   else await tx`update market.bookings set status='approved',hold_until=null where id=${b.id}`;
-  const body='Hi '+(b.name||'Vendor')+',\n\nYour vendor credit has been applied and your market date is confirmed.\n\nMarket: '+(b.market_name||b.title||'Trinity Crafters Market')+'\nDate: '+fmtDate(b.event_date)+'\nLocation: '+b.location+'\n'+(b.address||'')+'\nSpace: '+(b.space==='indoor'?'Indoor':'Outdoor')+'\nAmount applied: '+money(applied)+'\nPayment status: '+(due===0?'PAID':'PARTIALLY PAID')+'\nCategory reserved: '+b.category+'\nCredit remaining: '+money(remaining)+(due===0?'\n\nYour booking is approved and paid. Your category is now reserved for that market date.':'\nRemaining balance due: '+money(due)+'. The organizer will invoice you for the remaining balance.\n\nYour booking is approved. Your category is now reserved for that market date.')+'\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com';
+  const body='Hi '+(b.name||'Vendor')+',\n\nYour vendor credit has been applied and your market date is confirmed.\n\nMarket: '+(b.market_name||b.title||'Trinity Crafters Market')+'\nDate: '+fmtDate(b.event_date)+'\nLocation: '+b.location+'\n'+(b.address||'')+'\nSpace: '+(b.space==='indoor'?'Indoor':b.space==='hallway'?'Hallway':'Outdoor')+'\nAmount applied: '+money(applied)+'\nPayment status: '+(due===0?'PAID':'PARTIALLY PAID')+'\nCategory reserved: '+b.category+'\nCredit remaining: '+money(remaining)+(due===0?'\n\nYour booking is approved and paid. Your category is now reserved for that market date.':'\nRemaining balance due: '+money(due)+'. The organizer will invoice you for the remaining balance.\n\nYour booking is approved. Your category is now reserved for that market date.')+'\n\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com';
   await queue(tx,b.email,'Credit applied — '+fmtDate(b.event_date),body);
   await audit(tx,u,'vendor credit redeemed for application',{credit_id:credit.id,booking_id:b.id,event_id:b.event_id,amount:applied,remaining,amount_due:due,override:true});
   result={ok:true,booking_id:b.id,applied,remaining_credit:remaining,amount_due:due,status:due===0?'paid':'approved'};
@@ -234,7 +236,7 @@ export default async req=>{
    const result=[];for(const c of credits)result.push({...c,eligible_events:c.status==='available'&&Number(c.remaining_amount)>0?await eligibleEvents(sql,c,u):[]});return json({credits:result});
   }
   if(action==='redeem'){
-   if(!['indoor','outdoor'].includes(p.space))throw Error('Choose an available space.');
+   if(!['indoor','outdoor','hallway'].includes(p.space))throw Error('Choose an available space.');
    const result=await redeemCredit(sql,{credit_id:p.credit_id,event_id:p.event_id,space:p.space},u);
    await flushMail();return json(result);
   }
