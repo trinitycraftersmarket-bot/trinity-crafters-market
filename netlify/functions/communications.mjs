@@ -2,7 +2,7 @@ import {ready,db,identity,queue,flushMail,audit} from '../../server/core.mjs';
 import {parseFlyerAttachment,resolveFlyerRecipients,sendFlyer,flyerHistory} from '../../server/flyer.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const cleanEmail=x=>String(x||'').trim().toLowerCase();
-async function recipients(sql,mode,eventId){
+export async function recipients(sql,mode,eventId){
  let rows=[];
  if(mode==='event'){
   if(!eventId)throw Error('Choose a market date.');
@@ -21,6 +21,25 @@ async function recipients(sql,mode,eventId){
  const seen=new Set(),out=[];
  for(const r of rows){const email=cleanEmail(r.email);if(!email||seen.has(email))continue;seen.add(email);out.push({name:r.name||'Vendor',business:r.business||r.name||'Vendor',email});}
  return out.sort((a,b)=>a.business.localeCompare(b.business));
+}
+// The Vendor Communications send (exported as a testable seam, the
+// vendor-credit idiom). §57: `attachment` is a parseFlyerAttachment
+// result ({filename, content}) or null — §56's validation, the same
+// outbox attachment shape flyer sends queue, no second send path.
+// When present, every queued email carries the flyer and the audit
+// entry names the file; when null the send is exactly what it was
+// before §57. `flush` is injectable for tests; production flushMail.
+export async function sendVendorEmail(sql,{actor,list,mode,eventId,subject,body,attachment=null,flush=flushMail}){
+ subject=String(subject||'').trim();body=String(body||'').trim();
+ if(!subject||subject.length>300)throw Error('Enter an email subject.');if(!body||body.length>10000)throw Error('Enter the email message.');if(!list.length)throw Error('There are no vendor email addresses in this selection.');
+ const attachments=attachment?[{filename:attachment.filename,content:attachment.content}]:null;
+ await sql.begin(async tx=>{
+  for(const v of list)await queue(tx,v.email,subject,body.replaceAll('{{name}}',v.name).replaceAll('{{business}}',v.business),null,attachments);
+  await tx`insert into market.vendor_communications(sender_email,recipient_mode,event_id,subject,body,recipient_count,recipients) values(${actor.email},${mode},${eventId},${subject},${body},${list.length},${tx.json(list)})`;
+  await audit(tx,actor,'vendor mass email',{mode,event_id:eventId,count:list.length,subject,...(attachment?{attachment:attachment.filename}:{})});
+ });
+ await flush();
+ return {count:list.length};
 }
 export default async req=>{
  try{
@@ -45,14 +64,11 @@ export default async req=>{
   const p=await req.json(),mode=p.mode,eventId=p.event_id||null,list=await recipients(sql,mode,eventId);
   if(action==='preview')return json({count:list.length,recipients:list});
   if(action!=='send')return json({error:'Unknown action'},404);
-  const subject=String(p.subject||'').trim(),body=String(p.body||'').trim();
-  if(!subject||subject.length>300)throw Error('Enter an email subject.');if(!body||body.length>10000)throw Error('Enter the email message.');if(!list.length)throw Error('There are no vendor email addresses in this selection.');
-  await sql.begin(async tx=>{
-   for(const v of list)await queue(tx,v.email,subject,body.replaceAll('{{name}}',v.name).replaceAll('{{business}}',v.business));
-   await tx`insert into market.vendor_communications(sender_email,recipient_mode,event_id,subject,body,recipient_count,recipients) values(${u.email},${mode},${eventId},${subject},${body},${list.length},${tx.json(list)})`;
-   await audit(tx,u,'vendor mass email',{mode,event_id:eventId,count:list.length,subject});
-  });
-  await flushMail();
-  return json({ok:true,count:list.length});
+  // §57: an optional flyer rides the familiar send. §56's
+  // parseFlyerAttachment validates it BEFORE anything is queued, so a
+  // bad file refuses the whole send with the flyer section's wording.
+  const attachment=p.attachment?parseFlyerAttachment(p.attachment):null;
+  const sent=await sendVendorEmail(sql,{actor:u,list,mode,eventId,subject:p.subject,body:p.body,attachment});
+  return json({ok:true,...sent});
  }catch(e){console.error(e);return json({error:String(e.message||e)},400);}
 };
