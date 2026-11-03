@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {db,audit} from './core.mjs';
+import {ensureHallway} from './hallway.mjs';
 
 const b64url=v=>Buffer.from(v).toString('base64url');
 async function googleToken(){
@@ -23,7 +24,7 @@ export async function syncCalendar(){
  do{const q=new URLSearchParams({timeMin:start.toISOString(),timeMax:end.toISOString(),singleEvents:'true',showDeleted:'true',maxResults:'2500',timeZone:'America/New_York'});if(page)q.set('pageToken',page);
  const r=await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(process.env.GOOGLE_CALENDAR_ID||'trinitycraftersmarket@gmail.com')}/events?${q}`,{headers:{Authorization:`Bearer ${accessToken}`}});const v=await r.json();if(!r.ok){console.error('Calendar API failed',r.status,v?.error?.message||'');throw Error(r.status===403?'Calendar access denied. Make sure the Trinity Crafters Market calendar is shared with the service account with permission to make changes.':'Calendar sync failed. Existing dates were preserved.');}items.push(...v.items||[]);page=v.nextPageToken;}while(page);
  let added=0,flagged=0;
- await db().begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;
+ await db().begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await ensureHallway(tx);
  for(const item of items){const [existing]=await tx`select * from market.events where calendar_id=${item.id}`;
  const matches=/^trinity crafters market(?:\b|$)/i.test(item.summary||'');
  if(item.status==='cancelled'||!matches){if(existing){await tx`update market.events set sync_alert='Calendar event cancelled or renamed; review bookings and close this date if needed.' where id=${existing.id}`;flagged++;}continue;}
@@ -33,7 +34,7 @@ export async function syncCalendar(){
  const [location]=await tx`select * from market.locations where id='11111111-1111-4111-8111-111111111111'`;
  const [duplicate]=await tx`select * from market.events where location_id=${location.id} and date=${date}`;
  if(duplicate){if(!duplicate.calendar_id)await tx`update market.events set calendar_id=${item.id} where id=${duplicate.id}`;continue;}
- await tx`insert into market.events(location_id,date,title,calendar_id,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price) values(${location.id},${date},${item.summary},${item.id},${location.indoor_capacity},${location.outdoor_capacity},${location.indoor_price},${location.outdoor_price})`;added++;
+ await tx`insert into market.events(location_id,date,title,calendar_id,indoor_capacity,outdoor_capacity,indoor_price,outdoor_price,hallway_capacity,hallway_price) values(${location.id},${date},${item.summary},${item.id},${location.indoor_capacity},${location.outdoor_capacity},${location.indoor_price},${location.outdoor_price},${location.hallway_capacity||0},${location.hallway_price??4500})`;added++;
  }
  await tx`insert into market.settings(key,value) values('last_sync',${new Date().toISOString()}) on conflict(key) do update set value=excluded.value`;await audit(tx,'calendar','sync',{added,flagged});});return {added,flagged};
 }

@@ -67,7 +67,7 @@ test('§50: every covered pricing path routes through the helper', () => {
   assert.ok(MONTHLY.includes('const priceOf=x=>'), 'create-from-bookings prices per row');
   assert.ok(MONTHLY.includes('regularIndoorPriceFor(sql,x.location_id)'), 'create reads the location rate');
   assert.ok(MANUAL.includes('regularAwarePrice(sql,{locationId:event.location_id'), 'manual booking defaults price with the helper');
-  assert.ok(MANUAL.includes("p.payment_method!=='credit card'&&p.space==='Inside'"), 'the untouched-amount substitution never touches GoDaddy-verified card bookings');
+  assert.ok(MANUAL.includes("p.payment_method!=='credit card'&&((p.space==='Inside'"), 'the untouched-amount substitution never touches GoDaddy-verified card bookings');
   assert.ok(CREDIT.includes('const regular=await isRegularVendor(sql,{email:u.email});'), 'credit eligibility resolves the flag');
   assert.ok((CREDIT.match(/regularAwarePrice\(/g) || []).length >= 2, 'eligibility AND redeem both price with the helper');
 });
@@ -75,7 +75,7 @@ test('§50: every covered pricing path routes through the helper', () => {
 test('§50 (B4): move-space no longer hardcodes $45/$30', () => {
   assert.ok(!MOVESPACE.includes("space==='indoor'?45:30"), 'the hardcoded reprice is gone');
   assert.ok(MOVESPACE.includes('regularAwarePrice(tx,{locationId:e.location_id'), 'the reprice reads the event prices + regular rate');
-  assert.ok(MOVESPACE.includes('indoor_price,outdoor_price,location_id from market.events'), 'the event select carries its real prices');
+  assert.ok(MOVESPACE.includes('indoor_price,outdoor_price,hallway_price,location_id from market.events'), 'the event select carries its real prices');
 });
 
 test('§50: the manual-booking form prices a selected regular vendor at their rate', () => {
@@ -159,12 +159,13 @@ test.before(async () => {
   const pricing = strip(await readFile(join(root, 'server/pricing.mjs'), 'utf8'));
   const twins = strip(await readFile(join(root, 'server/twins.mjs'), 'utf8'));
   const waitlist = strip(await readFile(join(root, 'server/waitlist.mjs'), 'utf8'));
+  const hallway = strip(await readFile(join(root, 'server/hallway.mjs'), 'utf8'));
   const db = new PGlite();
   await db.exec('create role anon; create role authenticated; create schema storage; create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);');
   for (const f of ['database/setup.sql', 'database/codify-live-schema.sql', 'database/vendor-credits.sql', 'database/waitlist-offers.sql', 'database/vendor-profiles.sql'])
     await db.exec(await readFile(join(root, f), 'utf8'));
   apiSql = pgliteSql(db);
-  const mock = rules + counts + profiles + payments + permissions + pricing + twins + waitlist + `
+  const mock = rules + counts + profiles + payments + permissions + pricing + twins + waitlist + hallway + `
 const ready=()=>true;
 const identity=async()=>globalThis.__who;
 const identityWithBan=identity;
@@ -362,6 +363,7 @@ test.before(async () => {
   let source = await readFile(join(root, 'netlify/functions/manual-booking.mjs'), 'utf8');
   source = source.replace(/^import .*;\n/gm, '');
   const pricing = strip(await readFile(join(root, 'server/pricing.mjs'), 'utf8'));
+  const hallway = strip(await readFile(join(root, 'server/hallway.mjs'), 'utf8'));
   const mock = `
 const db=()=>globalThis.__mbSql;
 const identity=async()=>globalThis.__mbWho;
@@ -369,7 +371,7 @@ const queue=async(tx,to,subject,body,htmlBody=null)=>{const id=globalThis.__mbUu
 const flushMail=async()=>{await globalThis.__mbDb.query('update market.outbox set sent_at=now() where sent_at is null and error is null');};
 const audit=async()=>{};
 `;
-  ({ default: mbHandler } = await import('data:text/javascript;base64,' + Buffer.from(mock + pricing + source).toString('base64')));
+  ({ default: mbHandler } = await import('data:text/javascript;base64,' + Buffer.from(mock + pricing + hallway + source).toString('base64')));
   const db = new PGlite();
   await db.exec(`create schema market;
     create table market.locations(id uuid primary key default gen_random_uuid(), name text, market_name text, address text, indoor_capacity integer, outdoor_capacity integer, indoor_price integer, outdoor_price integer);
@@ -450,17 +452,19 @@ test.before(async () => {
   const counts = strip(await readFile(join(root, 'server/counts.mjs'), 'utf8')) + '\nconst bookingActive = active;\n';
   const twins = strip(await readFile(join(root, 'server/twins.mjs'), 'utf8'));
   const pricing = strip(await readFile(join(root, 'server/pricing.mjs'), 'utf8'));
+  const hallway = strip(await readFile(join(root, 'server/hallway.mjs'), 'utf8'));
   const mock = `
 const db=()=>globalThis.__msSql;
 const identity=async()=>globalThis.__msWho;
 const audit=async()=>{};
 const isUserError=e=>!!e&&e.name==='Error'&&typeof e.message==='string';
 `;
-  ({ default: msHandler } = await import('data:text/javascript;base64,' + Buffer.from(mock + rules + counts + twins + pricing + source).toString('base64')));
+  ({ default: msHandler } = await import('data:text/javascript;base64,' + Buffer.from(mock + rules + counts + twins + pricing + hallway + source).toString('base64')));
   const db = new PGlite();
   await db.exec(`create schema market;
+    create table market.settings(key text primary key, value text not null);
     create table market.locations(id uuid primary key default gen_random_uuid(), name text, market_name text);
-    create table market.events(id uuid primary key default gen_random_uuid(), location_id uuid, indoor_capacity integer, outdoor_capacity integer, indoor_price integer, outdoor_price integer);
+    create table market.events(id uuid primary key default gen_random_uuid(), location_id uuid, date date, indoor_capacity integer, outdoor_capacity integer, indoor_price integer, outdoor_price integer, end_time time);
     create table market.applications(id uuid primary key default gen_random_uuid(), email text, phone text, business text, name text, vendor_id uuid, category_id uuid, regular_vendor boolean not null default false);
     create table market.vendor_profiles(id uuid primary key default gen_random_uuid(), email text unique, regular_vendor boolean not null default false);
     create table market.bookings(id uuid primary key default gen_random_uuid(), application_id uuid, event_id uuid, space text, price integer, status text, hold_until timestamptz);

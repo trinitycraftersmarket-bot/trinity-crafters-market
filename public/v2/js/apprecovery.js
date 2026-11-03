@@ -16,7 +16,7 @@
 // be emailed a completion link ('application-attempt-email'), and
 // attempts hit by the Oct 22–23 agreements form bug carry an
 // "Our bug — fixed Oct 23" badge.
-import { api, esc, nice, marketName } from './api.js?v=20261103-41';
+import { api, esc, nice, marketName } from './api.js?v=20261103-42';
 
 // --- category fit (ported from public/category-conflicts.js) ---
 const cleanText = v => String(v || '').toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9&/' -]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -165,7 +165,7 @@ export function renderAppRecovery(ctx, root) {
           <div class="card recover-date">
             <strong>Market date ${n + 1}</strong>
             <label class="sheet-field">Date<select data-recover-event required>${eventOptions(d.id)}</select></label>
-            <label class="sheet-field">Space<select data-recover-space required><option value="">Choose space</option><option value="indoor" ${d.space === 'indoor' ? 'selected' : ''}>Indoor</option><option value="outdoor" ${d.space === 'outdoor' ? 'selected' : ''}>Outdoor</option></select></label>
+            <label class="sheet-field">Space<select data-recover-space required><option value="">Choose space</option><option value="indoor" ${d.space === 'indoor' ? 'selected' : ''}>Indoor</option><option value="outdoor" ${d.space === 'outdoor' ? 'selected' : ''}>Outdoor</option><option value="hallway" ${d.space === 'hallway' ? 'selected' : ''}>Hallway</option></select></label>
           </div>`).join('')}
         <label class="checkline"><input type="checkbox" name="confirm_override" required> I understand this is an administrator recovery override and I have reviewed the captured information.</label>
         <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Approve &amp; Recover Application</button></div>

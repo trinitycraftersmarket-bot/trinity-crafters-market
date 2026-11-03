@@ -85,12 +85,19 @@ export async function regularIndoorPriceFor(sql, locationId) {
 // in monthly-invoice create-from-bookings, which passes the BOOKING's
 // stored price as both, so only the regular override ever moves a
 // number there (existing bookings are never repriced by §50).
-export async function regularAwarePrice(sql, {locationId = null, space, indoorPrice, outdoorPrice, regular = false} = {}) {
-  const indoor = !String(space || '').toLowerCase().startsWith('out');
-  if (!indoor) return Number(outdoorPrice || 0);
+//
+// Hallway (§55) follows the §50 mechanism as-is: it is not "out*", so
+// a regular vendor's hallway booking prices at the location's regular
+// indoor rate ($40 at Hampton); a non-regular pays the event's own
+// hallway_price, passed in as hallwayPrice (falling back to the indoor
+// price for callers that predate §55 and don't pass one).
+export async function regularAwarePrice(sql, {locationId = null, space, indoorPrice, outdoorPrice, hallwayPrice = null, regular = false} = {}) {
+  const sp = String(space || '').toLowerCase();
+  if (sp.startsWith('out')) return Number(outdoorPrice || 0);
   if (regular) {
     const rp = await regularIndoorPriceFor(sql, locationId);
     if (rp != null) return rp;
   }
+  if (sp === 'hallway') return Number(hallwayPrice ?? indoorPrice ?? 0);
   return Number(indoorPrice || 0);
 }

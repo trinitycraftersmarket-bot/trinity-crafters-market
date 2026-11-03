@@ -4,8 +4,8 @@
 // "Offer anyway" override. Ported from the legacy waitlistPanel(): same
 // payload fields (applications + waitlistOffers + counts), same actions
 // (waitlist-offer, booking approve). Mutations re-fetch, then re-render.
-import { api, esc, nice, niceShort } from './api.js?v=20261103-41';
-import { normalizeSpace } from './data.js?v=20261103-41';
+import { api, esc, nice, niceShort } from './api.js?v=20261103-42';
+import { normalizeSpace } from './data.js?v=20261103-42';
 
 let view = { eventId: '', space: '' };
 
@@ -95,7 +95,7 @@ export function renderWaitlist(ctx, root) {
       <div class="vendor-top">
         <div><h3>${esc(b.business || b.name || 'Vendor')}</h3>
         <div class="contact">${esc(b.name || '')} · #${pos[b.id] || '—'} in line</div></div>
-        <span class="badge ${space === 'outdoor' ? 'outside' : 'inside'}">${space === 'outdoor' ? 'OUTSIDE' : 'INSIDE'}</span>
+        <span class="badge ${space === 'outdoor' ? 'outside' : space === 'hallway' ? 'hallway' : 'inside'}">${space === 'outdoor' ? 'OUTSIDE' : space === 'hallway' ? 'HALLWAY' : 'INSIDE'}</span>
       </div>
       <div class="chips">
         <span class="status neutral">${esc(niceShort(b.date))}${locName ? ' · ' + esc(locName) : ''}</span>

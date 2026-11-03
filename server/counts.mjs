@@ -28,6 +28,7 @@ export function normalizeSpace(value){
  const s=String(value||'').trim().toLowerCase();
  if(s==='indoor'||s==='inside')return 'indoor';
  if(s==='outdoor'||s==='outside')return 'outdoor';
+ if(s==='hallway')return 'hallway'; // §55
  return null;
 }
 
@@ -91,16 +92,17 @@ export async function activeVendors(sql,eventId){
  return dedupeVendors(await candidateRows(sql,eventId));
 }
 
-// {indoor, outdoor, categories: Map<category_id, used>, vendors: [activeVendors rows]}
+// {indoor, outdoor, hallway, categories: Map<category_id, used>, vendors: [activeVendors rows]}
 export function inventoryOf(vendors){
  const categories=new Map();
- let indoor=0,outdoor=0;
+ let indoor=0,outdoor=0,hallway=0;
  for(const v of vendors||[]){
   if(v.space==='indoor')indoor++;
   else if(v.space==='outdoor')outdoor++;
+  else if(v.space==='hallway')hallway++; // §55
   if(v.category_id)categories.set(String(v.category_id),(categories.get(String(v.category_id))||0)+1);
  }
- return {indoor,outdoor,categories,vendors:vendors||[]};
+ return {indoor,outdoor,hallway,categories,vendors:vendors||[]};
 }
 
 export async function eventInventory(sql,eventId){
@@ -165,7 +167,7 @@ export async function assertCapacity(sql,event,{space,categoryId,limit,exception
 }
 
 // Counts for every event at once (publicData). Returns
-// {spaces: Map<event_id, {indoor, outdoor}>, categories: Map<event_id, Map<category_id, used>>}
+// {spaces: Map<event_id, {indoor, outdoor, hallway}>, categories: Map<event_id, Map<category_id, used>>}
 export async function publicCounts(sql){
  const spaces=new Map(),categories=new Map();
  // Dedupe is per event: a vendor active at two different events counts at
@@ -178,7 +180,7 @@ export async function publicCounts(sql){
  }
  for(const [eventId,list] of byEvent){
   const inv=inventoryOf(dedupeVendors(list));
-  spaces.set(eventId,{indoor:inv.indoor,outdoor:inv.outdoor});
+  spaces.set(eventId,{indoor:inv.indoor,outdoor:inv.outdoor,hallway:inv.hallway});
   categories.set(eventId,inv.categories);
  }
  return {spaces,categories};

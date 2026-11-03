@@ -5,13 +5,15 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261103-41';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261103-41';
+import { api, fn, esc, nice, money } from './api.js?v=20261103-42';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261103-42';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
 const booked = r => ['approved', 'paid', 'held'].includes(String(r.status));
 const offerDeadline = r => r.waitlist_offered_at ? new Date(new Date(r.waitlist_offered_at).getTime() + 12 * 3600 * 1000) : null;
+// §55: display name for a booking space (hallway is a real third space).
+const spaceName = s => s === 'outdoor' ? 'Outdoor' : s === 'hallway' ? 'Hallway' : 'Indoor';
 
 export function statusText(r) {
   const s = String(r.status || '');
@@ -47,7 +49,7 @@ function bookingCard(ctx, r) {
   return `<article class="card vendor" id="v2-booking-${esc(r.id)}">
     <div class="vendor-top"><div>
       <h3>${esc(nice(r.date))}</h3>
-      <div class="contact">${esc(r.location || '')} · ${esc(r.space === 'outdoor' ? 'Outdoor' : 'Indoor')} · ${money(r.price)}</div>
+      <div class="contact">${esc(r.location || '')} · ${esc(spaceName(r.space))} · ${money(r.price)}</div>
     </div><span class="status ${statusClass(r)}">${esc(String(r.status || '').toUpperCase())}</span></div>
     <p class="note"><strong>Status:</strong> ${esc(statusText(r))}</p>
     ${r.setup_checkin_at ? `<p class="note"><strong>Online check-in complete.</strong> Arrival time: ${esc(r.setup_arrival_time || '')}.</p>`
@@ -150,7 +152,7 @@ async function openMoveSheet(ctx, r, rerender) {
   const eligible = data.eligible || [], excluded = data.excluded || [];
   boxEl.innerHTML = `
     <p class="note">You are booked for <strong>${esc(nice(r.date))}</strong> (${esc(data.space || r.space || '')}). Pick the new date — the organizer approves every change, and requests close 48 hours before the market.</p>
-    ${eligible.map(ev => `<div class="vendor-actions"><span class="note"><strong>${esc(nice(ev.date))}</strong> — ${esc(ev.location || '')} · ${esc(data.space === 'outdoor' ? 'Outdoor' : 'Indoor')} ${money(data.space === 'outdoor' ? ev.outdoor_price : ev.indoor_price)}</span><button type="button" class="btn small primary" data-move-to="${esc(ev.id)}">Request this date</button></div>`).join('') || '<p class="note">No other dates are open for a move right now.</p>'}
+    ${eligible.map(ev => `<div class="vendor-actions"><span class="note"><strong>${esc(nice(ev.date))}</strong> — ${esc(ev.location || '')} · ${esc(spaceName(data.space))} ${money(ev[(data.space || 'indoor') + '_price'])}</span><button type="button" class="btn small primary" data-move-to="${esc(ev.id)}">Request this date</button></div>`).join('') || '<p class="note">No other dates are open for a move right now.</p>'}
     ${excluded.map(x => `<p class="note">${esc(nice(x.event?.date))}: ${esc((x.problems || []).join(' '))}</p>`).join('')}
     <label class="sheet-field">Anything the organizer should know? (optional)<textarea id="v2-move-reason" rows="2" maxlength="1000"></textarea></label>`;
   boxEl.querySelectorAll('[data-move-to]').forEach(b => b.onclick = async () => {
@@ -223,7 +225,7 @@ export function renderVendorHome(ctx, root) {
     ${next ? `<section class="card next-card">
       <p class="note">Your next market</p>
       <h3>${esc(nice(next.date))}</h3>
-      <p class="note">${esc(next.location || '')} · ${esc(next.space === 'outdoor' ? 'Outdoor' : 'Indoor')} · Setup from 8:30 AM — be ready by 9:45 AM.</p>
+      <p class="note">${esc(next.location || '')} · ${esc(spaceName(next.space))} · Setup from 8:30 AM — be ready by 9:45 AM.</p>
       <p><span class="status ${statusClass(next)}">${esc(statusText(next))}</span></p>
       ${next.setup_arrival_time ? `<p class="note">Setup arrival: <strong>${esc(next.setup_arrival_time)}</strong></p>` : '<p class="note">You have not picked a setup arrival time yet — choose one in My Bookings.</p>'}
       <div class="vendor-actions">
@@ -303,10 +305,10 @@ export function renderVendorApply(ctx, root) {
     const limit = limitTotal(event, catId);
     return limit > 0 ? (limit - usedFor(event.id, catId)) > 0 : true;
   };
-  const spacesOf = e => ['indoor', 'outdoor'].filter(s => Number(e[s + '_capacity'] || 0) > 0);
+  const spacesOf = e => ['indoor', 'outdoor', 'hallway'].filter(s => Number(e[s + '_capacity'] || 0) > 0);
   const slotsLeft = (e, s) => Number(e[s + '_capacity'] || 0) - Number(e[s + '_used'] || 0);
   const venueNote = e => /hampton/i.test(e.location || '')
-    ? 'This is our indoor market. Only indoor spaces are available. Rain or shine.'
+    ? 'This is our indoor market. Indoor and hallway spaces are available. Rain or shine.'
     : /lutz|gateway/i.test(e.location || '') ? 'This is our outdoor market. Only outdoor spaces are available.' : '';
   const locations = [...new Set(events.map(e => e.location).filter(Boolean))];
 
@@ -421,7 +423,7 @@ export function renderVendorApply(ctx, root) {
     const loc = $('#v2-apply-location').value;
     $('#v2-apply-dates').innerHTML = events.filter(e => !loc || e.location === loc).map(e => {
       const isChosen = chosen.has(String(e.id));
-      const avail = spacesOf(e).map(s => `${s === 'indoor' ? 'Indoor' : 'Outdoor'} ${slotsLeft(e, s) > 0 ? slotsLeft(e, s) + ' left' : 'full'}`).join(' · ');
+      const avail = spacesOf(e).map(s => `${spaceName(s)} ${slotsLeft(e, s) > 0 ? slotsLeft(e, s) + ' left' : 'full'}`).join(' · ');
       const closed = !e.open || e.sold_out;
       return `<div class="apply-date">
         <div><strong>${esc(nice(e.date))}</strong><br><span class="note">${esc(e.location || '')}${e.market_name ? ' — ' + esc(e.market_name) : ''}</span>
@@ -446,7 +448,7 @@ export function renderVendorApply(ctx, root) {
     $('#v2-apply-chosen').innerHTML = chosen.size ? `<h4 class="section-title">Chosen dates</h4>` + [...chosen].map(([id, space]) => {
       const e = byId.get(id);
       return `<div class="apply-date"><div><strong>${esc(nice(e.date))}</strong> — ${esc(e.location || '')}</div>
-        <label class="sheet-field">Space<select data-date-space="${esc(id)}">${spacesOf(e).map(s => `<option value="${s}" ${s === space ? 'selected' : ''} ${slotsLeft(e, s) <= 0 && s !== space ? 'disabled' : ''}>${s === 'indoor' ? 'Indoor' : 'Outdoor'} — ${money(e[s + '_price'])}${slotsLeft(e, s) <= 0 ? ' (full)' : ''}</option>`).join('')}</select></label></div>`;
+        <label class="sheet-field">Space<select data-date-space="${esc(id)}">${spacesOf(e).map(s => `<option value="${s}" ${s === space ? 'selected' : ''} ${slotsLeft(e, s) <= 0 && s !== space ? 'disabled' : ''}>${spaceName(s)} — ${money(e[s + '_price'])}${slotsLeft(e, s) <= 0 ? ' (full)' : ''}</option>`).join('')}</select></label></div>`;
     }).join('') : '<p class="note">No dates chosen yet — add at least one date above.</p>';
     root.querySelectorAll('[data-date-space]').forEach(sel => sel.onchange = () => { chosen.set(sel.dataset.dateSpace, sel.value); queueDraft(); });
   }

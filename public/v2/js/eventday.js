@@ -5,9 +5,9 @@
 // that fresh data. This screen never edits a local copy of a row, so what
 // it shows is always what the server has — and it survives a reload,
 // because a reload does the same fetch.
-import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261103-41';
-import { attendeeRows, eventStats } from './data.js?v=20261103-41';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261103-41';
+import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261103-42';
+import { attendeeRows, eventStats } from './data.js?v=20261103-42';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261103-42';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_CLASS = { not_inspected: 'warn', approved: 'ok', needs_correction: 'bad', refused: 'bad' };
@@ -42,7 +42,7 @@ function cardHtml(r) {
     <div class="vendor-top">
       <div><h3>${esc(r.business || r.name || 'Vendor')}</h3>
       <div class="contact">${esc(r.name || '')}${r.category ? ' · ' + esc(r.category) : ''}</div></div>
-      <span class="badge ${r.spaceNorm === 'outdoor' ? 'outside' : 'inside'}">${r.spaceNorm === 'outdoor' ? 'OUTSIDE' : 'INSIDE'}</span>
+      <span class="badge ${r.spaceNorm === 'outdoor' ? 'outside' : r.spaceNorm === 'hallway' ? 'hallway' : 'inside'}">${r.spaceNorm === 'outdoor' ? 'OUTSIDE' : r.spaceNorm === 'hallway' ? 'HALLWAY' : 'INSIDE'}</span>
     </div>
     <div class="chips">
       <span class="status ${INSP_CLASS[insp]}">${INSP_LABEL[insp]}</span>
@@ -151,7 +151,7 @@ export function renderEventDay(ctx, root, params = {}) {
     const insp = row.inspection_status;
     ctx.openSheet(`
       <h3 class="sheet-title">${esc(row.business || row.name || 'Vendor')}</h3>
-      <p class="note">${esc(row.name || '')}${row.category ? ' · ' + esc(row.category) : ''} · ${row.spaceNorm === 'outdoor' ? 'Outside' : 'Inside'}</p>
+      <p class="note">${esc(row.name || '')}${row.category ? ' · ' + esc(row.category) : ''} · ${row.spaceNorm === 'outdoor' ? 'Outside' : row.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'}</p>
       <div class="sheet-menu">
         ${insp !== 'approved' ? `<button class="menu-item" data-more-act="approve"><span><b>Approve inspection</b><span>Marks the booth compliant and opens check-in</span></span><span class="chev">›</span></button>` : ''}
         ${insp !== 'needs_correction' ? `<button class="menu-item" data-more-act="needs_correction"><span><b>Needs correction</b><span>Requires a note for the vendor</span></span><span class="chev">›</span></button>` : ''}
