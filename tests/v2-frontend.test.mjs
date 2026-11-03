@@ -119,6 +119,7 @@ test('stage-2 screens use the same endpoints as the legacy UI', () => {
   const wait = read('waitlist.js');
   assert.ok(wait.includes("'waitlist-offer'"), 'waitlist.js must use the waitlist-offer action');
   assert.ok(wait.includes('waitlistOffers'), 'waitlist.js must read live offer state from the payload');
+  assert.ok(wait.includes('Category full —'), 'waitlist.js must flag category-full vendors with the §54 "Category full — <category>" chip');
   const moves = read('moves.js');
   assert.ok(moves.includes("'move-requests'") && moves.includes('override_cutoff'), 'moves.js must use the move-requests function with the 48h override');
   const dirs = read('vendors.js');

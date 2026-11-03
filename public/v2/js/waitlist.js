@@ -4,8 +4,8 @@
 // "Offer anyway" override. Ported from the legacy waitlistPanel(): same
 // payload fields (applications + waitlistOffers + counts), same actions
 // (waitlist-offer, booking approve). Mutations re-fetch, then re-render.
-import { api, esc, nice, niceShort } from './api.js?v=20261025-40';
-import { normalizeSpace } from './data.js?v=20261025-40';
+import { api, esc, nice, niceShort } from './api.js?v=20261103-41';
+import { normalizeSpace } from './data.js?v=20261103-41';
 
 let view = { eventId: '', space: '' };
 
@@ -99,7 +99,9 @@ export function renderWaitlist(ctx, root) {
       </div>
       <div class="chips">
         <span class="status neutral">${esc(niceShort(b.date))}${locName ? ' · ' + esc(locName) : ''}</span>
-        <span class="status ${ci.full ? 'bad' : 'neutral'}">${esc(b.category || 'Category')} ${ci.used}/${ci.lim ?? '∞'}${ci.full ? ' — full' : ''}</span>
+        ${ci.full
+          ? `<span class="status bad">Category full — ${esc(b.category || 'Category')} (${ci.used}/${ci.lim})</span>`
+          : `<span class="status neutral">${esc(b.category || 'Category')} ${ci.used}/${ci.lim ?? '∞'}</span>`}
         <span class="status ${offer.cls}">${esc(offer.label)}</span>
       </div>
       <p class="note"><strong>Booking ID:</strong> ${esc(b.id || '—')}<br><strong>Contact:</strong> ${esc(b.email || '')}${b.phone ? ' · ' + esc(b.phone) : ''}</p>
