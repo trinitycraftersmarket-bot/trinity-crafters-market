@@ -118,6 +118,31 @@ export async function categoryUsed(sql,eventId,categoryId){
  return inv.categories.get(String(categoryId))||0;
 }
 
+// THE category-cap rule (§54). A vendor's category is full when their
+// effective limit is a real cap and the used count has reached it. A limit
+// of 0 (or no limit row at all) means NO cap — never full (owner ruling,
+// Holly case) — and a vendor holding a category exception is never blocked
+// by the cap. Every category gate must express fullness through this one
+// predicate — the waitlist offer scan (server/waitlist.mjs), the waitlist
+// accept re-check (assertCapacity below), the application flow — so the
+// rule that decides "gets offered" can never drift from the rule that
+// decides "can accept" (the Rosalind case: offered a spot her full
+// category would have refused at accept time).
+export function categoryFull(used, limit, exception=false){
+ if(exception)return false;
+ if(limit==null||Number(limit)<=0)return false;
+ return Number(used||0)>=Number(limit);
+}
+
+// Effective per-category limits for one event: the per-event override
+// (market.event_category_limits) when one exists, else the category
+// default. Map<category_id, limit|null>. The single resolver — the
+// waitlist engine reads limits from here, never from its own SQL copy.
+export async function effectiveCategoryLimits(sql,eventId){
+ const rows=await sql`select c.id, coalesce(l.vendor_limit, c.vendor_limit) as lim from market.categories c left join market.event_category_limits l on l.event_id = ${eventId} and l.category_id = c.id`;
+ return new Map(rows.map(r=>[String(r.id),r.lim]));
+}
+
 // Capacity guard with the same messages as server/rules.mjs checkCapacity,
 // but computed from the unified (deduped, bookings + imported) counts.
 // `selfKey` is the vendorIdentityKey of the vendor being added: if that
@@ -128,14 +153,13 @@ export async function assertCapacity(sql,event,{space,categoryId,limit,exception
  const s=normalizeSpace(space)||space;
  const selfInSpace=!!selfKey&&inv.vendors.some(v=>v.key===selfKey&&v.space===s);
  if(inv[s]>=Number(event[s+'_capacity']||0)&&!selfInSpace)throw Error('This space is sold out.');
- // A limit of 0 means NO per-category cap (owner ruling, Holly case):
- // enforcement applies only when the cap is > 0. Callers may pass the raw
- // effective limit (event override ?? category default); null also means
- // no cap. Without this guard, used >= 0 made every limit-0 category read
- // as permanently full.
- if(!exception&&limit!=null&&Number(limit)>0){
+ // Fullness itself is the shared §54 predicate (categoryFull above):
+ // callers may pass the raw effective limit (event override ?? category
+ // default). The selfKey exemption stays local to this guard: a vendor
+ // already counted in the category does not consume a second slot.
+ if(categoryFull(inv.categories.get(String(categoryId))||0,limit,exception)){
   const selfInCategory=!!selfKey&&inv.vendors.some(v=>v.key===selfKey&&String(v.category_id||'')===String(categoryId||''));
-  if((inv.categories.get(String(categoryId))||0)>=Number(limit)&&!selfInCategory)throw Error('Category is full. Explicitly approve a category exception to continue.');
+  if(!selfInCategory)throw Error('Category is full. Explicitly approve a category exception to continue.');
  }
  return inv;
 }

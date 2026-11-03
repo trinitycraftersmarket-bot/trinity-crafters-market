@@ -9,8 +9,17 @@
 // the current opening began (tracked by a market.settings watermark per
 // event+space) is the exclusion list. All capacity/category math goes through
 // server/counts.mjs — this module writes no count SQL of its own.
+//
+// §54: category eligibility is ONE shared rule. The scan's skip below and
+// the accept path's re-check (acceptOffer -> counts.assertCapacity) both
+// express fullness through counts.categoryFull with limits resolved by
+// counts.effectiveCategoryLimits, so "gets offered" and "can accept" can
+// never disagree about whether a category is full. The scan's used count
+// additionally reserves headroom for live offers (a spot already offered
+// in a category is spoken for); at accept time the vendor's own offer is
+// the reservation being consumed, so the re-check reads actual occupancy.
 import {audit, queue} from './core.mjs';
-import {assertCapacity, eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
+import {assertCapacity, categoryFull, effectiveCategoryLimits, eventInventory, normalizeSpace, vendorIdentityKey} from './counts.mjs';
 import {decisionEmail} from './notifications.mjs';
 
 export const OFFER_WINDOW_HOURS = 12;
@@ -38,10 +47,8 @@ async function eventRow(tx, eventId) {
   return e || null;
 }
 
-async function effectiveLimits(tx, eventId) {
-  const rows = await tx`select c.id, coalesce(l.vendor_limit, c.vendor_limit) as lim from market.categories c left join market.event_category_limits l on l.event_id = ${eventId} and l.category_id = c.id`;
-  return new Map(rows.map(r => [r.id, r.lim]));
-}
+// Limits come from the single resolver in counts.mjs (§54).
+const effectiveLimits = effectiveCategoryLimits;
 
 function offerEmail(booking, event, expires) {
   const day = fmtDate(event.date);
@@ -103,21 +110,21 @@ export async function scanWaitlist(tx, eventId, {space = null, actor = 'system'}
     // Live offers reserve category headroom so two spots in a nearly-full
     // category are not both offered past the limit.
     const catUsed = new Map(inv.categories);
-    for (const r of live) if (r.category_id) catUsed.set(r.category_id, (catUsed.get(r.category_id) || 0) + 1);
+    for (const r of live) if (r.category_id) catUsed.set(String(r.category_id), (catUsed.get(String(r.category_id)) || 0) + 1);
     const queueRows = await tx`select b.id, b.space, b.price, b.category_exception, a.name, a.email, a.business, a.category_id, a.vendor_id, a.phone from market.bookings b join market.applications a on a.id = b.application_id where b.event_id = ${eventId} and b.space = ${sp} and b.status = 'waitlist' and not exists(select 1 from market.bans bn where bn.active and (bn.user_id = a.user_id or lower(bn.email) = lower(a.email))) order by b.waitlisted_at asc nulls last, b.id asc`;
     for (const b of queueRows) {
       if (offeredCount >= free) break;
       if (liveIds.has(b.id) || excluded.has(b.id)) continue;
       const key = vendorIdentityKey({vendor_id: b.vendor_id, email: b.email, phone: b.phone, business: b.business, name: b.name});
       if (inv.vendors.some(v => v.key === key)) continue; // already attending this date via another record
-      if (b.category_id && !b.category_exception) {
-        const lim = limits.get(b.category_id);
-        if (lim != null && lim > 0 && (catUsed.get(b.category_id) || 0) >= lim) continue; // category full — SKIPPED, keeps position (limit 0 = no cap, never full)
-      }
+      // §54 shared rule (counts.categoryFull): a vendor whose category is
+      // full for this date is SKIPPED — no offer row, no email, no window
+      // burned — and keeps their exact queue position for the next opening.
+      if (b.category_id && categoryFull(catUsed.get(String(b.category_id)) || 0, limits.get(String(b.category_id)), b.category_exception)) continue;
       const offer = await makeOffer(tx, {...b, space: sp}, event, {actor});
       created.push(offer);
       offeredCount++;
-      if (b.category_id) catUsed.set(b.category_id, (catUsed.get(b.category_id) || 0) + 1);
+      if (b.category_id) catUsed.set(String(b.category_id), (catUsed.get(String(b.category_id)) || 0) + 1);
     }
   }
   return created;
@@ -172,8 +179,10 @@ async function liveOffer(tx, bookingId) {
 }
 
 // Vendor accepts an offer: waitlist -> approved, re-running the capacity /
-// category checks (counts.mjs). Returns {booking, event} so the caller can
-// run the normal invoice flow after commit.
+// category checks (counts.mjs). The category re-check is the SAME §54 rule
+// the offer scan used (counts.categoryFull via assertCapacity, limits from
+// counts.effectiveCategoryLimits). Returns {booking, event} so the caller
+// can run the normal invoice flow after commit.
 export async function acceptOffer(tx, bookingId, user) {
   await ensureWaitlistSchema(tx);
   const b = await loadWaitlistBooking(tx, bookingId);
