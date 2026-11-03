@@ -10,8 +10,8 @@
 // transaction column, so its reconciliation total covers all money.
 // The per-date vendor/event report itself lives in Attendees — one
 // place per job, as everywhere else in v2.
-import { esc, nice, marketName } from './api.js?v=20261103-44';
-import { printTable } from './print.js?v=20261103-44';
+import { esc, nice, marketName } from './api.js?v=20261103-45';
+import { printTable } from './print.js?v=20261103-45';
 
 // The classic reports format money with cents; keep that exact format.
 const usd = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(n) || 0) / 100);
@@ -35,9 +35,11 @@ export function arRows(admin) {
     const e = (admin.allEvents || []).find(ev => ev.id === x.event_id);
     rows.push({ vendor: x.business || x.name, email: x.email || '', when: e ? nice(e.date) : '', amount: Number(x.invoice_amount), due: x.invoice_due_date ? nice(x.invoice_due_date) : 'Due now' });
   });
-  (admin.monthlyInvoices || []).filter(x => x.status !== 'paid').forEach(x => {
+  (admin.monthlyInvoices || []).filter(x => x.status !== 'paid' && String(x.status || '').toLowerCase() !== 'cancelled').forEach(x => {
     // §49: AR shows the balance still owed, not the invoice total —
     // payments recorded in the ledger (paid_total) come off the top.
+    // §58: cancelled monthly invoices are due $0 (see money.js) and are
+    // excluded here too, so Reports AR agrees with the Invoice Center.
     const due = Math.max(0, Number(x.amount || 0) - Number(x.discount || 0) + Number(x.late_fee || 0) - Number(x.paid_total || 0));
     if (due) rows.push({ vendor: x.business || x.vendor_name || '', email: x.vendor_email || '', when: x.billing_period || '', amount: due, due: x.due_date ? nice(x.due_date) : 'Due now' });
   });

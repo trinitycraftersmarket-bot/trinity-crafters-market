@@ -4,7 +4,7 @@
 // with three totals). Pure functions over the admin payload, ported from the
 // legacy invoiceCenter() math: same rows, same amounts, same due rules.
 // No fetching, no DOM, no mutation of the payload.
-import { dateOf } from './api.js?v=20261103-44';
+import { dateOf } from './api.js?v=20261103-45';
 
 // One invoice row per owed/payable record, across the three legacy sources:
 // regular bookings (approved/held/paid), imported-attendee invoices, and
@@ -19,6 +19,12 @@ export function invoiceRows(admin) {
     .filter(x => x.invoice_amount != null && String(x.payment_method || '').toLowerCase() !== 'monthly billing')
     .map(x => ({ ...x, kind: 'imported', amount: Number(x.invoice_amount || 0), paystatus: x.payment_status || 'unpaid', due: x.invoice_due_date || null, event: findEvent(x.event_id) }));
   const monthly = (admin.monthlyInvoices || [])
+    // §58: a cancelled monthly invoice is due $0 — billing.js dueOf()
+    // and the monthly-invoices totalOf() both treat it so. It is not a
+    // receivable: without this filter it rendered here as a live
+    // unpaid/overdue card whose actionsHtml branch (status 'cancelled')
+    // offers no buttons at all (the Simply Shanka card, Nov 3, 2026).
+    .filter(x => String(x.status || '').toLowerCase() !== 'cancelled')
     .map(x => {
       // §49: a monthly row's amount is the BALANCE still owed — the
       // invoice total less the payments recorded against it in the
