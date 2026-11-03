@@ -485,8 +485,13 @@ test('§29: fnq remains only on the query-action functions (communications, live
   assert.ok(chat.includes("url.searchParams.get('action')"), 'live-chat must keep the query-action contract');
   for (const f of readdirSync(v2js).filter(x => x.endsWith('.js') && x !== 'api.js')) {
     const src = read(v2js, f);
-    if (src.includes('fnq(')) assert.ok(['chat.js', 'comms.js'].includes(f), `fnq( found in ${f} — only chat.js/comms.js may use the query-action transport`);
+    if (src.includes('fnq(')) assert.ok(['chat.js', 'comms.js', 'flyer.js'].includes(f), `fnq( found in ${f} — only chat.js/comms.js/flyer.js may use the query-action transport`);
   }
+  // §56: flyer.js rides fnq ONLY to the communications function (the
+  // flyer actions are communications actions) — never to a body-action
+  // function, which is what this pin exists to prevent.
+  const flyer = read(v2js, 'flyer.js');
+  assert.ok(!/fnq\('(?!communications)/.test(flyer), 'flyer.js must call fnq only for the communications function');
   // Recovery's attempt photo is an api action (GET with a path param),
   // not a sibling function — it rides api() with query params.
   const rec = read(v2js, 'apprecovery.js');

@@ -1,4 +1,5 @@
 import {ready,db,identity,queue,flushMail,audit} from '../../server/core.mjs';
+import {parseFlyerAttachment,resolveFlyerRecipients,sendFlyer,flyerHistory} from '../../server/flyer.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const cleanEmail=x=>String(x||'').trim().toLowerCase();
 async function recipients(sql,mode,eventId){
@@ -28,7 +29,19 @@ export default async req=>{
   const sql=db(),url=new URL(req.url),action=url.searchParams.get('action')||'preview';
   if(action==='events')return json(await sql`select e.id,e.date,e.title,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id order by e.date desc`);
   if(action==='history')return json(await sql`select c.*,e.date event_date,l.name location from market.vendor_communications c left join market.events e on e.id=c.event_id left join market.locations l on l.id=e.location_id order by c.created_at desc limit 50`);
+  // §56 Email a Flyer: same organizer gate, its own actions. The flyer
+  // audience (server/flyer.mjs) adds the Regulars Only mode and the
+  // silent-ban exclusion the plain recipients() above predates; the
+  // send verifies every queued row and reports delivery per vendor.
+  if(action==='flyer-history')return json(await flyerHistory(sql));
   if(req.method!=='POST')return json({error:'Method not allowed'},405);
+  if(action==='flyer-preview'||action==='flyer-send'){
+   const p=await req.json();
+   if(action==='flyer-preview'){const list=await resolveFlyerRecipients(sql,p.mode,p.event_id||null);return json({count:list.length,recipients:list});}
+   const attachment=parseFlyerAttachment(p.attachment);
+   const sent=await sendFlyer(sql,{actor:u,mode:p.mode,eventId:p.event_id||null,subject:p.subject,body:p.body,attachment});
+   return json({ok:true,...sent});
+  }
   const p=await req.json(),mode=p.mode,eventId=p.event_id||null,list=await recipients(sql,mode,eventId);
   if(action==='preview')return json({count:list.length,recipients:list});
   if(action!=='send')return json({error:'Unknown action'},404);
