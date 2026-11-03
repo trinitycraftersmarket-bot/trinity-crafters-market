@@ -6,7 +6,9 @@
 // vendors are excluded from a Market Date email server-side. Past sends
 // double as templates: "Use again" loads a previous subject + body into
 // the composer. Sending re-fetches the history, per the state rule.
-import { fnq, esc, nice } from './api.js?v=20261103-43';
+import { fnq, esc, nice } from './api.js?v=20261103-44';
+
+const FLYER_MAX_BYTES = 10 * 1024 * 1024; // §57 — mirrors server/flyer.mjs
 
 export function renderComms(ctx, root) {
   root.innerHTML = `
@@ -21,6 +23,7 @@ export function renderComms(ctx, root) {
   const histEl = root.querySelector('#v2-comms-history');
   let events = [];
   let current = [];
+  let flyer = null; // §57: {filename, data_url} — this send's optional upload only
 
   function historyHtml(history) {
     if (!history.length) return '<div class="card empty-card">No mass emails have been sent yet.</div>';
@@ -72,6 +75,10 @@ export function renderComms(ctx, root) {
         <div class="note" id="comm-preview">Choose recipients to preview the list.</div>
         <label class="sheet-field">Subject<input id="comm-subject" maxlength="300" placeholder="Important update for our vendors"></label>
         <label class="sheet-field">Message<textarea id="comm-body" rows="10" maxlength="10000" placeholder="Type your vendor message here. You can use {{name}} and {{business}} to personalize it."></textarea></label>
+        <label class="sheet-field">Attach a flyer (optional)
+          <input type="file" id="comm-flyer" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg">
+        </label>
+        <p class="note" id="comm-flyer-note">No flyer attached. Optional — PDF, PNG or JPG, up to 10 MB; it goes out with this send only and is not stored.</p>
         <div class="vendor-actions">
           <button type="button" class="btn small" id="comm-refresh">Preview recipients</button>
           <button type="submit" class="btn primary small" id="comm-send">Send email</button>
@@ -82,6 +89,23 @@ export function renderComms(ctx, root) {
     const eventSel = box.querySelector('#comm-event');
     const wrap = box.querySelector('#comm-event-wrap');
     const previewBox = box.querySelector('#comm-preview');
+    const fileInput = box.querySelector('#comm-flyer');
+    const fileNote = box.querySelector('#comm-flyer-note');
+    const noFlyerNote = 'No flyer attached. Optional — PDF, PNG or JPG, up to 10 MB; it goes out with this send only and is not stored.';
+    fileInput.onchange = () => {
+      flyer = null;
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) { fileNote.textContent = noFlyerNote; return; }
+      if (!/\.(pdf|png|jpe?g)$/i.test(f.name)) { fileNote.innerHTML = '<span class="flag-note">Attach the flyer as a PDF, PNG, or JPG file.</span>'; fileInput.value = ''; return; }
+      if (f.size > FLYER_MAX_BYTES) { fileNote.innerHTML = '<span class="flag-note">The flyer is too large — attach a file up to 10 MB.</span>'; fileInput.value = ''; return; }
+      const reader = new FileReader();
+      reader.onerror = () => { fileNote.innerHTML = '<span class="flag-note">That flyer file could not be read. Try attaching it again.</span>'; };
+      reader.onload = () => {
+        flyer = { filename: f.name, data_url: String(reader.result || '') };
+        fileNote.textContent = `Attached: ${f.name} (${(f.size / 1024).toFixed(0)} KB) — this file goes out with this send only.`;
+      };
+      reader.readAsDataURL(f);
+    };
     const preview = async () => {
       wrap.hidden = mode.value === 'all';
       try {
@@ -106,10 +130,12 @@ export function renderComms(ctx, root) {
         if (!subject || !body) throw Error('Enter both a subject and message.');
         if (!confirm(`Send this email to ${current.length} unique vendor${current.length === 1 ? '' : 's'}?`)) return;
         sendBtn.disabled = true;
-        const r = await fnq('communications', 'send', { mode: mode.value, event_id: mode.value === 'event' ? eventSel.value : null, subject, body });
+        const r = await fnq('communications', 'send', { mode: mode.value, event_id: mode.value === 'event' ? eventSel.value : null, subject, body, attachment: flyer });
         ctx.toast(`Vendor email sent to ${r.count} unique vendor${r.count === 1 ? '' : 's'}.`);
         box.querySelector('#comm-subject').value = '';
         box.querySelector('#comm-body').value = '';
+        fileInput.value = ''; flyer = null;
+        fileNote.textContent = noFlyerNote;
         await loadHistory();
         await preview();
       } catch (err) {
