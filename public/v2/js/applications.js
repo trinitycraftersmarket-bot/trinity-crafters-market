@@ -9,8 +9,8 @@
 // from a legacy module. v2 cannot import legacy modules, so the flag here
 // uses the scan SAVED on the application at submit time
 // (agreements.category_scan) — the same data the legacy review reads first.
-import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261103-45';
-import { normalizeSpace } from './data.js?v=20261103-45';
+import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261104-47';
+import { normalizeSpace, attendeeRows } from './data.js?v=20261104-47';
 
 const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', held: 'Payment due', paid: 'Paid', waitlist: 'Wait-list', declined: 'Declined', cancelled: 'Cancelled', expired: 'Expired' };
 const STATUS_CLASS = { pending: 'warn', approved: 'neutral', held: 'warn', paid: 'ok', waitlist: 'neutral', declined: 'bad', cancelled: 'bad', expired: 'bad' };
@@ -210,6 +210,7 @@ export function renderApplications(ctx, root) {
   function moreSheet(b) {
     const items = [];
     if (['pending', 'approved', 'held', 'expired'].includes(b.status)) items.push(['waitlist', 'Move to wait-list', 'Releases the booth and emails the vendor']);
+    if (['approved', 'held', 'paid'].includes(b.status)) items.push(['movespace', '⇄ Move / swap space', 'Move to another space — or swap with a vendor there if it is full']);
     if (b.status === 'approved') items.push(['held', 'Invoice sent manually', 'Starts the 24-hour payment deadline now']);
     if (b.status === 'held') items.push(['paid', 'Record other payment', 'Cash, check, card or other — marks the booking paid']);
     if (['approved', 'held', 'paid', 'expired', 'waitlist'].includes(b.status)) items.push(['cancelled', 'Cancel booking', 'Releases the booth; reason goes in the vendor email']);
@@ -221,6 +222,7 @@ export function renderApplications(ctx, root) {
     ctx.sheetEl.querySelectorAll('[data-more]').forEach(btn => btn.onclick = () => {
       const act = btn.dataset.more;
       if (act === 'waitlist') waitlistSheet(b);
+      else if (act === 'movespace') moveSpaceSheet(b);
       else if (act === 'ban') banSheet(b);
       else statusSheet(b, act);
     });
@@ -259,6 +261,54 @@ export function renderApplications(ctx, root) {
         apply_all: f.get('apply_all') === 'on'
       }, { approved: 'Application approved.', declined: 'Application declined.', held: 'Payment deadline started.', paid: 'Payment recorded.', cancelled: 'Booking cancelled.' }[status]);
     };
+  }
+  function moveSpaceSheet(b) {
+    // §60: the same move/swap sheet as Attendees, opened from the
+    // booking card's More menu. Plain move when the target space has
+    // room; when the server refuses because it's full, the sheet lists
+    // the vendors in that space and tapping one performs the swap
+    // (move-space exchanges the two spaces atomically and reprices
+    // both bookings). No vendor email either way — parity with moves.
+    const event = (admin().events || []).find(e => String(e.id) === String(b.event_id));
+    if (!event) { ctx.toast('That market date is no longer on the calendar.', true); return; }
+    const rows = attendeeRows(admin(), b.event_id);
+    const r = rows.find(x => !x.imported && String(x.id) === String(b.id)) || { id: b.id, imported: false, spaceNorm: normalizeSpace(b.space), business: b.business, name: b.name };
+    const label = s => s === 'outdoor' ? 'Outside' : s === 'hallway' ? 'Hallway' : 'Inside';
+    const others = ['indoor', 'outdoor', 'hallway'].filter(s => s !== r.spaceNorm && Number(event[s + '_capacity'] || 0) > 0);
+    const done = msg => { ctx.closeSheet(); ctx.refreshAdmin().then(() => { draw(); ctx.toast(msg); }); };
+    const swapSheet = target => {
+      const partners = rows.filter(x => x.spaceNorm === target && !(String(x.id) === String(r.id) && x.imported === r.imported));
+      ctx.openSheet(`
+        <h3 class="sheet-title">Swap space</h3>
+        <p><strong>${label(target)}</strong> is full for ${esc(niceShort(event.date))} — swap with:</p>
+        <p><strong>${esc(r.business || r.name || 'Vendor')}</strong> (${label(r.spaceNorm)}) takes the ${label(target)} space, and the vendor you pick takes the ${label(r.spaceNorm)} space. Both bookings reprice for their new space.</p>
+        ${partners.length ? `<div class="sheet-menu">${partners.map(x => `<button class="menu-item" data-swap-id="${esc(x.id)}" data-swap-imported="${x.imported ? '1' : '0'}"><span><b>${esc(x.business || x.name || 'Vendor')}</b><span>${esc(x.category || '')}</span></span><span class="chev">›</span></button>`).join('')}</div>` : '<p class="note">No movable vendor is listed in that space — reload and try again.</p>'}
+        <div class="sheet-actions"><button class="btn" data-sheet-close>Cancel</button></div>`);
+      ctx.sheetEl.querySelectorAll('[data-swap-id]').forEach(btn => btn.onclick = async () => {
+        try {
+          await fn('move-space', { id: r.id, imported: r.imported, space: target, swapWith: { id: btn.dataset.swapId, imported: btn.dataset.swapImported === '1' } });
+          done('Swapped — ' + (r.business || r.name || 'Vendor') + ' is now ' + label(target) + '.');
+        } catch (e) { ctx.toast(e.message, true); }
+      });
+    };
+    ctx.openSheet(`
+      <h3 class="sheet-title">Move / swap space</h3>
+      <p><strong>${esc(r.business || r.name || 'Vendor')}</strong> is currently <strong>${label(r.spaceNorm)}</strong> for ${esc(niceShort(event.date))}.</p>
+      <p class="note">The server checks that the other space has room before moving — if it's full, you'll be offered a swap with a vendor in that space, and nothing changes until you pick one.</p>
+      <div class="sheet-actions">
+        <button class="btn" data-sheet-close>Cancel</button>
+        ${others.map(s => `<button class="btn primary" data-move-space="${s}">Move to ${label(s)}</button>`).join('')}
+      </div>`);
+    ctx.sheetEl.querySelectorAll('[data-move-space]').forEach(btn => btn.onclick = async () => {
+      const target = btn.dataset.moveSpace;
+      try {
+        await fn('move-space', { id: r.id, imported: r.imported, space: target });
+        done('Moved to ' + label(target) + '.');
+      } catch (e) {
+        if (/is full for this market date/.test(e.message)) swapSheet(target);
+        else ctx.toast(e.message, true);
+      }
+    });
   }
   function waitlistSheet(b) {
     ctx.openSheet(`
