@@ -5,11 +5,11 @@
 // Day (Stage 1) so there is one place that runs the day — here they are
 // shown as read-only chips. Same server-is-truth rule: every action is a
 // server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261103-45';
-import { attendeeRows, eventStats } from './data.js?v=20261103-45';
-import { parseAttendeePdf } from './pdfimport.js?v=20261103-45';
-import { printAttendance } from './print.js?v=20261103-45';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261103-45';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261104-47';
+import { attendeeRows, eventStats } from './data.js?v=20261104-47';
+import { parseAttendeePdf } from './pdfimport.js?v=20261104-47';
+import { printAttendance } from './print.js?v=20261104-47';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261104-47';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -94,20 +94,46 @@ export function renderAttendees(ctx, root, params = {}) {
   function moveSpaceSheet(r) {
     // §55: three spaces now — offer a move to each OTHER space (the
     // server still checks the target has room before moving).
+    // §60: when the server refuses because the target space is full,
+    // the sheet turns into a swap picker — choose a vendor in that
+    // space and the server exchanges the two spaces atomically
+    // (move-space's swapWith), repricing both bookings for their new
+    // space. Nothing changes until a swap partner is picked.
     const label = s => s === 'outdoor' ? 'Outside' : s === 'hallway' ? 'Hallway' : 'Inside';
     const others = ['indoor', 'outdoor', 'hallway'].filter(s => s !== r.spaceNorm && Number(event[s + '_capacity'] || 0) > 0);
+    const done = msg => { ctx.closeSheet(); ctx.refreshAdmin().then(() => { draw(); ctx.toast(msg); }); };
+    const swapSheet = target => {
+      const partners = rowsNow().filter(x => x.spaceNorm === target && !(String(x.id) === String(r.id) && x.imported === r.imported));
+      ctx.openSheet(`
+        <h3 class="sheet-title">Swap space</h3>
+        <p><strong>${label(target)}</strong> is full for ${esc(nice(event.date))} — swap with:</p>
+        <p><strong>${esc(r.business || r.name || 'Vendor')}</strong> (${label(r.spaceNorm)}) takes the ${label(target)} space, and the vendor you pick takes the ${label(r.spaceNorm)} space. Both bookings reprice for their new space.</p>
+        ${partners.length ? `<div class="sheet-menu">${partners.map(x => `<button class="menu-item" data-swap-id="${esc(x.id)}" data-swap-imported="${x.imported ? '1' : '0'}"><span><b>${esc(x.business || x.name || 'Vendor')}</b><span>${esc(x.category || '')}</span></span><span class="chev">›</span></button>`).join('')}</div>` : '<p class="note">No movable vendor is listed in that space — reload and try again.</p>'}
+        <div class="sheet-actions"><button class="btn" data-sheet-close>Cancel</button></div>`);
+      ctx.sheetEl.querySelectorAll('[data-swap-id]').forEach(b => b.onclick = async () => {
+        try {
+          await fn('move-space', { id: r.id, imported: r.imported, space: target, swapWith: { id: b.dataset.swapId, imported: b.dataset.swapImported === '1' } });
+          done('Swapped — ' + (r.business || r.name || 'Vendor') + ' is now ' + label(target) + '.');
+        } catch (e) { ctx.toast(e.message, true); }
+      });
+    };
     ctx.openSheet(`
       <h3 class="sheet-title">Move space</h3>
       <p><strong>${esc(r.business || r.name || 'Vendor')}</strong> is currently <strong>${label(r.spaceNorm)}</strong> for ${esc(nice(event.date))}.</p>
-      <p class="note">The server checks that the other space has room before moving — if it's full, you'll see the reason here and nothing changes.</p>
+      <p class="note">The server checks that the other space has room before moving — if it's full, you'll be offered a swap with a vendor in that space, and nothing changes until you pick one.</p>
       <div class="sheet-actions">
         <button class="btn" data-sheet-close>Cancel</button>
         ${others.map(s => `<button class="btn primary" data-move-space="${s}">Move to ${label(s)}</button>`).join('')}
       </div>`);
-    ctx.sheetEl.querySelectorAll('[data-move-space]').forEach(b => b.onclick = () => {
+    ctx.sheetEl.querySelectorAll('[data-move-space]').forEach(b => b.onclick = async () => {
       const target = b.dataset.moveSpace;
-      ctx.closeSheet();
-      mutate(() => fn('move-space', { id: r.id, imported: r.imported, space: target }), 'Moved to ' + label(target) + '.');
+      try {
+        await fn('move-space', { id: r.id, imported: r.imported, space: target });
+        done('Moved to ' + label(target) + '.');
+      } catch (e) {
+        if (/is full for this market date/.test(e.message)) swapSheet(target);
+        else ctx.toast(e.message, true);
+      }
     });
   }
   function paySheet(r) {

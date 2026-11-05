@@ -11,7 +11,7 @@
 // restarts).
 // Both sides re-fetch the thread after every send (state rule), and the
 // admin view quietly re-polls while it is on screen.
-import { fnq, uploadChatFile, esc } from './api.js?v=20261103-45';
+import { fnq, uploadChatFile, esc } from './api.js?v=20261104-47';
 
 const stamp = d => d ? new Date(d).toLocaleString() : '';
 const CHAT_KEY = 'market-chat-session';

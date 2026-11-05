@@ -4,8 +4,8 @@
 // "Offer anyway" override. Ported from the legacy waitlistPanel(): same
 // payload fields (applications + waitlistOffers + counts), same actions
 // (waitlist-offer, booking approve). Mutations re-fetch, then re-render.
-import { api, esc, nice, niceShort } from './api.js?v=20261103-45';
-import { normalizeSpace } from './data.js?v=20261103-45';
+import { api, esc, nice, niceShort } from './api.js?v=20261104-47';
+import { normalizeSpace } from './data.js?v=20261104-47';
 
 let view = { eventId: '', space: '' };
 
