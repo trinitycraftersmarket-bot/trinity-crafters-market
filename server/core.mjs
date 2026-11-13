@@ -3,6 +3,7 @@ import {createClient} from '@supabase/supabase-js';
 import {normalizePhone} from './rules.mjs';
 import {publicCounts,categoryCountRows} from './counts.mjs';
 import {ensureHallway} from './hallway.mjs';
+import {ensureCoupons} from './coupons.mjs';
 // User-facing validation failures are thrown as plain Errors all over the
 // codebase (throw Error('This space is sold out.')). Anything else —
 // TypeError/ReferenceError, database errors (postgres.js errors carry a
@@ -96,7 +97,7 @@ export async function flushMail(){
  return {sent,failed};
 }
 export async function publicData(){
- const sql=db();await expire(sql);await ensureHallway(sql);
+ const sql=db();await expire(sql);await ensureHallway(sql);await ensureCoupons(sql);
  // Live inventory uses the same active vendor records shown on the attendance list.
  // All used-space / used-category numbers come from server/counts.mjs — the
  // single counting function (owner semantics: pending does not reserve;

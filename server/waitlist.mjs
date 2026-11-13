@@ -222,9 +222,14 @@ export async function acceptOffer(tx, bookingId, user) {
   const event = await eventRow(tx, b.event_id);
   const limits = await effectiveLimits(tx, b.event_id);
   await assertCapacity(tx, event, {space: b.space, categoryId: b.category_id, limit: b.category_id ? limits.get(b.category_id) : null, exception: b.category_exception});
-  await tx`update market.bookings set status = 'approved', waitlist_offered_at = null, decision_reason = '' where id = ${b.id}`;
+  // §63: a booking at $0 because of a coupon settles as paid-by-coupon
+  // when its waitlist offer is accepted — same rule as a direct
+  // approval, and it never enters the invoice flow.
+  const couponPaid = Number(b.price) === 0 && !!b.coupon_code;
+  if (couponPaid) await tx`update market.bookings set status = 'paid', paid_at = now(), payment_method = ${'Coupon ' + b.coupon_code}, waitlist_offered_at = null, decision_reason = '' where id = ${b.id}`;
+  else await tx`update market.bookings set status = 'approved', waitlist_offered_at = null, decision_reason = '' where id = ${b.id}`;
   await tx`update market.waitlist_offers set state = 'accepted' where id = ${offer.id}`;
-  const approved = {...b, status: 'approved'};
+  const approved = {...b, status: couponPaid ? 'paid' : 'approved'};
   const mail = decisionEmail(approved, event);
   await queue(tx, b.email, mail.subject, mail.body);
   await queue(tx, b.email, `Online Check-in for ${fmtDate(event.date)} — Trinity Crafters Market`, `Hi ${b.name},\n\nYour market date is coming up. Please complete online check-in before the market so we have your planned setup arrival time.\n\nUse the Vendor Setup / Check-In button in My Bookings for ${fmtDate(event.date)} at ${event.location}.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);

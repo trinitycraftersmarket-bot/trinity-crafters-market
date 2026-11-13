@@ -51,6 +51,7 @@ test.before(async () => {
   const counts = strip(await readFile(join(root, 'server/counts.mjs'), 'utf8')) + '\nconst bookingActive = active;\n';
   const twins = strip(await readFile(join(root, 'server/twins.mjs'), 'utf8'));
   const pricing = strip(await readFile(join(root, 'server/pricing.mjs'), 'utf8'));
+  const coupons = strip(await readFile(join(root, 'server/coupons.mjs'), 'utf8'));
   const hallway = strip(await readFile(join(root, 'server/hallway.mjs'), 'utf8'));
   const mock = `
 const db=()=>globalThis.__swapSql;
@@ -58,7 +59,7 @@ const identity=async()=>globalThis.__swapWho;
 const audit=async(tx,u,action,detail)=>{globalThis.__swapAudit.push({actor:u&&u.email,action,detail});};
 const isUserError=e=>!!e&&e.name==='Error'&&typeof e.message==='string'&&e.message.length>0&&e.code===undefined;
 `;
-  ({ default: handler } = await import('data:text/javascript;base64,' + Buffer.from(mock + rules + counts + twins + pricing + hallway + source).toString('base64')));
+  ({ default: handler } = await import('data:text/javascript;base64,' + Buffer.from(mock + rules + counts + twins + pricing + coupons + hallway + source).toString('base64')));
   const db = new PGlite();
   await db.exec(`create schema market;
     create table market.settings(key text primary key, value text not null);
@@ -67,6 +68,7 @@ const isUserError=e=>!!e&&e.name==='Error'&&typeof e.message==='string'&&e.messa
     create table market.applications(id uuid primary key default gen_random_uuid(), email text, phone text, business text, name text, vendor_id uuid, category_id uuid, regular_vendor boolean not null default false);
     create table market.vendor_profiles(id uuid primary key default gen_random_uuid(), email text unique, regular_vendor boolean not null default false);
     create table market.bookings(id uuid primary key default gen_random_uuid(), application_id uuid, event_id uuid, space text, price integer, status text, hold_until timestamptz);
+    create table market.categories(id uuid primary key default gen_random_uuid(), name text unique not null, active boolean not null default true, vendor_limit int not null default 1);
     create table market.imported_attendees(id uuid primary key default gen_random_uuid(), event_id uuid, space text, email text, phone text, business text, name text, vendor_id uuid, category_id uuid, cancelled boolean not null default false, invoice_amount integer);`);
   sql = pgliteSql(db);
   globalThis.__swapSql = sql;

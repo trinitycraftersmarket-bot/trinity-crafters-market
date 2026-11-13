@@ -630,6 +630,40 @@ update market.events e set hallway_capacity = 2, hallway_price = 4500
     and (e.date + coalesce(e.end_time, time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York');
 
 -- ----------------------------------------------------------------------------
+-- 63. Coupon codes (Nov 12, 2026 — Scott: a coupon code box on the
+-- vendor application, immediately before the submit button; a coupon
+-- discounts the vendor fee by a percentage). Coupons are DATA in
+-- market.coupons, edited from the organizer panel's Coupons tab via
+-- the audited, admin-only 'coupon-save' action. The discount applies
+-- after the normal price computation (§50 regular rate first, then
+-- coupon % off), per booking, integer cents, round half up;
+-- bookings.price stores the FINAL price. A booking at $0 because of
+-- a coupon approves straight to 'paid' with payment_method
+-- 'Coupon <code>' and never enters the invoice flow. Mirrored by the
+-- lazy heal in server/coupons.mjs (ensureCoupons). The seeds insert
+-- ONLY when absent — a coupon or category Scott later edits is never
+-- overwritten: the launch coupon '501C' at 100% off, and its matching
+-- vendor category '501c' (active, vendor_limit 1 — one per date).
+-- ----------------------------------------------------------------------------
+create table if not exists market.coupons(
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,
+  percent integer not null check (percent between 0 and 100),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  created_by text
+);
+alter table market.coupons enable row level security;
+alter table market.applications add column if not exists coupon_code text;
+alter table market.bookings add column if not exists coupon_code text;
+insert into market.coupons(code, percent, active)
+  select '501C', 100, true
+  where not exists (select 1 from market.coupons where code = '501C');
+insert into market.categories(name, active, vendor_limit)
+  select '501c', true, 1
+  where not exists (select 1 from market.categories where lower(name) = '501c');
+
+-- ----------------------------------------------------------------------------
 -- 14. Notes — known discrepancies deliberately NOT changed by this file
 -- ----------------------------------------------------------------------------
 -- (a) categories.vendor_limit: RESOLVED Oct 22 2026 — the owner ruled that

@@ -2,6 +2,7 @@ import {db,identity,audit,isUserError} from '../../server/core.mjs';
 import {normalizeSpace,spaceUsed,vendorIdentityKey} from '../../server/counts.mjs';
 import {syncSpace} from '../../server/twins.mjs';
 import {isRegularVendor,regularAwarePrice} from '../../server/pricing.mjs';
+import {ensureCoupons,couponPercentFor,applyCouponPrice} from '../../server/coupons.mjs';
 import {ensureHallway} from '../../server/hallway.mjs';
 
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
@@ -19,13 +20,13 @@ export default async req=>{
   const swapWith=p.swapWith&&p.swapWith.id?{id:p.swapWith.id,imported:!!p.swapWith.imported}:null;
   const sql=db();
   await sql.begin(async tx=>{
-   await tx`select pg_advisory_xact_lock(708821)`;await ensureHallway(tx);
+   await tx`select pg_advisory_xact_lock(708821)`;await ensureHallway(tx);await ensureCoupons(tx);
    // Load one record (booking or imported attendee) for update.
    const load=async(id,imported)=>{
     if(imported){
      const [r]=await tx`select id,event_id,space,email,phone,business,name,vendor_id,cancelled from market.imported_attendees where id=${id} for update`; return r?{...r,imported:true}:null;
     }
-    const [r]=await tx`select b.id,b.application_id,b.event_id,b.space,b.status,a.email,a.phone,a.business,a.name,a.vendor_id from market.bookings b join market.applications a on a.id=b.application_id where b.id=${id} for update of b`; return r?{...r,imported:false}:null;
+    const [r]=await tx`select b.id,b.application_id,b.event_id,b.space,b.status,b.coupon_code,a.email,a.phone,a.business,a.name,a.vendor_id from market.bookings b join market.applications a on a.id=b.application_id where b.id=${id} for update of b`; return r?{...r,imported:false}:null;
    };
    const src=await load(p.id,!!p.imported);
    if(!src)throw Error(p.imported?'Attendee not found.':'Booking not found.');
@@ -49,7 +50,11 @@ export default async req=>{
    // rate for their new space, never the standard price.
    const applySpace=async(row,toSpace)=>{
     if(row.imported)await tx`update market.imported_attendees set space=${toSpace==='indoor'?'Inside':toSpace==='hallway'?'Hallway':'Outside'} where id=${row.id}`;
-    else{const newPrice=await regularAwarePrice(tx,{locationId:e.location_id,space:toSpace,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,hallwayPrice:e.hallway_price,regular:await isRegularVendor(tx,{email:row.email,applicationId:row.application_id||null})});await tx`update market.bookings set space=${toSpace},price=${newPrice} where id=${row.id}`;}
+    else{let newPrice=await regularAwarePrice(tx,{locationId:e.location_id,space:toSpace,indoorPrice:e.indoor_price,outdoorPrice:e.outdoor_price,hallwayPrice:e.hallway_price,regular:await isRegularVendor(tx,{email:row.email,applicationId:row.application_id||null})});
+    // §63: a coupon booking keeps its coupon % applied to the new
+    // space price (the discount follows the booking, like §50's rate).
+    if(row.coupon_code){const pct=await couponPercentFor(tx,row.coupon_code);if(pct!=null)newPrice=applyCouponPrice(newPrice,pct);}
+    await tx`update market.bookings set space=${toSpace},price=${newPrice} where id=${row.id}`;}
    };
    if(swapWith){
     // §60 swap — every fact is recomputed inside this transaction:

@@ -157,6 +157,7 @@ test.before(async () => {
   const payments = strip(await readFile(join(root, 'server/vendor-payments.mjs'), 'utf8'));
   const permissions = strip(await readFile(join(root, 'server/permissions.mjs'), 'utf8'));
   const pricing = strip(await readFile(join(root, 'server/pricing.mjs'), 'utf8'));
+  const coupons = strip(await readFile(join(root, 'server/coupons.mjs'), 'utf8'));
   const twins = strip(await readFile(join(root, 'server/twins.mjs'), 'utf8'));
   const waitlist = strip(await readFile(join(root, 'server/waitlist.mjs'), 'utf8'));
   const hallway = strip(await readFile(join(root, 'server/hallway.mjs'), 'utf8'));
@@ -165,7 +166,7 @@ test.before(async () => {
   for (const f of ['database/setup.sql', 'database/codify-live-schema.sql', 'database/vendor-credits.sql', 'database/waitlist-offers.sql', 'database/vendor-profiles.sql'])
     await db.exec(await readFile(join(root, f), 'utf8'));
   apiSql = pgliteSql(db);
-  const mock = rules + counts + profiles + payments + permissions + pricing + twins + waitlist + hallway + `
+  const mock = rules + counts + profiles + payments + permissions + pricing + coupons + twins + waitlist + hallway + `
 const ready=()=>true;
 const identity=async()=>globalThis.__who;
 const identityWithBan=identity;
@@ -452,6 +453,7 @@ test.before(async () => {
   const counts = strip(await readFile(join(root, 'server/counts.mjs'), 'utf8')) + '\nconst bookingActive = active;\n';
   const twins = strip(await readFile(join(root, 'server/twins.mjs'), 'utf8'));
   const pricing = strip(await readFile(join(root, 'server/pricing.mjs'), 'utf8'));
+  const coupons = strip(await readFile(join(root, 'server/coupons.mjs'), 'utf8'));
   const hallway = strip(await readFile(join(root, 'server/hallway.mjs'), 'utf8'));
   const mock = `
 const db=()=>globalThis.__msSql;
@@ -459,7 +461,7 @@ const identity=async()=>globalThis.__msWho;
 const audit=async()=>{};
 const isUserError=e=>!!e&&e.name==='Error'&&typeof e.message==='string';
 `;
-  ({ default: msHandler } = await import('data:text/javascript;base64,' + Buffer.from(mock + rules + counts + twins + pricing + hallway + source).toString('base64')));
+  ({ default: msHandler } = await import('data:text/javascript;base64,' + Buffer.from(mock + rules + counts + twins + pricing + coupons + hallway + source).toString('base64')));
   const db = new PGlite();
   await db.exec(`create schema market;
     create table market.settings(key text primary key, value text not null);
@@ -468,6 +470,7 @@ const isUserError=e=>!!e&&e.name==='Error'&&typeof e.message==='string';
     create table market.applications(id uuid primary key default gen_random_uuid(), email text, phone text, business text, name text, vendor_id uuid, category_id uuid, regular_vendor boolean not null default false);
     create table market.vendor_profiles(id uuid primary key default gen_random_uuid(), email text unique, regular_vendor boolean not null default false);
     create table market.bookings(id uuid primary key default gen_random_uuid(), application_id uuid, event_id uuid, space text, price integer, status text, hold_until timestamptz);
+    create table market.categories(id uuid primary key default gen_random_uuid(), name text unique not null, active boolean not null default true, vendor_limit int not null default 1);
     create table market.imported_attendees(id uuid primary key default gen_random_uuid(), event_id uuid, space text, email text, phone text, business text, name text, vendor_id uuid, category_id uuid, cancelled boolean not null default false, invoice_amount integer);`);
   msSql = pgliteSql(db);
   globalThis.__msSql = msSql;
