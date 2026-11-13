@@ -994,6 +994,9 @@ trinitycraftersmarket@gmail.com`;
  }
  if(action==='recover-application'){
   if(!u.admin)return json({error:'Organizer access only'},403);await ensureApplicationAttempts(sql);const attemptId=String(p.id||''),override=p.data||{};const [attempt]=await sql`select * from market.application_attempts where id=${attemptId} and status in ('failed','draft','submitting','dismissed')`;if(!attempt)throw Error('This application attempt is no longer available for recovery.');
+  // §64: the organizer over-capacity override travels in the same
+  // override payload as the form fields (p.data.over_capacity).
+  const overCapacity=override.over_capacity===true;
   const base=cleanAttemptSnapshot(attempt.snapshot||{}),merged=cleanAttemptSnapshot({...base,...override,dates:Array.isArray(override.dates)?override.dates:base.dates,photos:base.photos,photo_names:base.photo_names,agreements:base.agreements}),name=required(merged.name,'vendor name'),business=required(merged.business,'business name'),description=merged.description||'Product description was not captured before the failed submission.',phone=normalizePhone(merged.phone);if(phone.length<10||phone.length>15)throw Error('A valid vendor phone number is required before recovery.');if(!merged.category)throw Error('Choose a product category before recovery.');if(!merged.dates.length||merged.dates.some(d=>!d.id||!['indoor','outdoor','hallway'].includes(d.space)))throw Error('Choose at least one market date and space before recovery.');
   const result=await sql.begin(async tx=>{await tx`select pg_advisory_xact_lock(708821)`;await expire(tx);await ensureHallway(tx);await ensureCoupons(tx);if(await banned(tx,{id:attempt.user_id,email:attempt.email},phone))throw Error('This vendor is banned. Unban them before recovering the application.');const [cat]=await tx`select * from market.categories where id=${merged.category}`;if(!cat)throw Error('Choose a valid product category.');
    const masters=await tx`select id from market.vendors where lower(trim(email))=lower(${attempt.email}) or regexp_replace(phone,'[^0-9]','','g')=${phone} limit 2`;let vendorId=masters.length===1?masters[0].id:null;if(masters.length===0){const [nv]=await tx`insert into market.vendors(name,business,email,phone,billing_address,description,category_id) values(${name},${business},${attempt.email},${phone},${merged.billing_address},${description},${cat.id}) returning id`;vendorId=nv.id;}else if(vendorId)await tx`update market.vendors set name=${name},business=${business},email=${attempt.email},phone=${phone},billing_address=${merged.billing_address},description=${description},category_id=${cat.id},updated_at=now() where id=${vendorId}`;
@@ -1004,11 +1007,24 @@ trinitycraftersmarket@gmail.com`;
    const [app]=await tx`insert into market.applications(user_id,name,email,phone,billing_address,business,description,category_id,exception_reason,referral_source,referral_group,photos,agreements,vendor_id,review_notes,coupon_code) values(${attempt.user_id},${name},${attempt.email},${phone},${merged.billing_address},${business},${description},${cat.id},${merged.exception},${merged.referral_source||'Recovered application'},${merged.referral_group},${tx.json(photos)},${tx.json(agreements)},${vendorId},${'Recovered from failed/abandoned application '+attempt.id},${coupon?coupon.code:null}) returning id`;
    const regularVendor=await isRegularVendor(tx,{email:attempt.email});
    const couponPrices=[];
-   const created=[];for(const d of merged.dates){const [event]=await tx`select e.*,l.name location,l.address,l.market_name,l.name title from market.events e join market.locations l on l.id=e.location_id where e.id=${d.id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('One selected market date is no longer available.');if(event.sold_out)throw Error(marketDateLabel(event.date)+': the market is marked sold out.');if(d.space==='indoor'&&event.indoor_open===false)throw Error(marketDateLabel(event.date)+': indoor vendor space is closed.');if(d.space==='outdoor'&&event.outdoor_open===false)throw Error(marketDateLabel(event.date)+': outdoor vendor space is closed.');if(d.space==='hallway'&&event.hallway_open===false)throw Error(marketDateLabel(event.date)+': hallway vendor space is closed.');
+   const overridden=[];
+   const created=[];for(const d of merged.dates){const [event]=await tx`select e.*,l.name location,l.address,l.market_name,l.name title from market.events e join market.locations l on l.id=e.location_id where e.id=${d.id} and (e.date + coalesce(e.end_time,time '15:00') + interval '1 minute') > (now() at time zone 'America/New_York')`;if(!event)throw Error('One selected market date is no longer available.');
+    // §64: Scott overbooks deliberately (he expects ~5 no-shows per
+    // market), so Approve Override carries an organizer over-capacity
+    // checkbox. Checked, it skips the sold-out flag, the closed-space
+    // flags and the physical space-capacity block for this recovery —
+    // the same posture as the vendor-credit organizer override — and
+    // the bypassed figures land on the recovery audit below.
+    // Unchecked, every block stands exactly as before. The ban check
+    // above and the duplicate check below are NOT bypassed.
+    const spaceClosed=d.space==='indoor'?event.indoor_open===false:d.space==='hallway'?event.hallway_open===false:event.outdoor_open===false;
+    if(!overCapacity){if(event.sold_out)throw Error(marketDateLabel(event.date)+': the market is marked sold out.');if(spaceClosed)throw Error(marketDateLabel(event.date)+': '+d.space+' vendor space is closed.');}
     // Availability from the single counting function (server/counts.mjs):
     // pending does not reserve, twins count once. The duplicate check below
     // still includes pending — it guards double submission, not capacity.
-    const inv=await eventInventory(tx,event.id);if((inv[d.space]||0)>=event[d.space+'_capacity'])throw Error(marketDateLabel(event.date)+': '+d.space+' space is sold out.');
+    const inv=await eventInventory(tx,event.id);const spaceUsed=inv[d.space]||0,spaceCapacity=event[d.space+'_capacity'];
+    if(spaceUsed>=spaceCapacity&&!overCapacity)throw Error(marketDateLabel(event.date)+': '+d.space+' space is sold out.');
+    if(overCapacity&&(event.sold_out||spaceClosed||spaceUsed>=spaceCapacity))overridden.push({event_id:event.id,space:d.space,used:spaceUsed,capacity:spaceCapacity,sold_out:!!event.sold_out,space_closed:spaceClosed});
     const duplicate=await tx`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${event.id} and b.status in ('pending','waitlist','approved','held','paid') and (a.user_id=${attempt.user_id} or lower(a.email)=lower(${attempt.email}) or regexp_replace(a.phone,'[^0-9]','','g')=${phone}) limit 1`;if(duplicate.length)throw Error(marketDateLabel(event.date)+': this vendor already has an application or booking.');
     const [limitOverride]=await tx`select vendor_limit from market.event_category_limits where event_id=${event.id} and category_id=${cat.id}`;const categoryLimit=limitOverride?.vendor_limit??cat.vendor_limit,categoryException=Number(categoryLimit)>0&&(inv.categories.get(String(cat.id))||0)>=Number(categoryLimit);
     const basePrice=await regularAwarePrice(tx,{locationId:event.location_id,space:d.space,indoorPrice:event.indoor_price,outdoorPrice:event.outdoor_price,hallwayPrice:event.hallway_price,regular:regularVendor});
@@ -1023,7 +1039,7 @@ trinitycraftersmarket@gmail.com`;
     const mail=decisionEmail({...booking,name,email:attempt.email,business,status:'approved'},event,'');await queue(tx,attempt.email,mail.subject,mail.body);
    }
    if(coupon)await audit(tx,u,'coupon applied',{application_id:app.id,code:coupon.code,percent:coupon.percent,bookings:couponPrices,recovered:true});
-   await tx`update market.application_attempts set status='overridden',application_id=${app.id},overridden_at=now(),overridden_by=${u.email},reviewed_at=now(),reviewed_by=${u.email},last_seen_at=now() where id=${attempt.id}`;await audit(tx,u,'application recovered',{attempt_id:attempt.id,application_id:app.id,bookings:created.map(x=>x.id),email:attempt.email});return {application_id:app.id,bookings:created};
+   await tx`update market.application_attempts set status='overridden',application_id=${app.id},overridden_at=now(),overridden_by=${u.email},reviewed_at=now(),reviewed_by=${u.email},last_seen_at=now() where id=${attempt.id}`;await audit(tx,u,'application recovered',{attempt_id:attempt.id,application_id:app.id,bookings:created.map(x=>x.id),email:attempt.email,over_capacity:overCapacity,overridden});return {application_id:app.id,bookings:created};
   });await flushMail();return json({ok:true,...result});
  }
  if(action==='vendor-reengage'){
