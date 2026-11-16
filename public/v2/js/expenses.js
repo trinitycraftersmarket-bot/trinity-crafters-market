@@ -7,8 +7,8 @@
 // description mentioning it), same filter/sort math, same print
 // documents. Vendor cancellation credits are intentionally excluded —
 // they are not expenses.
-import { api, esc, nice, todayKey } from './api.js?v=20261104-47';
-import { printExpenseReport } from './print.js?v=20261104-47';
+import { api, esc, nice, todayKey } from './api.js?v=20261116-48';
+import { printExpenseReport } from './print.js?v=20261116-48';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 const dateKey = v => String(v || '').slice(0, 10);

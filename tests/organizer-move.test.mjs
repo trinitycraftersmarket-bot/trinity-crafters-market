@@ -192,3 +192,17 @@ test('§67: the Attendees card renders the Move date button natively', async () 
   assert.ok(mrSrc.includes("actions.querySelector('[data-org-move]')"), 'injector still dedupes on data-org-move');
   assert.ok(mrSrc.includes('window.openOrganizerMoveDialog'), 'organizer move dialog still provided by move-requests.js');
 });
+
+test('§68: the v2 Attendees card carries a Move date action wired to the organizer move', async () => {
+  // The v2 rebuild (what trinitylutzmarkets.com actually serves)
+  // never got an organizer-initiated move at all — its Attendees
+  // cards had Move space but no Move date, which is the gap Scott
+  // hit on Nov 16, 2026. The card now renders the action natively
+  // and the sheet drives the same move-requests backend actions
+  // the classic dialog uses.
+  const src = await readFile('public/v2/js/attendees.js', 'utf8');
+  assert.ok(src.includes('data-act="move-date"'), 'v2 attendee card renders a Move date button');
+  assert.ok(src.includes("action: 'organizer-options'"), 'move sheet loads organizer options from move-requests');
+  assert.ok(src.includes("action: 'organizer-move'"), 'move sheet performs the organizer move');
+  assert.ok(src.includes("btn.dataset.act === 'move-date'"), 'card action is bound to the move sheet');
+});

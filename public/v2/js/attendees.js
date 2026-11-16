@@ -1,15 +1,15 @@
 // Attendees management screen: the per-event vendor list for organizing —
-// move space, record payment, cancel vendor, check-in reminders, featured
-// posts, CSV export. This is the management half of the legacy Attendees
+// move space, move date, record payment, cancel vendor, check-in reminders,
+// featured posts, CSV export. This is the management half of the legacy Attendees
 // (report) panel; inspection and check-in deliberately live ONLY on Event
 // Day (Stage 1) so there is one place that runs the day — here they are
 // shown as read-only chips. Same server-is-truth rule: every action is a
 // server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261104-47';
-import { attendeeRows, eventStats } from './data.js?v=20261104-47';
-import { parseAttendeePdf } from './pdfimport.js?v=20261104-47';
-import { printAttendance } from './print.js?v=20261104-47';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261104-47';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261116-48';
+import { attendeeRows, eventStats } from './data.js?v=20261116-48';
+import { parseAttendeePdf } from './pdfimport.js?v=20261116-48';
+import { printAttendance } from './print.js?v=20261116-48';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261116-48';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -85,6 +85,7 @@ export function renderAttendees(ctx, root, params = {}) {
       ${r.approved_products ? `<p class="note"><strong>Approved to sell:</strong> ${esc(r.approved_products)}${r.declined_products ? `<br><strong>Not approved:</strong> ${esc(r.declined_products)}` : ''}</p>` : ''}
       <div class="vendor-actions">
         <button class="btn small" data-act="move-space" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">⇄ Move space</button>
+        <button class="btn small" data-act="move-date" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">📅 Move date</button>
         ${r.payStatus !== 'paid' ? `<button class="btn primary small" data-act="pay" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">Record payment</button>` : ''}
         <button class="btn small ghost" data-act="more" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">More ⋯</button>
       </div>
@@ -135,6 +136,68 @@ export function renderAttendees(ctx, root, params = {}) {
         else ctx.toast(e.message, true);
       }
     });
+  }
+  function moveDateSheet(r) {
+    // §68: organizer-initiated date move, on the Attendees card where
+    // Scott manages the date (the v2 rebuild never got the classic
+    // app's organizer move — Scott, Nov 16, 2026: "I have no way we
+    // change a vendors date"). Same move-requests backend as the
+    // classic dialog: organizer-options lists the dates that can
+    // take this booking (with the spaces that fit and why the rest
+    // can't), organizer-move performs it immediately — no request,
+    // no 48-hour cutoff for the organizer; payment stays on the
+    // booking and the vendor is emailed the new date.
+    const label = s => s === 'outdoor' ? 'Outside' : s === 'hallway' ? 'Hallway' : 'Inside';
+    const sourceType = r.imported ? 'imported' : 'booking';
+    ctx.openSheet(`<h3 class="sheet-title">Move date</h3><p>Checking which dates <strong>${esc(r.business || r.name || 'this vendor')}</strong> can move to…</p>`);
+    (async () => {
+      let v;
+      try { v = await fn('move-requests', { action: 'organizer-options', source_type: sourceType, source_id: r.id }); }
+      catch (e) { ctx.toast(e.message, true); ctx.closeSheet(); return; }
+      const who = v.source?.business || v.source?.name || r.business || r.name || 'this vendor';
+      if (!v.movable) {
+        ctx.openSheet(`
+          <h3 class="sheet-title">Move date — ${esc(who)}</h3>
+          <p>${esc(v.reason || 'This booking cannot be moved.')}</p>
+          <div class="sheet-actions"><button class="btn" data-sheet-close>Close</button></div>`);
+        return;
+      }
+      const targets = v.targets || [], excluded = v.excluded || [];
+      ctx.openSheet(`
+        <h3 class="sheet-title">Move date — ${esc(who)}</h3>
+        <p>Currently booked ${esc(nice(event.date))} as <strong>${label(r.spaceNorm)}</strong>. The move happens right away: payment stays on the booking, the old date's check-in and booth assignment are cleared, and the vendor is emailed the new date.</p>
+        ${targets.length ? `<form id="v2-att-move-form">
+          ${targets.map(t => `<div class="move-target">
+            <label class="checkline"><input type="radio" name="to" value="${esc(t.event.id)}" data-space="${esc(t.spaces[0].space)}" required> <strong>${esc(nice(t.event.date))}</strong> — ${esc(t.event.location || '')}</label>
+            ${t.spaces.length > 1
+              ? `<label class="sheet-field">Space<select name="space-${esc(t.event.id)}">${t.spaces.map(s => `<option value="${esc(s.space)}" ${s.space === r.spaceNorm ? 'selected' : ''}>${label(s.space)} ${money(s.price)}</option>`).join('')}</select></label>`
+              : `<p class="note">${label(t.spaces[0].space)} · ${money(t.spaces[0].price)}</p>`}
+          </div>`).join('')}
+          <p class="note flag-note" id="v2-att-move-error" hidden></p>
+          <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Never mind</button><button class="btn primary">Move booking</button></div>
+        </form>` : '<p><strong>No other dates can take this booking right now.</strong></p>'}
+        ${excluded.length ? `<div class="note"><p><strong>Why some dates aren't listed:</strong></p><ul>${excluded.map(x => `<li>${esc(nice(x.event?.date))} — ${esc((x.problems || [])[0] || 'Not available')}</li>`).join('')}</ul></div>` : ''}`);
+      const form = ctx.sheetEl.querySelector('#v2-att-move-form');
+      if (form) form.onsubmit = async e => {
+        e.preventDefault();
+        const radio = form.querySelector('input[name="to"]:checked');
+        if (!radio) return;
+        const space = form.querySelector(`[name="space-${CSS.escape(radio.value)}"]`)?.value || radio.dataset.space;
+        const btn = form.querySelector('button.btn.primary');
+        if (btn) btn.disabled = true;
+        try {
+          const out = await fn('move-requests', { action: 'organizer-move', source_type: sourceType, source_id: r.id, to_event_id: radio.value, space });
+          ctx.closeSheet();
+          await ctx.refreshAdmin();
+          draw();
+          ctx.toast('Moved — ' + who + ' is now booked for ' + nice(out.to?.date) + '. The vendor has been emailed.' + (out.resolved_request ? ' Their pending move request was resolved as approved.' : ''));
+        } catch (err) {
+          const errEl = form.querySelector('#v2-att-move-error');
+          if (errEl) { errEl.hidden = false; errEl.textContent = err.message; }
+          if (btn) btn.disabled = false;
+        }
+      };
+    })();
   }
   function paySheet(r) {
     ctx.openSheet(`
@@ -221,6 +284,7 @@ export function renderAttendees(ctx, root, params = {}) {
       const r = findRow(btn.dataset.id, btn.dataset.imported === '1');
       if (!r) { ctx.toast('That vendor is no longer on the list — reloading.', true); ctx.refreshAdmin().then(draw); return; }
       if (btn.dataset.act === 'move-space') moveSpaceSheet(r);
+      else if (btn.dataset.act === 'move-date') moveDateSheet(r);
       else if (btn.dataset.act === 'pay') paySheet(r);
       else if (btn.dataset.act === 'more') moreSheet(r);
     });
