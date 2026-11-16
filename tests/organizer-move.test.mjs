@@ -175,3 +175,20 @@ test('movableSources: only confirmed records on upcoming dates', async () => {
   await booking({event: P, email: 'old@example.com', business: 'Old', category: cats.Bags, status: 'paid'});
   assert.deepEqual(await movableSources(sql, P.id), []);
 });
+
+test('§67: the Attendees card renders the Move date button natively', async () => {
+  // Scott (Nov 16, 2026): no Move button anywhere in the Attendees
+  // section. The button used to be injected by move-requests.js
+  // after an async organizer-movable round-trip — the same silent
+  // failure mode §63 fixed for Issue Credit. The card template now
+  // renders it directly, carrying data-org-move so the injector's
+  // dedupe check skips these cards (no duplicate buttons), and the
+  // click wiring opens the organizer move dialog.
+  const appSrc = await readFile('public/app.js', 'utf8');
+  assert.ok(appSrc.includes('data-org-move-native'), 'attendee card renders a native Move date button');
+  assert.ok(appSrc.includes('data-org-move="${b.id}"'), 'native button carries data-org-move for injector dedupe');
+  assert.ok(appSrc.includes("window.openOrganizerMoveDialog(btn.dataset.imported==='1'?'imported':'booking',btn.dataset.orgMove)"), 'native button opens the organizer move dialog');
+  const mrSrc = await readFile('public/move-requests.js', 'utf8');
+  assert.ok(mrSrc.includes("actions.querySelector('[data-org-move]')"), 'injector still dedupes on data-org-move');
+  assert.ok(mrSrc.includes('window.openOrganizerMoveDialog'), 'organizer move dialog still provided by move-requests.js');
+});
