@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-77';
+import { api, esc, nice } from './api.js?v=20261118-78';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -378,7 +378,7 @@ export function composePlanCanvas(area, vendors) {
 // opens synchronously inside the click (popup blockers), shows a preparing
 // note, and is replaced once the composite images are rendered. The
 // toolbar (Print / \u2715 Close) never prints.
-const PLAN_PRINT_CSS = '@page{size:letter portrait;margin:.4in}*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:#fff;font-family:Arial,Helvetica,sans-serif}.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}.plan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always}.plan-page.last{break-after:auto;page-break-after:auto}.plan-head{flex:0 0 auto}.plan-head h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.plan-head .sub{margin:0 4px 10px;color:#44554c;font-size:10pt}.plan-frame{flex:1 1 auto;min-height:0}.plan-frame img{display:block;width:100%;height:100%;object-fit:contain}@media print{.tools{display:none!important}}';
+const PLAN_PRINT_CSS = '@page{size:letter portrait;margin:.4in}*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:#fff;font-family:Arial,Helvetica,sans-serif}.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}.plan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always}.plan-page.last{break-after:auto;page-break-after:auto}.plan-head{flex:0 0 auto}.plan-head h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.plan-head .sub{margin:0 4px 10px;color:#44554c;font-size:10pt}.plan-frame{flex:1 1 auto;min-height:0}.plan-frame img{display:block;width:100%;height:100%;object-fit:contain}.plan-names{flex:0 0 auto;padding:8px 4px 2px;font-size:10pt;color:#22312a;line-height:1.55}@media print{.tools{display:none!important}}';
 // §76: no auto-print script on the floor-plan page (see print.js §76
 // note) — the modal print dialog swallowed the page's own controls.
 // §74 (Scott, Nov 18, 2026): printouts open in THIS tab, never a popup.
@@ -405,13 +405,13 @@ export async function printFloorPlan({ event, areas, area, vendors, dirty, toast
   const sections = [];
   for (const [i, t] of targets.entries()) {
     const canvas = await composePlanCanvas(t.area, vendors);
-    sections.push('<section class="plan-page' + (i === targets.length - 1 ? ' last' : '') + '"><div class="plan-head"><h1>' + esc(t.area.title) + ' \u2014 floor plan</h1><p class="sub">' + esc(event?.date ? nice(event.date) : '') + ' \u00b7 ' + t.pins.length + ' vendor' + (t.pins.length === 1 ? '' : 's') + ' placed</p></div><div class="plan-frame"><img class="plan" alt="Floor plan with vendor names" src="' + canvas.toDataURL('image/png') + '"></div></section>');
+    sections.push('<section class="plan-page' + (i === targets.length - 1 ? ' last' : '') + '"><div class="plan-head"><h1>' + esc(t.area.title) + ' \u2014 floor plan</h1><p class="sub">' + esc(event?.date ? nice(event.date) : '') + ' \u00b7 ' + t.pins.length + ' vendor' + (t.pins.length === 1 ? '' : 's') + ' placed</p></div><div class="plan-frame"><img class="plan" alt="Floor plan with vendor names" src="' + canvas.toDataURL('image/png') + '"></div>' + (t.pins.length ? '<div class="plan-names"><strong>Vendor names:</strong> ' + t.pins.map(p => esc(p.spot) + ' — ' + esc(p.label)).join(' · ') + '</div>' : '') + '</section>');
   }
   const title = String(event?.title || 'Market') + ' \u2014 floor plans';
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' +
     PLAN_PRINT_CSS +
     '</style></head><body>' +
-    '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a></div>' +
+    '<div class="tools"><button type="button" onclick="if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a></div>' +
     sections.join('') +
     '</body></html>';
   popup.document.open();
@@ -468,7 +468,7 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     '@media print{.button-row{display:none!important}}';
   const legend = spotLegend(blocks.map(b => ({ title: b.title, spots: b.rows.map(r => r.id) })));
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' + stylesheet + '</style></head><body>' +
-    '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>' +
+    '<div class="button-row"><button type="button" onclick="if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>' +
     '<header><h1>' + esc(title) + '</h1><p><strong>' + esc(dateText) + '</strong> · ' + esc(venue?.name || event.title || '') + '</p>' +
     (venue?.address ? '<p>' + esc(venue.address) + '</p>' : '') +
     '<p class="private">Private organizer copy — do not distribute to vendors</p>' +

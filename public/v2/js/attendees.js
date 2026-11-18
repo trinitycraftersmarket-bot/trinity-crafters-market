@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-77';
-import { attendeeRows, eventStats } from './data.js?v=20261118-77';
-import { parseAttendeePdf } from './pdfimport.js?v=20261118-77';
-import { printAttendance } from './print.js?v=20261118-77';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261118-77';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-78';
+import { attendeeRows, eventStats } from './data.js?v=20261118-78';
+import { parseAttendeePdf } from './pdfimport.js?v=20261118-78';
+import { printAttendance } from './print.js?v=20261118-78';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261118-78';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -435,9 +435,13 @@ export function renderAttendees(ctx, root, params = {}) {
       // Nov 18, 2026).
       const floorRows = await api('floor-attendees', undefined, { event_id: event.id }).catch(() => []);
       for (const a of areas) {
-        if (!resolvePins(a, floorRows || []).length && !imageAllowed(a.image_data_url)) continue;
+        const pins = resolvePins(a, floorRows || []);
+        if (!pins.length && !imageAllowed(a.image_data_url)) continue;
         const canvas = await composePlanCanvas(a, floorRows || []);
-        plans.push({ title: a.title || 'Floor plan', image: canvas.toDataURL('image/png') });
+        // §78: the same pins also go in as a plain-text names list under
+        // the plan image — on a phone the drawn tags are too small to
+        // read, so the list is what Scott actually checks names against.
+        plans.push({ title: a.title || 'Floor plan', image: canvas.toDataURL('image/png'), names: pins.map(p => p.spot + ' — ' + p.label) });
       }
       legend = spotLegend(areas.map(a => ({ title: a.title, spots: spotIds(a) })));
     } catch { /* no readable plans — print the list alone */ }

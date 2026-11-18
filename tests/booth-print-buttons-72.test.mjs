@@ -30,7 +30,7 @@ const FILES = [
 for (const f of FILES) {
   test(`§72: ${f.path} print controls carry the close/back/app fallbacks`, () => {
     const src = read(f.path);
-    assert.ok(src.includes('window.print()">Print / Save as PDF</button>'), 'the Print button stays');
+    assert.ok(src.includes('window.print()}">Print / Save as PDF</button>') && src.includes('TrinityPrint'), 'the Print button stays');
     assert.ok(!src.includes('onclick="window.close()">'), 'no bare window.close() button remains on either printable page');
     assert.ok(src.includes('window.close();setTimeout(function(){if(!window.closed)location.reload()},300)'), 'Close falls back to a reload at ~300ms (§75)');
     assert.ok(src.includes('location.href=' + BS + "'" + f.app + '?from=print' + BS + "'},800)"), 'Close falls back to the app at ~800ms (§75)');

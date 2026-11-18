@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261118-77';
+import { esc } from './api.js?v=20261118-78';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
@@ -37,8 +37,18 @@ const PRINT_CONTROLS_CSS = `:root{color-scheme:light}.print-controls{display:fle
 // location.reload() re-fetches the app from the server at this URL —
 // hash route intact — and the '?from=print' fallback URL differs from
 // the current path, so it really navigates even without JS.
+// §78 (Nov 18, 2026): the Print button asks the Android app first.
+// window.print() is a no-op inside the app WebView (Capacitor) — the
+// native shell exposes a TrinityPrint bridge (MainActivity) that opens
+// the Android print dialog for the current page. In a real browser the
+// bridge is absent and the button falls back to window.print(). And
+// every plan page now also lists its vendor names as plain text under
+// the image: the names were always drawn ON the image, but at phone
+// size the tags shrink to unreadable specks — Scott, Nov 18, 2026:
+// "Names on floor plan on the print screen not listed."
+const PRINT_ONCLICK = "if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}";
 function printControls() {
-  return `<div class="print-controls"><button type="button" onclick="window.print()">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/?from=print'},800)">Close</button> <a class="print-back" href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>`;
+  return `<div class="print-controls"><button type="button" onclick="${PRINT_ONCLICK}">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/?from=print'},800)">Close</button> <a class="print-back" href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>`;
 }
 const dateKey = v => String(v || '').slice(0, 10);
 const niceShortDate = v => {
@@ -72,8 +82,8 @@ export function printTable(title, subtitle, headers, rows, summary = '') {
 export function printAttendance({ market, subtitle, summary, headers, rows, plans = [], legend = '' }) {
   const w = window.open('', '_self');
   if (!w) throw Error('Could not open the print view in this browser.');
-  const planPages = plans.map(p => `<section class="plan"><h2>${esc(p.title)}</h2><img src="${p.image}" alt="${esc(p.title)}"></section>`).join('');
-  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter landscape;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:6.6in;object-fit:contain}@media screen{body{overflow-x:auto}table{min-width:1040px}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
+  const planPages = plans.map(p => `<section class="plan${p.names && p.names.length ? ' with-names' : ''}"><h2>${esc(p.title)}</h2><img src="${p.image}" alt="${esc(p.title)}">${p.names && p.names.length ? `<div class="plan-names"><h3>Vendor names — ${esc(p.title)}</h3><ul>${p.names.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}</section>`).join('');
+  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter landscape;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:6.6in;object-fit:contain}.plan.with-names img{max-height:5.3in}.plan-names{margin-top:10px}.plan-names h3{font-size:11pt;margin:0 0 4px}.plan-names ul{columns:3;column-gap:20px;margin:0;padding-left:15px;font-size:9pt;line-height:1.55}@media(max-width:700px){.plan-names ul{columns:2}}@media screen{body{overflow-x:auto}table{min-width:1040px}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
   w.document.close();
 }
 
@@ -88,5 +98,7 @@ export function printExpenseReport(rows, filterLabel, isTumblerRow) {
   w.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(title) + '</title><style>@page{size:letter landscape;margin:.45in}body{font-family:Arial,sans-serif;color:#172a24;font-size:10px;background:#fff}header{border-bottom:3px solid #184d42;padding-bottom:12px;margin-bottom:15px}h1{margin:4px 0;font-size:23px}h2{font-size:16px;margin:4px 0}p{margin:6px 0}.sub{color:#475c54}.summary{display:flex;gap:35px;padding:12px 0;font-size:14px;font-weight:bold}table{border-collapse:collapse;width:100%}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #cdd5d0;padding:6px;overflow-wrap:anywhere}th{background:#e9efec;text-transform:uppercase;font-size:9px}tr{break-inside:avoid}footer{margin-top:18px;display:flex;justify-content:space-between;gap:24px;color:#53635d}button{margin:12px 0;padding:8px 12px}@media print{button{display:none}}' + PRINT_CONTROLS_CSS + '</style></head><body>' + printControls() + '<header><strong>TRINITY CRAFTERS MARKET</strong><h1>' + esc(title) + '</h1><p class="sub">' + esc(filterLabel) + ' · Generated ' + esc(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })) + ' Eastern</p></header><div class="summary"><span>' + rows.length + ' expense entries</span><span>Total: ' + esc(usd(total)) + '</span>' + (quantity ? '<span>Tumblers: ' + quantity + '</span>' : '') + '</div><table><thead><tr><th>Expense date</th><th>Market date</th><th>Market</th><th>Category</th><th>Description / Payee</th><th>Qty</th><th>Amount</th><th>Notes</th></tr></thead><tbody>' + printable + '</tbody></table><footer><div>' + (tumblerOnly ? 'Non-cash invoice credits; invoice-level reconciliation is separate.' : 'Internal organizer expense records.') + '</div><div>Reviewed by: ____________________ &nbsp; Date: __________</div></footer></body></html>');
   w.document.close();
   w.focus();
-  w.addEventListener('load', () => w.print(), { once: true });
+  // §78: the load-fired w.print() that §76 removed from the other two
+  // builders is gone here too — same modal-dialog trap on desktop, same
+  // no-op in the app WebView. The shared Print button is the way in.
 }

@@ -69,7 +69,7 @@ function assertPrintableShell(html, label) {
   // The shared controls row.
   assert.ok(html.includes('class="print-controls"'), label + ': controls row must be present');
   assert.equal(html.split('class="print-controls"').length - 1, 1, label + ': exactly one controls row');
-  assert.ok(html.includes('window.print()">Print / Save PDF</button>'), label + ': Print / Save PDF button');
+  assert.ok(html.includes('window.print()}">Print / Save PDF</button>') && html.includes('TrinityPrint'), label + ': Print / Save PDF button');
   assert.ok(html.includes('window.close()'), label + ': Close must call window.close()');
   // §39's back step was removed by §75 (Nov 18, 2026): since §74 the
   // sheet lives in the app's own tab at the app's own URL, where there

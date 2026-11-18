@@ -20,11 +20,11 @@ test('§76: no print page auto-fires the print dialog on load', () => {
   const PRINT = read('public/v2/js/print.js');
   assert.ok(!PRINT.includes('window.onload=()=>window.print()'), 'printTable carries no auto-print script');
   assert.ok(!PRINT.includes('window.onload=()=>setTimeout(()=>window.print(),50)'), 'printAttendance carries no auto-print script');
-  assert.ok(PRINT.includes('onclick="window.print()"'), 'the deliberate Print button remains');
+  assert.ok(PRINT.includes('TrinityPrint.print()'), 'the deliberate Print button remains (§78: bridge-aware, window.print() fallback)');
   for (const p of ['public/v2/js/floorplan.js', 'public/floor-areas.js']) {
     const src = read(p);
     assert.ok(!src.includes('PLAN_PRINT_SCRIPT'), p + ': the auto-print script is gone');
     assert.ok(!src.includes('addEventListener("load",p)'), p + ': no load-fired print remains');
-    assert.ok(src.includes('onclick="window.print()"'), p + ': the deliberate Print button remains');
+    assert.ok(src.includes('TrinityPrint.print()'), p + ': the deliberate Print button remains (§78: bridge-aware)');
   }
 });

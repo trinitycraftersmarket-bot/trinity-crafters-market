@@ -64,7 +64,7 @@ function assertAppControls(html, label) {
   assert.ok(!html.includes(BILLING_ANCHOR), label + ': anchor must target the app root, not billing');
   assert.ok(html.includes('min-height:44px'), label + ': big-target CSS must render');
   assert.ok(html.includes(HINT_TAIL), label + ': hint must name the exit');
-  assert.ok(html.includes('window.print()">Print / Save PDF</button>'), label + ': Print button kept');
+  assert.ok(html.includes('window.print()}">Print / Save PDF</button>') && html.includes('TrinityPrint'), label + ': Print button kept');
   assert.ok(html.includes('if(!window.closed)location.reload()},300)'), label + ': §75 cascade step 2 (reload) kept');
   assert.ok(html.includes(`if(!window.closed)location.href='${APP_URL}?from=print'},800)`), label + ': §75 cascade fallback kept');
   assert.ok(html.includes('@media print{.print-controls{display:none}}'), label + ': row stays off paper');
