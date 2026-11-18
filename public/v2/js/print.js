@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261118-74';
+import { esc } from './api.js?v=20261118-75';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
@@ -30,8 +30,15 @@ const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 // app", button-styled) — zero JavaScript, always navigates — as the
 // guaranteed floor under the JS Close cascade.
 const PRINT_CONTROLS_CSS = `:root{color-scheme:light}.print-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:0 0 12px}.print-controls button,.print-controls .print-back{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 18px;font-size:12pt;font-family:inherit;cursor:pointer}.print-controls .print-back{border:1px solid #888;border-radius:4px;background:#f0f0f0;color:#111;text-decoration:none}.print-controls p{flex:1 1 100%;margin:4px 0 0;font-size:10pt;color:#555}@media(max-width:600px){.print-controls button,.print-controls .print-back{flex:1 1 100%}}@media print{.print-controls{display:none}}`;
+// §75 (Nov 18, 2026): the return controls RELOAD. Since §74 the print
+// page lives at the app's own URL, so the old chain's last steps were
+// no-ops: location.href to the same path only drops the hash (no
+// navigation, no reload) and there is no history entry to go back to.
+// location.reload() re-fetches the app from the server at this URL —
+// hash route intact — and the '?from=print' fallback URL differs from
+// the current path, so it really navigates even without JS.
 function printControls() {
-  return `<div class="print-controls"><button type="button" onclick="window.print()">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/'},700)">Close</button> <a class="print-back" href="https://trinitylutzmarkets.com/v2/">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>`;
+  return `<div class="print-controls"><button type="button" onclick="window.print()">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/?from=print'},800)">Close</button> <a class="print-back" href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>`;
 }
 const dateKey = v => String(v || '').slice(0, 10);
 const niceShortDate = v => {
@@ -44,7 +51,7 @@ const niceShortDate = v => {
 // in THIS tab ('_self'), never a '_blank' popup — on Scott's phone the
 // popups got handed off to the browser app and the generated pages (and
 // their buttons) misbehaved there. The shared controls' Close chain
-// (close -> history.back -> app root) is the way back.
+// (close -> reload -> app root, §75) is the way back.
 export function printTable(title, subtitle, headers, rows, summary = '') {
   const w = window.open('', '_self');
   if (!w) throw Error('Could not open the print view in this browser.');

@@ -6,7 +6,7 @@
 // expect — and a bare window.print(), which many phone WebViews do not
 // implement at all. §36 already solved this exact problem for the shared
 // print controls (public/v2/js/print.js): Close tries window.close(),
-// then history.back(), then navigates back to the app, and a permanent
+// then a reload (§75; history.back() before it), then navigates back to the app, and a permanent
 // "← Back to the app" link plus a phone hint (printing lives in the
 // browser menu) are always shown. §72 brings the same controls to the
 // booth list AND to the sibling "Print floor plan" page in both apps;
@@ -32,9 +32,9 @@ for (const f of FILES) {
     const src = read(f.path);
     assert.ok(src.includes('window.print()">Print / Save as PDF</button>'), 'the Print button stays');
     assert.ok(!src.includes('onclick="window.close()">'), 'no bare window.close() button remains on either printable page');
-    assert.ok(src.includes('window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300)'), 'Close falls back to history.back() at ~300ms');
-    assert.ok(src.includes('location.href=' + BS + "'" + f.app + BS + "'},700)"), 'Close falls back to the app at ~700ms');
-    assert.ok(src.includes(`<a href="${f.app}">← Back to the app</a>`), 'a permanent Back to the app link is shown');
+    assert.ok(src.includes('window.close();setTimeout(function(){if(!window.closed)location.reload()},300)'), 'Close falls back to a reload at ~300ms (§75)');
+    assert.ok(src.includes('location.href=' + BS + "'" + f.app + '?from=print' + BS + "'},800)"), 'Close falls back to the app at ~800ms (§75)');
+    assert.ok(src.includes(`<a href="${f.app}?from=print" onclick="location.reload();return false;">← Back to the app</a>`), 'a permanent Back to the app link is shown');
     assert.ok(src.includes('On a phone? Printing lives in the browser menu'), 'the phone printing hint is shown');
     assert.ok(src.includes('@media print{.button-row{display:none!important}}'), 'the controls stay off the paper');
     const chains = src.match(/window\.close\(\);setTimeout/g) || [];
@@ -54,7 +54,7 @@ for (const f of FILES) {
     const html = vm.runInContext(literal, vm.createContext({}));
     assert.equal(typeof html, 'string');
     assert.ok(html.includes('window.close();setTimeout'), 'generated Close carries the fallback chain');
-    assert.ok(html.includes(`location.href='${f.app}'`), 'generated fallback navigates to the right app');
-    assert.ok(html.includes(`href="${f.app}"`), 'generated Back link points at the right app');
+    assert.ok(html.includes(`location.href='${f.app}?from=print'`), 'generated fallback navigates to the right app');
+    assert.ok(html.includes(`href="${f.app}?from=print"`), 'generated Back link points at the right app');
   });
 }

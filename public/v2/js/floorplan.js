@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-74';
+import { api, esc, nice } from './api.js?v=20261118-75';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -410,7 +410,7 @@ export async function printFloorPlan({ event, areas, area, vendors, dirty, toast
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' +
     PLAN_PRINT_CSS +
     '</style></head><body>' +
-    '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/\'},700)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/v2/">← Back to the app</a></div>' +
+    '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a></div>' +
     sections.join('') + PLAN_PRINT_SCRIPT +
     '</body></html>';
   popup.document.open();
@@ -467,7 +467,7 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     '@media print{.button-row{display:none!important}}';
   const legend = spotLegend(blocks.map(b => ({ title: b.title, spots: b.rows.map(r => r.id) })));
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' + stylesheet + '</style></head><body>' +
-    '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/\'},700)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>' +
+    '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>' +
     '<header><h1>' + esc(title) + '</h1><p><strong>' + esc(dateText) + '</strong> · ' + esc(venue?.name || event.title || '') + '</p>' +
     (venue?.address ? '<p>' + esc(venue.address) + '</p>' : '') +
     '<p class="private">Private organizer copy — do not distribute to vendors</p>' +

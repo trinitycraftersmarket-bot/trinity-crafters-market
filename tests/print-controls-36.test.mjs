@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = p => readFileSync(join(root, p), 'utf8');
-const FALLBACK = "location.href='https://trinitylutzmarkets.com/v2/'";
+const FALLBACK = "location.href='https://trinitylutzmarkets.com/v2/?from=print'"; // §75: '?from=print' so the fallback really navigates
 const HINT = 'On a phone? Printing lives in the browser menu';
 
 // ---------------------------------------------------------------- static pins
@@ -34,12 +34,16 @@ test('§36: print.js has ONE shared controls helper + CSS, used by all three bui
     'the expense report lone Print button must be replaced by the shared row');
 });
 
-test('§39: the shared Close handler is a cascade — close, back at ~300ms, reload fallback at ~700ms', () => {
+test('§39: the shared Close handler is a cascade — close, reload at ~300ms, app fallback at ~800ms (§75)', () => {
+  // §75 (Nov 18, 2026) replaced §39's history.back() step: since §74 the
+  // print page lives at the app's own URL in the same tab, where
+  // history.back() has nothing to go back to and a same-path href never
+  // navigates. Reloading re-fetches the app at this URL instead.
   const src = read('public/v2/js/print.js');
-  assert.ok(src.includes('if(!window.closed&&history.length>1)history.back()},300)'),
-    'step 2: at ~300ms, if still open and history exists, history.back()');
-  assert.ok(src.includes("if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/'},700)"),
-    'step 3: at ~700ms, if still open, the §36 reload fallback fires');
+  assert.ok(src.includes('if(!window.closed)location.reload()},300)'),
+    'step 2: at ~300ms, if still open, reload back into the app');
+  assert.ok(src.includes("if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/?from=print'},800)"),
+    'step 3: at ~800ms, if still open, the app fallback fires (a URL that really navigates)');
 });
 
 // ---------------------------------------------------------------- harness
@@ -66,11 +70,11 @@ function assertPrintableShell(html, label) {
   assert.equal(html.split('class="print-controls"').length - 1, 1, label + ': exactly one controls row');
   assert.ok(html.includes('window.print()">Print / Save PDF</button>'), label + ': Print / Save PDF button');
   assert.ok(html.includes('window.close()'), label + ': Close must call window.close()');
-  // §39: before the reload fallback, Close must try stepping back — in the
-  // app the sheet is a same-webview navigation, so Back preserves the app
-  // screen as the user left it.
-  assert.ok(html.includes('history.length>1'), label + ': Close cascade must guard the back step with history.length>1 (§39)');
-  assert.ok(html.includes('history.back()'), label + ': Close cascade must include the history.back() step (§39)');
+  // §39's back step was removed by §75 (Nov 18, 2026): since §74 the
+  // sheet lives in the app's own tab at the app's own URL, where there
+  // is no history entry for the print page — the cascade reloads instead.
+  assert.ok(html.includes('if(!window.closed)location.reload()},300)'), label + ': Close cascade reloads back into the app at ~300ms (§75)');
+  assert.ok(html.includes('location.reload()'), label + ': Close cascade must include the reload step (§75)');
   assert.ok(html.includes('>Close</button>'), label + ': Close button is labelled');
   assert.ok(html.includes(FALLBACK), label + ': Close fallback must navigate back to the v2 app');
   assert.ok(html.includes(HINT), label + ': the phone hint must be present');

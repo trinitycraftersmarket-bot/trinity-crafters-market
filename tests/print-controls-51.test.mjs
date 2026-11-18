@@ -27,7 +27,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = p => readFileSync(join(root, p), 'utf8');
 const APP_URL = 'https://trinitylutzmarkets.com/v2/';
 const BILLING_URL = 'https://trinitylutzmarkets.com/v2/#billing';
-const APP_ANCHOR = `<a class="print-back" href="${APP_URL}">← Back to the app</a>`;
+const APP_ANCHOR = `<a class="print-back" href="${APP_URL}?from=print" onclick="location.reload();return false;">← Back to the app</a>`; // §75 anchor form
 const BILLING_ANCHOR = `<a class="print-back" href="${BILLING_URL}">← Back to the app</a>`;
 const HINT_TAIL = 'or tap Back to the app to return';
 
@@ -65,8 +65,8 @@ function assertAppControls(html, label) {
   assert.ok(html.includes('min-height:44px'), label + ': big-target CSS must render');
   assert.ok(html.includes(HINT_TAIL), label + ': hint must name the exit');
   assert.ok(html.includes('window.print()">Print / Save PDF</button>'), label + ': Print button kept');
-  assert.ok(html.includes('if(!window.closed&&history.length>1)history.back()},300)'), label + ': §39 cascade step 2 kept');
-  assert.ok(html.includes(`if(!window.closed)location.href='${APP_URL}'},700)`), label + ': §39 cascade fallback kept');
+  assert.ok(html.includes('if(!window.closed)location.reload()},300)'), label + ': §75 cascade step 2 (reload) kept');
+  assert.ok(html.includes(`if(!window.closed)location.href='${APP_URL}?from=print'},800)`), label + ': §75 cascade fallback kept');
   assert.ok(html.includes('@media print{.print-controls{display:none}}'), label + ': row stays off paper');
 }
 
@@ -96,7 +96,7 @@ test('§51 (negative controls): the print.js pins fail on mutated markup', async
   const html = doc.html;
   assert.ok(html.includes(APP_ANCHOR), 'sanity: the real render carries the anchor');
   assert.ok(!html.replace(APP_ANCHOR, '').includes(APP_ANCHOR), 'pin bites when the anchor is removed');
-  assert.ok(!html.replace(APP_URL + '">←', '#elsewhere">←').includes(APP_ANCHOR), 'pin bites when the href is wrong');
+  assert.ok(!html.replace('href="' + APP_URL + '?from=print"', 'href="#elsewhere"').includes(APP_ANCHOR), 'pin bites when the href is wrong');
   assert.ok(!html.replace('← Back to the app', '← Back').includes(APP_ANCHOR), 'pin bites when the label is wrong');
   assert.ok(!html.replace('min-height:44px', 'min-height:20px').includes('min-height:44px'), 'pin bites when targets shrink');
 });
