@@ -9,15 +9,16 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-70';
-import { attendeeRows, eventStats } from './data.js?v=20261118-70';
-import { parseAttendeePdf } from './pdfimport.js?v=20261118-70';
-import { printAttendance } from './print.js?v=20261118-70';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261118-70';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-71';
+import { attendeeRows, eventStats } from './data.js?v=20261118-71';
+import { parseAttendeePdf } from './pdfimport.js?v=20261118-71';
+import { printAttendance } from './print.js?v=20261118-71';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261118-71';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
 const INSP_CLASS = { not_inspected: 'warn', approved: 'ok', needs_correction: 'bad', refused: 'bad' };
+const ARRIVAL_PRINT = { '08:15': '8:15 AM', '08:30': '8:30 AM', '08:45': '8:45 AM', '09:00': '9:00 AM' };
 
 let view = { eventId: '', q: '' };
 
@@ -409,7 +410,10 @@ export function renderAttendees(ctx, root, params = {}) {
   };
   root.querySelector('#v2-att-import').onclick = () => importSheet();
   root.querySelector('#v2-att-print').onclick = async () => {
-    const rows = rowsNow();
+    // §71 (Scott, Nov 18, 2026): the printed list runs in desired check-in
+    // (setup arrival) order, earliest first; vendors who never picked a
+    // time ('99:99' sorts them last) print at the end.
+    const rows = [...rowsNow()].sort((a, b) => String(a.setup_arrival_time || '99:99').slice(0, 5).localeCompare(String(b.setup_arrival_time || '99:99').slice(0, 5)));
     let plans = [];
     try {
       const res = await api('floor-area-plans', undefined, { event_id: event.id });
@@ -421,7 +425,7 @@ export function renderAttendees(ctx, root, params = {}) {
         market: loc?.market_name || event.title || 'Crafters Market',
         subtitle: nice(event.date) + ' · ' + (loc?.name || event.location || '') + ' · ' + clock(event.start_time) + '–' + clock(event.end_time),
         summary: rows.length + ' vendors · ' + rows.filter(r => r.payStatus === 'paid').length + ' paid · ' + rows.filter(r => r.attendance === 'checked_in').length + ' checked in',
-        headers: ['Space', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection'],
+        headers: ['Space', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection', 'Setup Arrival'],
         rows: rows.map(r => [
           r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'),
           r.business || '', r.name || '', r.category || '',
@@ -429,7 +433,8 @@ export function renderAttendees(ctx, root, params = {}) {
           String(r.email || '').replace(/,+\s*$/, '').trim() || 'Not provided',
           r.payStatus === 'paid' ? 'Paid' : 'Unpaid',
           r.attendance === 'checked_in' ? 'Checked in' : r.attendance === 'no_show' ? 'No show' : 'Not marked',
-          INSP_PRINT[r.inspection_status] || 'Not inspected'
+          INSP_PRINT[r.inspection_status] || 'Not inspected',
+          ARRIVAL_PRINT[String(r.setup_arrival_time || '').slice(0, 5)] || '—'
         ]),
         plans
       });

@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261118-70';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261118-70';
+import { api, fn, esc, nice, money } from './api.js?v=20261118-71';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261118-71';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();

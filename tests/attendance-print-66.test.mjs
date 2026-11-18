@@ -31,7 +31,10 @@ const SRC = read('public/attendance-hotfix.js');
 // ---------------------------------------------------------------- static pins
 test('§66: the report scrapes the Online Check-In line and prints it in the Attendance cell', () => {
   assert.ok(SRC.includes("onlineCheckin=(allText.match(/Online Check-In:\\s*(Completed|Not completed)/i)||[])[1]||'Not completed'"), 'the scrape reads the card Online Check-In line, defaulting to Not completed');
-  assert.ok(SRC.includes("<div>Online check-in: ${onlineCheckin==='Completed'?'Completed ✓':'Not completed'}</div>"), 'the Attendance cell carries the online check-in sub-line');
+  // §71 restructured the builder (scrape to data objects, sort by arrival,
+  // then render), so the sub-line now reads through the row object (v.*);
+  // the printed cell content is identical, as the behavioral tests below prove.
+  assert.ok(SRC.includes("<div>Online check-in: ${v.onlineCheckin==='Completed'?'Completed ✓':'Not completed'}</div>"), 'the Attendance cell carries the online check-in sub-line');
   // Untouched neighbors: the organizer Attendance scrape, the
   // correction highlighting and the other columns stay as they were.
   assert.ok(SRC.includes("attendance=(allText.match(/Attendance:\\s*(Checked in|No show|Not marked)/i)||[])[1]||'Not marked'"), 'the organizer Attendance scrape is unchanged');
