@@ -405,6 +405,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
   }
   function printAssignments(){
     const event=events.find(e=>e.id===state.eventId);
+    if(state.dirty){notice('Your changes are still saving — wait a moment, then print.');return;}
     const venue=locations.find(l=>l.id===event?.location_id);
     if(!event||!state.areas.length){
       notice('Select an event with floor plan areas before printing.');return;
@@ -458,13 +459,13 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       (()=>{const seen=new Map();for(const b of blocks){const first=(b.rows||[])[0];if(!first)continue;const prefix=String(first.id).split('-')[0];if(prefix&&!seen.has(prefix))seen.set(prefix,b.title||prefix);}return seen.size?'<p class="legend">Spot key: '+[...seen.entries()].map(([p,t])=>p+' = '+t).join(' · ')+'</p>':'';})()+
       sections+pending+'</body></html>';
     // Open directly in this click handler, before browser popup protections apply.
-    const popup=window.open('','_blank');
-    if(!popup){notice('Your browser blocked the print preview. Allow pop-ups for this site and try again.');return;}
+    const popup=window.open('','_self');
+    if(!popup){notice('Could not open the print preview in this browser.');return;}
     popup.document.open();
     popup.document.write(doc);
     popup.document.close();
     popup.focus();
-    status('Printable booth list opened in a new tab. Select Print / Save as PDF.');
+    status('Printable booth list opened. Select Print / Save as PDF.');
   }
   function copyDefaults(source){
     return source.map(a=>standardize({...a,assignments:{}}));
@@ -586,10 +587,11 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     // vendor. An area with neither is skipped, so no blank page appears.
     const printable=state.areas.map(area=>({area,pins:pinsForArea(area)})).filter(x=>x.pins.length||imageAllowed(x.area.image_data_url));
     if(!printable.some(x=>x.pins.length)){notice('No vendors are assigned in this event yet. Assign vendors before printing the floor plan.');return;}
+    if(state.dirty){notice('Your changes are still saving — wait a moment, then print.');return;}
     // Open the popup synchronously inside the click (popup blockers), show a
     // preparing note, and replace it once the composite images are rendered.
-    const popup=window.open('','_blank');
-    if(!popup){notice('Your browser blocked the print window. Allow pop-ups for this site and try again.');return;}
+    const popup=window.open('','_self');
+    if(!popup){notice('Could not open the print window in this browser.');return;}
     popup.document.open();
     popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing floor plan</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable floor plan\u2026</body></html>');
     popup.document.close();

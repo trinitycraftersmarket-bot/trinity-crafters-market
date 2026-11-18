@@ -9,8 +9,8 @@
 // from a legacy module. v2 cannot import legacy modules, so the flag here
 // uses the scan SAVED on the application at submit time
 // (agreements.category_scan) — the same data the legacy review reads first.
-import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261118-73';
-import { normalizeSpace, attendeeRows } from './data.js?v=20261118-73';
+import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261118-74';
+import { normalizeSpace, attendeeRows } from './data.js?v=20261118-74';
 
 const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', held: 'Payment due', paid: 'Paid', waitlist: 'Wait-list', declined: 'Declined', cancelled: 'Cancelled', expired: 'Expired' };
 const STATUS_CLASS = { pending: 'warn', approved: 'neutral', held: 'warn', paid: 'ok', waitlist: 'neutral', declined: 'bad', cancelled: 'bad', expired: 'bad' };

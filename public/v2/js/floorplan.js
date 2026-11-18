@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-73';
+import { api, esc, nice } from './api.js?v=20261118-74';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -380,15 +380,24 @@ export function composePlanCanvas(area, vendors) {
 // toolbar (Print / \u2715 Close) never prints.
 const PLAN_PRINT_CSS = '@page{size:letter portrait;margin:.4in}*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:#fff;font-family:Arial,Helvetica,sans-serif}.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}.plan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always}.plan-page.last{break-after:auto;page-break-after:auto}.plan-head{flex:0 0 auto}.plan-head h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.plan-head .sub{margin:0 4px 10px;color:#44554c;font-size:10pt}.plan-frame{flex:1 1 auto;min-height:0}.plan-frame img{display:block;width:100%;height:100%;object-fit:contain}@media print{.tools{display:none!important}}';
 const PLAN_PRINT_SCRIPT = '<script>function p(){setTimeout(function(){window.print();},150);}if(document.readyState==="complete")p();else window.addEventListener("load",p);<\/script>';
-export async function printFloorPlan({ event, areas, area, vendors, toast }) {
+// §74 (Scott, Nov 18, 2026): printouts open in THIS tab, never a popup.
+// On Scott's phone every window.open('_blank') print page got handed
+// off to the browser app ('it's still opening the browser'), where the
+// generated page and its buttons misbehaved. Same-tab rendering keeps
+// the printout inside the app; the §72 Close chain (close -> back ->
+// app root) is the way back. Because the editor page is replaced, a
+// print requested while autosave is still holding changes is refused
+// with a toast instead of discarding them.
+export async function printFloorPlan({ event, areas, area, vendors, dirty, toast }) {
+  if (dirty) { toast('Your changes are still saving — wait for the saved checkmark, then print.', true); return; }
   const list = (areas && areas.length ? areas : [area]).filter(Boolean);
   // Every area with a layout image or at least one assigned vendor gets
   // its own page; an area with neither is skipped so no blank page appears.
   const targets = list.map(a => ({ area: a, pins: resolvePins(a, vendors) }))
     .filter(x => x.pins.length || imageAllowed(x.area.image_data_url));
   if (!targets.some(x => x.pins.length)) { toast('No vendors are assigned in ' + (area?.title || list[0]?.title || 'this area') + ' yet. Assign vendors before printing the floor plan.', true); return; }
-  const popup = window.open('', '_blank');
-  if (!popup) { toast('Your browser blocked the print window. Allow pop-ups for this site and try again.', true); return; }
+  const popup = window.open('', '_self');
+  if (!popup) { toast('Could not open the print view in this browser.', true); return; }
   popup.document.open();
   popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing floor plan</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable floor plan\u2026</body></html>');
   popup.document.close();
@@ -415,6 +424,7 @@ export async function printFloorPlan({ event, areas, area, vendors, toast }) {
 // unassigned/overflow list. Organizer-only printout (the legacy wording
 // is preserved: it is never sent to vendors).
 export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
+  if (dirty) { toast('Your changes are still saving — wait for the saved checkmark, then print.', true); return; }
   if (!event || !areas.length) { toast('Choose an event with floor plan areas before printing.', true); return; }
   const vendorById = new Map((vendors || []).map(v => [String(v.id), v]));
   const assigned = new Set();
@@ -465,11 +475,11 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     '</header><p class="summary">' + filled + ' of ' + total + ' booths assigned · ' + (total - filled) + ' open · ' + unassigned.length + ' vendors awaiting a booth</p>' +
     (legend ? '<p class="legend">' + esc(legend) + '</p>' : '') +
     sections + pending + '</body></html>';
-  const popup = window.open('', '_blank');
-  if (!popup) { toast('Your browser blocked the print preview. Allow pop-ups for this site and try again.', true); return; }
+  const popup = window.open('', '_self');
+  if (!popup) { toast('Could not open the print view in this browser.', true); return; }
   popup.document.open();
   popup.document.write(doc);
   popup.document.close();
   popup.focus();
-  toast('Printable booth list opened in a new tab.');
+  toast('Printable booth list opened — Print / Save as PDF is at the top.');
 }

@@ -14,11 +14,11 @@
 // organizer's concurrent edits instead of overwriting them, the canvas
 // composite print, and the setup instructions email. Native confirm()
 // dialogs are replaced by the shared sheet system (§6.2).
-import { api, esc, nice, clock, marketName } from './api.js?v=20261118-73';
+import { api, esc, nice, clock, marketName } from './api.js?v=20261118-74';
 import {
   imageAllowed, standardizeArea, spotId, spotIds, clampPct, vendorLabel,
   resolvePinPosition, resolvePins, fitPins, composePlanCanvas, printFloorPlan, printBoothList
-} from './floorplan.js?v=20261118-73';
+} from './floorplan.js?v=20261118-74';
 
 let view = { eventId: '' };
 const clone = data => JSON.parse(JSON.stringify(data));
@@ -406,7 +406,7 @@ export function renderFloorEditor(ctx, root, params = {}) {
       void load();
     };
     q('#fe-print-list').onclick = () => printBoothList({ event, venue: location, areas: state.areas, vendors: state.vendors, dirty: state.dirty, toast: ctx.toast });
-    q('#fe-print-plan').onclick = () => { void printFloorPlan({ event, area: current(), areas: state.areas, vendors: state.vendors, toast: ctx.toast }); };
+    q('#fe-print-plan').onclick = () => { void printFloorPlan({ event, area: current(), areas: state.areas, vendors: state.vendors, dirty: state.dirty, toast: ctx.toast }); };
     body.querySelectorAll('[data-area]').forEach(b => b.onclick = () => { state.active = Number(b.dataset.area) || 0; state.selectedSpot = null; render(); });
     q('#fe-spot').onchange = e => {
       const id = e.target.value;
