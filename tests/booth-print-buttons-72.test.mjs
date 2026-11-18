@@ -35,7 +35,7 @@ for (const f of FILES) {
     assert.ok(src.includes('window.close();setTimeout(function(){if(!window.closed)location.reload()},300)'), 'Close falls back to a reload at ~300ms (§75)');
     assert.ok(src.includes('location.href=' + BS + "'" + f.app + '?from=print' + BS + "'},800)"), 'Close falls back to the app at ~800ms (§75)');
     assert.ok(src.includes(`<a href="${f.app}?from=print" onclick="location.reload();return false;">← Back to the app</a>`), 'a permanent Back to the app link is shown');
-    assert.ok(src.includes('On a phone? Printing lives in the browser menu'), 'the phone printing hint is shown');
+    assert.ok(src.includes('In the app, the Print button above opens the print dialog'), 'the phone printing hint is shown (§79: reworded — the app button works now)');
     assert.ok(src.includes('@media print{.button-row{display:none!important}}'), 'the controls stay off the paper');
     const chains = src.match(/window\.close\(\);setTimeout/g) || [];
     assert.ok(chains.length >= 2, 'both printable pages (booth list + floor plan) carry the fallback Close chain');

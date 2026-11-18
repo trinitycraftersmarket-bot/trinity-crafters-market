@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-78';
+import { api, esc, nice } from './api.js?v=20261118-79';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -421,6 +421,14 @@ export async function printFloorPlan({ event, areas, area, vendors, dirty, toast
   toast('Printable floor plan opened \u2014 ' + targets.length + ' area plan' + (targets.length === 1 ? '' : 's') + ', one page each.');
 }
 
+// §79 (Nov 18, 2026): the plan pages attached to the back of the booth
+// assignments printout — one section per printable area, composited
+// image plus the §78 plain-text names list, from the same resolved
+// pins that draw the tags.
+export function boothPlanSections(targets, urls, sub) {
+  return targets.map((t, i) => '<section class="plan-page"><h2>' + esc(t.area.title) + ' — floor plan</h2><p class="sub">' + esc(sub) + ' · ' + t.pins.length + ' vendor' + (t.pins.length === 1 ? '' : 's') + ' placed</p><img class="plan" alt="Floor plan with vendor names" src="' + urls[i] + '">' + (t.pins.length ? '<div class="plan-names"><strong>Vendor names:</strong> ' + t.pins.map(p => esc(p.spot) + ' — ' + esc(p.label)).join(' · ') + '</div>' : '') + '</section>').join('');
+}
+
 // Print the booth list: every area as a check-in table, plus the
 // unassigned/overflow list. Organizer-only printout (the legacy wording
 // is preserved: it is never sent to vendors).
@@ -465,10 +473,11 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     '.booth{width:21%;font-weight:700}.check{width:16%;text-align:center}.tick{display:inline-block;width:14px;height:14px;border:1.3px solid #65796c;border-radius:2px}' +
     '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center}.button-row a{color:#175745;font-weight:bold;font-size:13px}.button-row p{flex-basis:100%;margin:2px 0 0;font-size:9pt;color:#56675e}' +
     'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}' +
-    '@media print{.button-row{display:none!important}}';
+    '@media print{.button-row{display:none!important}}' +
+    '.plan-page{break-before:page;page-break-before:always}.plan-page h2{font:700 14pt Georgia,serif;color:#174d40;margin:0 0 2px}.plan-page .sub{margin:0 0 8px;color:#44554c;font-size:10pt}.plan-page img{width:100%;max-height:8.4in;object-fit:contain}.plan-names{margin-top:8px;font-size:10pt;line-height:1.55;color:#22312a}';
   const legend = spotLegend(blocks.map(b => ({ title: b.title, spots: b.rows.map(r => r.id) })));
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' + stylesheet + '</style></head><body>' +
-    '<div class="button-row"><button type="button" onclick="if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>' +
+    '<div class="button-row"><button type="button" onclick="if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>In the app, the Print button above opens the print dialog. In a browser you can also use ⋮ → Share → Print.</p></div>' +
     '<header><h1>' + esc(title) + '</h1><p><strong>' + esc(dateText) + '</strong> · ' + esc(venue?.name || event.title || '') + '</p>' +
     (venue?.address ? '<p>' + esc(venue.address) + '</p>' : '') +
     '<p class="private">Private organizer copy — do not distribute to vendors</p>' +
@@ -478,9 +487,33 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     sections + pending + '</body></html>';
   const popup = window.open('', '_self');
   if (!popup) { toast('Could not open the print view in this browser.', true); return; }
+  // §79 (Scott, Nov 18, 2026): "printing the floor plan for November 28
+  // isn't attached to the booth assignments report" — it is now: the
+  // plan pages for THIS event (composited images + the §78 names
+  // lists) ride at the back of this printout, so one print carries the
+  // tables and the plans. Same two-phase write as printFloorPlan: the
+  // preparing note opens inside the click, the full document lands
+  // once the composites render.
+  const targets = areas.map(area => ({ area, pins: resolvePins(area, vendors || []) })).filter(x => x.pins.length || imageAllowed(x.area.image_data_url));
+  if (!targets.length) {
+    popup.document.open();
+    popup.document.write(doc);
+    popup.document.close();
+    popup.focus();
+    toast('Printable booth list opened — Print / Save as PDF is at the top.');
+    return;
+  }
   popup.document.open();
-  popup.document.write(doc);
+  popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing booth assignments</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable booth assignments…</body></html>');
   popup.document.close();
-  popup.focus();
-  toast('Printable booth list opened — Print / Save as PDF is at the top.');
+  Promise.all(targets.map(async x => {
+    const canvas = await composePlanCanvas(x.area, vendors || []);
+    return canvas.toDataURL('image/png');
+  })).then(urls => {
+    popup.document.open();
+    popup.document.write(doc.replace('</body></html>', boothPlanSections(targets, urls, dateText) + '</body></html>'));
+    popup.document.close();
+    popup.focus();
+    toast('Printable booth list opened — floor plans attached at the back.');
+  });
 }

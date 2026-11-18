@@ -448,9 +448,10 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '.booth{width:21%;font-weight:700}.check{width:16%;text-align:center}.tick{display:inline-block;width:14px;height:14px;border:1.3px solid #65796c;border-radius:2px}'+
       '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center}.button-row a{color:#175745;font-weight:bold;font-size:13px}.button-row p{flex-basis:100%;margin:2px 0 0;font-size:9pt;color:#56675e}'+
       'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}'+
-      '@media print{.button-row{display:none!important}}';
+      '@media print{.button-row{display:none!important}}'+
+      '.plan-page{break-before:page;page-break-before:always}.plan-page h2{font:700 14pt Georgia,serif;color:#174d40;margin:0 0 2px}.plan-page .sub{margin:0 0 8px;color:#44554c;font-size:10pt}.plan-page img{width:100%;max-height:8.4in;object-fit:contain}.plan-names{margin-top:8px;font-size:10pt;line-height:1.55;color:#22312a}';
     const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(title)+'</title><style>'+stylesheet+'</style></head><body>'+
-      '<div class="button-row"><button type="button" onclick="if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>'+
+      '<div class="button-row"><button type="button" onclick="if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>In the app, the Print button above opens the print dialog. In a browser you can also use ⋮ → Share → Print.</p></div>'+
       '<header><h1>'+safe(title)+'</h1><p><strong>'+safe(dateText)+'</strong> · '+safe(venue?.name||event.title||'')+'</p>'+
       (venue?.address?'<p>'+safe(venue.address)+'</p>':'')+
       '<p class="private">Private organizer copy — do not distribute to vendors</p>'+
@@ -458,14 +459,31 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '</header><p class="summary">'+filled+' of '+total+' booths assigned · '+(total-filled)+' open · '+unassigned.length+' vendors awaiting a booth</p>'+
       (()=>{const seen=new Map();for(const b of blocks){const first=(b.rows||[])[0];if(!first)continue;const prefix=String(first.id).split('-')[0];if(prefix&&!seen.has(prefix))seen.set(prefix,b.title||prefix);}return seen.size?'<p class="legend">Spot key: '+[...seen.entries()].map(([p,t])=>p+' = '+t).join(' · ')+'</p>':'';})()+
       sections+pending+'</body></html>';
+    // §79 mirror: the plan pages for this event ride at the back of
+    // the booth assignments printout (see the v2 printBoothList note).
+    const printable=state.areas.map(area=>({area,pins:pinsForArea(area)})).filter(x=>x.pins.length||imageAllowed(x.area.image_data_url));
     // Open directly in this click handler, before browser popup protections apply.
     const popup=window.open('','_self');
     if(!popup){notice('Could not open the print preview in this browser.');return;}
+    if(!printable.length){
+      popup.document.open();
+      popup.document.write(doc);
+      popup.document.close();
+      popup.focus();
+      status('Printable booth list opened. Select Print / Save as PDF.');
+      return;
+    }
     popup.document.open();
-    popup.document.write(doc);
+    popup.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing booth assignments</title></head><body style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#174d40">Preparing your printable booth assignments…</body></html>');
     popup.document.close();
-    popup.focus();
-    status('Printable booth list opened. Select Print / Save as PDF.');
+    Promise.all(printable.map(x=>renderComposite(x.area,x.pins))).then(urls=>{
+      const planSections=printable.map((x,i)=>'<section class="plan-page"><h2>'+safe(x.area.title)+' — floor plan</h2><p class="sub">'+safe(dateText)+' · '+x.pins.length+' vendor'+(x.pins.length===1?'':'s')+' placed</p><img class="plan" alt="Floor plan with vendor names" src="'+urls[i]+'">'+(x.pins.length?'<div class="plan-names"><strong>Vendor names:</strong> '+x.pins.map(pin=>safe(pin.spot)+' — '+safe(pin.label)).join(' · ')+'</div>':'')+'</section>').join('');
+      popup.document.open();
+      popup.document.write(doc.replace('</body></html>',planSections+'</body></html>'));
+      popup.document.close();
+      popup.focus();
+      status('Printable booth list opened — floor plans attached at the back.');
+    });
   }
   function copyDefaults(source){
     return source.map(a=>standardize({...a,assignments:{}}));
