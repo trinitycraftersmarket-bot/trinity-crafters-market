@@ -11,8 +11,8 @@
 // the device so the user stays signed in across app restarts and
 // windows. api.js only re-exports its API; existing importers of
 // getToken/setToken/clearToken/TOKEN_KEY are unchanged.
-import { getToken, setToken, clearToken, TOKEN_KEY } from './token.js?v=20261118-76';
-export { getToken, setToken, clearToken, TOKEN_KEY };
+import { getToken, setToken, clearToken, TOKEN_KEY, getRefreshToken, setRefreshToken, isPersistentSession, setPersistentSession, tokenExpiresAt } from './token.js?v=20261118-77';
+export { getToken, setToken, clearToken, TOKEN_KEY, getRefreshToken, setRefreshToken, isPersistentSession, setPersistentSession, tokenExpiresAt };
 
 // --- formatting helpers (ported semantics from the legacy UI) -------------
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -32,6 +32,54 @@ export const marketName = e => e?.market_name || e?.title || 'Crafters Market';
 export const todayKey = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 export const isToday = e => String(e?.date || '').slice(0, 10) === todayKey();
 
+// --- §77: admin persistent sessions -------------------------------------------
+// Scott (Nov 18, 2026): the organizer account must not keep logging
+// itself out. Supabase access tokens live about an hour; the verify
+// response's refresh token is long-lived, and verifySignInCode stores
+// it ONLY when the server's identity answer says the account is the
+// admin (token.js holds the pair). refreshSession() exchanges it for
+// a fresh access token (Supabase rotates the refresh token — the new
+// one is stored every time), and authedFetch() below retries a call
+// ONCE when the server answers with its sign-in errors, so an expired
+// access token renews itself mid-flight instead of bouncing the
+// organizer to the code screen. Non-admin sessions store no refresh
+// token, so none of this ever runs for them. Single-flight: parallel
+// calls share one refresh instead of racing the rotation.
+let refreshFlight = null;
+export function refreshSession() {
+  if (!isPersistentSession() || !getRefreshToken()) return Promise.resolve(false);
+  refreshFlight = refreshFlight || (async () => {
+    try {
+      const config = await getConfig();
+      if (!config.ready) return false;
+      const r = await fetch(config.url + '/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        headers: { apikey: config.key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: getRefreshToken() })
+      });
+      const v = await r.json().catch(() => ({}));
+      if (!r.ok || !v.access_token) return false;
+      setToken(v.access_token);
+      if (v.refresh_token) setRefreshToken(v.refresh_token);
+      return true;
+    } catch { return false; } finally { refreshFlight = null; }
+  })();
+  return refreshFlight;
+}
+
+const AUTH_ERRORS = ['Sign in to continue.', 'Please sign in with a verified email.'];
+async function authedFetch(url, init) {
+  const r = await fetch(url, init);
+  const sentAuth = new Headers(init?.headers || {}).has('Authorization');
+  if (r.ok || !sentAuth || !isPersistentSession() || !getRefreshToken()) return r;
+  const probe = await r.clone().json().catch(() => ({}));
+  if (r.status !== 401 && !AUTH_ERRORS.includes(probe.error)) return r;
+  if (!await refreshSession()) return r;
+  const headers = new Headers(init?.headers || {});
+  headers.set('Authorization', 'Bearer ' + getToken());
+  return fetch(url, { ...init, headers });
+}
+
 // --- transport ---------------------------------------------------------------
 async function parse(r) {
   const v = await r.json().catch(() => ({}));
@@ -45,7 +93,7 @@ async function parse(r) {
 export async function api(action, body, params) {
   const qs = new URLSearchParams({ action, ...(params || {}) });
   const token = getToken();
-  const r = await fetch('/.netlify/functions/api?' + qs.toString(), {
+  const r = await authedFetch('/.netlify/functions/api?' + qs.toString(), {
     method: body === undefined ? 'GET' : 'POST',
     headers: {
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -61,7 +109,7 @@ export async function api(action, body, params) {
 // them.
 export async function fn(name, payload) {
   const token = getToken();
-  const r = await fetch('/.netlify/functions/' + name, {
+  const r = await authedFetch('/.netlify/functions/' + name, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
     body: JSON.stringify(payload || {})
@@ -75,7 +123,7 @@ export async function fn(name, payload) {
 // is undefined, POST JSON otherwise — same convention as api().
 export async function fnq(name, action, body) {
   const token = getToken();
-  const r = await fetch('/.netlify/functions/' + name + '?action=' + encodeURIComponent(action), {
+  const r = await authedFetch('/.netlify/functions/' + name + '?action=' + encodeURIComponent(action), {
     method: body === undefined ? 'GET' : 'POST',
     headers: {
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -91,14 +139,14 @@ export async function fnq(name, action, body) {
 // POST uploads a post image (the legacy social-media center's shapes).
 export async function fnGet(name) {
   const token = getToken();
-  const r = await fetch('/.netlify/functions/' + name, {
+  const r = await authedFetch('/.netlify/functions/' + name, {
     headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}) }
   });
   return parse(r);
 }
 export async function fnForm(name, formData) {
   const token = getToken();
-  const r = await fetch('/.netlify/functions/' + name, {
+  const r = await authedFetch('/.netlify/functions/' + name, {
     method: 'POST',
     headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}) },
     body: formData
@@ -150,6 +198,9 @@ export async function verifySignInCode(email, code) {
   const v = await r.json().catch(() => ({}));
   if (!r.ok || !v.access_token) throw Error('That code is invalid or expired.');
   setToken(v.access_token);
+  // §77: every fresh sign-in starts non-persistent; the admin grant
+  // below is the only path that stores a refresh token.
+  setRefreshToken(null); setPersistentSession(false);
   // §42: for a banned vendor the server refuses 'me' — that refusal IS
   // the enforcement, not a failed sign-in: the code verified and the
   // token is stored. Report the restricted state so boot() can probe
@@ -162,6 +213,10 @@ export async function verifySignInCode(email, code) {
   }
   // Managers get a staff-login audit row, mirroring the legacy flow.
   if (user.manager) { try { await api('staff-login', {}); } catch { /* audit only */ } }
+  // §77: the admin account — and only the admin account — keeps a
+  // refresh token on this device, so its session renews itself
+  // instead of logging out when the access token expires.
+  if (user.admin && v.refresh_token) { setRefreshToken(v.refresh_token); setPersistentSession(true); }
   return user;
 }
 export const me = () => api('me');

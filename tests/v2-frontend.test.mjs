@@ -63,19 +63,23 @@ test('v2 never references legacy front-end internals or patch techniques', () =>
   }
 });
 
-test('§52: localStorage is confined to the token accessor (one module, one key)', () => {
+test('§52+§77: localStorage is confined to the token accessor (one module, keyed helpers)', () => {
   // The old blanket ban narrowed (audit §52, Scott's directive): app DATA
   // still never touches localStorage — the server is the source of truth —
-  // but the auth token (a credential, not data) persists on the device so
-  // the user stays signed in. Exactly one module may reference
-  // localStorage: js/token.js, and it may use exactly one key.
+  // but auth credentials (not data) persist on the device so the user
+  // stays signed in. Exactly one module may reference localStorage:
+  // js/token.js. §77 widened it from one key to three (access token,
+  // admin refresh token, admin flag), all reached through keyed helper
+  // functions so no call site names a key directly.
   const offenders = jsFiles.filter(f => readFileSync(f, 'utf8').includes('localStorage')).map(f => f.split('/').pop());
   assert.deepEqual(offenders, ['token.js'], `only token.js may reference localStorage, found: ${offenders.join(', ') || 'none'}`);
   const src = readFileSync(join(v2, 'js', 'token.js'), 'utf8');
-  assert.ok(src.includes("export const TOKEN_KEY = 'market-token'"), 'token.js defines the single storage key');
-  assert.equal(src.split("'market-token'").length - 1, 1, 'the key literal appears once (its definition)');
+  for (const [constant, literal] of [['TOKEN_KEY', 'market-token'], ['REFRESH_KEY', 'market-refresh-token'], ['PERSIST_KEY', 'market-persistent-session']]) {
+    assert.ok(src.includes(`export const ${constant} = '${literal}'`), `token.js defines ${constant}`);
+    assert.equal(src.split(`'${literal}'`).length - 1, 1, `the ${literal} literal appears once (its definition)`);
+  }
   for (const m of src.matchAll(/(?:localStorage|sessionStorage|store)\.(?:getItem|setItem|removeItem)\(([^)]*)\)/g)) {
-    assert.equal(m[1].split(',')[0].trim(), 'TOKEN_KEY', `every storage call must go through TOKEN_KEY: ${m[0]}`);
+    assert.equal(m[1].split(',')[0].trim(), 'key', `every storage call must go through the keyed helpers: ${m[0]}`);
   }
 });
 

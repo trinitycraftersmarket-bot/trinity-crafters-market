@@ -39,17 +39,19 @@ function v2Sources() {
 }
 
 // ------------------------------------------------------------ static pins
-test('§52: token.js is the ONLY v2 module that references localStorage, with exactly one key', () => {
+test('§52+§77: token.js is the ONLY v2 module that references localStorage; keys live in keyed helpers', () => {
   const offenders = localStorageOffenders(v2Sources());
   assert.deepEqual(offenders, ['token.js'], `localStorage may live only in token.js, found: ${offenders.join(', ') || 'none'}`);
   const src = read('public/v2/js/token.js');
-  assert.ok(src.includes("export const TOKEN_KEY = 'market-token'"), 'the one key is the shared market-token key');
-  // Every storage call goes through the TOKEN_KEY constant — no literal
+  assert.ok(src.includes("export const TOKEN_KEY = 'market-token'"), 'the shared market-token key');
+  // §77: two more keys (admin refresh token + admin flag), each defined
+  // once; every storage call goes through the keyed helpers — no literal
   // key may be passed to either store anywhere in the module.
+  assert.ok(src.includes("export const REFRESH_KEY = 'market-refresh-token'"), 'the §77 refresh key');
+  assert.ok(src.includes("export const PERSIST_KEY = 'market-persistent-session'"), 'the §77 admin-flag key');
   for (const m of src.matchAll(/(?:localStorage|sessionStorage|store)\.(?:getItem|setItem|removeItem)\(([^)]*)\)/g)) {
-    assert.equal(m[1].split(',')[0].trim(), 'TOKEN_KEY', `storage call must use TOKEN_KEY, got: ${m[0]}`);
+    assert.equal(m[1].split(',')[0].trim(), 'key', `storage call must go through the keyed helpers, got: ${m[0]}`);
   }
-  // The key string itself appears exactly once (its definition).
   assert.equal(src.split("'market-token'").length - 1, 1, 'the key literal is defined once');
 });
 
@@ -58,7 +60,7 @@ test('§52: api.js delegates token storage to token.js and keeps the OTP flow on
   assert.ok(!api.includes('localStorage'), 'api.js must not touch localStorage directly');
   assert.ok(!api.includes('sessionStorage'), 'api.js must not touch sessionStorage directly anymore');
   assert.ok(api.includes("from './token.js?v="), 'api.js must import the accessor from token.js (stamped)');
-  assert.ok(api.includes('export { getToken, setToken, clearToken, TOKEN_KEY }'), 'api.js re-exports the token API so existing importers are unchanged');
+  assert.ok(api.includes('export { getToken, setToken, clearToken, TOKEN_KEY,'), 'api.js re-exports the token API so existing importers are unchanged (§77 widened the list)');
   // The sign-in flow itself is unchanged in shape: OTP send, verify, and
   // the verified access token goes through setToken (which now persists).
   assert.ok(api.includes("'/auth/v1/otp'"), 'sendSignInCode still posts to the Supabase OTP endpoint');
