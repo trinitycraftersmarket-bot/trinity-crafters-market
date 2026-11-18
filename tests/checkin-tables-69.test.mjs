@@ -85,8 +85,10 @@ test('organizer surfaces show the table count', () => {
   assert.match(DATA, /setup_tables: b\.setup_tables/);
   assert.match(DATA, /setup_tables: i\.setup_tables/);
   assert.match(CHECKIN, /Bringing <strong>\$\{esc\(r\.setup_tables\)\}/);
-  assert.match(ATTENDEES, /r\.setup_tables \? ' · ' \+ esc\(r\.setup_tables\)/);
-  assert.match(EVENTDAY, /r\.setup_tables \? ' · ' \+ esc\(r\.setup_tables\)/);
+  // §81 (Scott, Nov 18, 2026): the count moved OUT of the check-in pill
+  // into its own labelled chip — same data, plainly listed on the card.
+  assert.match(ATTENDEES, /Tables: \$\{esc\(r\.setup_tables\)\}/);
+  assert.match(EVENTDAY, /Tables: \$\{esc\(r\.setup_tables\)\}/);
 });
 
 test('a date move clears the table count with the rest of the check-in', () => {

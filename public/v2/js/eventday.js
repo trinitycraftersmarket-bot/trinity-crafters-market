@@ -5,9 +5,9 @@
 // that fresh data. This screen never edits a local copy of a row, so what
 // it shows is always what the server has — and it survives a reload,
 // because a reload does the same fetch.
-import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261118-79';
-import { attendeeRows, eventStats } from './data.js?v=20261118-79';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261118-79';
+import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261118-81';
+import { attendeeRows, eventStats } from './data.js?v=20261118-81';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261118-81';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_CLASS = { not_inspected: 'warn', approved: 'ok', needs_correction: 'bad', refused: 'bad' };
@@ -48,7 +48,8 @@ function cardHtml(r) {
       <span class="status ${INSP_CLASS[insp]}">${INSP_LABEL[insp]}</span>
       ${payChip(r)}
       ${attendanceChip(r)}
-      ${r.setup_checkin_at ? `<span class="status neutral">Online check-in ✓${r.setup_arrival_time ? ' · arrives ' + esc(clock(r.setup_arrival_time)) : ''}${r.setup_tables ? ' · ' + esc(r.setup_tables) + (Number(r.setup_tables) === 1 ? ' table' : ' tables') : ''}</span>` : ''}
+      ${r.setup_checkin_at ? `<span class="status neutral">Online check-in ✓${r.setup_arrival_time ? ' · arrives ' + esc(clock(r.setup_arrival_time)) : ''}</span>` : ''}
+      ${r.setup_tables ? `<span class="status neutral">Tables: ${esc(r.setup_tables)}</span>` : ''}
     </div>
     ${r.disclosed ? `<p class="note"><strong>Sells:</strong> ${esc(r.disclosed)}</p>` : ''}
     ${r.inspection_notes ? `<p class="note"><strong>Inspection notes:</strong> ${esc(r.inspection_notes)}${r.inspected_by ? ` <span class="muted">— ${esc(r.inspected_by)}</span>` : ''}</p>` : ''}

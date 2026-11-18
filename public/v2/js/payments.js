@@ -6,8 +6,8 @@
 // payload's paymentLog (server-built ledger); search and the date range
 // filter it here, grouping/totals come from js/money.js — the same module
 // the Invoice Center uses, so the two screens always agree.
-import { esc, money, nice, niceShort } from './api.js?v=20261118-79';
-import { invoiceRows, invoiceStats, isOverdue, overdueDays, paymentGroups } from './money.js?v=20261118-79';
+import { api, esc, money, nice, niceShort } from './api.js?v=20261118-81';
+import { invoiceRows, invoiceStats, isOverdue, overdueDays, paymentGroups } from './money.js?v=20261118-81';
 
 let view = { q: '', from: '', to: '', method: '', unpaidOnly: false };
 
@@ -58,7 +58,7 @@ export function renderPayments(ctx, root) {
   function payRow(x) {
     return `<div class="pay-row">
       <div class="pay-who"><strong>${esc(x.vendor || 'Vendor')}</strong>${x.email ? `<span>${esc(x.email)}</span>` : ''}</div>
-      <div class="pay-meta"><span class="status neutral">${esc(x.payment_method || '—')}</span><span class="pay-src">${esc(x.source || '')}</span></div>
+      <div class="pay-meta"><span class="status neutral">${esc(x.payment_method || '—')}</span><span class="pay-src">${esc(x.source || '')}</span>${admin() && x.edit_id && x.source !== 'monthly billing' ? `<button type="button" class="btn small" data-pay-edit="${esc(x.edit_id)}" data-pay-source="${esc(x.source)}">Edit</button>` : ''}</div>
       <div class="pay-when">${esc(stamp(x.recorded_at))}<span>by ${esc(x.recorded_by || 'Unknown')}${x.reference ? ' · ref ' + esc(x.reference) : ''}</span></div>
       <div class="pay-amt">${money(x.amount || 0)}</div>
     </div>`;
@@ -116,7 +116,35 @@ export function renderPayments(ctx, root) {
       if (go) go.onclick = () => ctx.navigate('invoices');
     } else {
       list.innerHTML = groups.map(groupHtml).join('') || '<div class="card empty-card">No payments match these filters.</div>';
+      // §80: correct a recorded amount right from the log (Scott,
+      // Nov 18, 2026 — Dawn Houts paid $75, the log said $60, and the
+      // log row had no edit control anywhere). The server edits the
+      // underlying record for the row's source and audit-logs it.
+      list.querySelectorAll('[data-pay-edit]').forEach(b => b.onclick = () => {
+        const x = (a.paymentLog || []).find(r => String(r.edit_id) === String(b.dataset.payEdit) && String(r.source) === String(b.dataset.paySource));
+        if (x) editSheet(x);
+      });
     }
+  }
+
+  function editSheet(x) {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Correct payment amount</h3>
+      <p><strong>${esc(x.vendor || 'Vendor')}</strong><br>${esc(x.payment_method || '')} · recorded ${esc(stamp(x.recorded_at))}</p>
+      <form id="v2-pay-edit-form">
+        <label class="sheet-field">Amount ($)<input name="amount" type="number" min="0.01" step="0.01" value="${(Number(x.amount || 0) / 100).toFixed(2)}" required></label>
+        <p class="note">This corrects the recorded amount everywhere it appears (log, booking and invoice views). The change is written to the audit log with the old amount.</p>
+        <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Cancel</button><button class="btn primary">Save correction</button></div>
+      </form>`);
+    ctx.sheetEl.querySelector('#v2-pay-edit-form').onsubmit = e => {
+      e.preventDefault();
+      const amount = Number(new FormData(e.target).get('amount'));
+      ctx.closeSheet();
+      api('payment-log-edit', { source: x.source, edit_id: x.edit_id, amount })
+        .then(() => ctx.refreshData())
+        .then(() => { draw(); ctx.toast('Payment amount corrected to ' + money(Math.round(amount * 100)) + '.'); })
+        .catch(err => ctx.toast(err.message, true));
+    };
   }
 
   root.querySelector('#v2-pay-search').oninput = e => { view.q = e.target.value.trim().toLowerCase(); draw(); };

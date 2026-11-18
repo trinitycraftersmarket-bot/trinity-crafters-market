@@ -841,7 +841,7 @@ ${description}`;
     coalesce(vp.recorded_by,au.actor,'Unknown') recorded_by,
     coalesce(nullif(a.business,''),nullif(i.business,''),nullif(v.business,''),a.name,i.name,v.name,'Vendor') vendor,
     coalesce(a.email,i.email,v.email,'') email,e.date market_date,
-    coalesce(vp.booking_id,vp.imported_attendee_id,vp.id) source_id,'payment ledger' source
+    coalesce(vp.booking_id,vp.imported_attendee_id,vp.id) source_id,'payment ledger' source,vp.id edit_id
    from market.vendor_payments vp
    left join market.applications a on a.id=vp.application_id
    left join market.bookings b on b.id=vp.booking_id
@@ -856,7 +856,7 @@ ${description}`;
    union all
    select coalesce(i.payment_recorded_at,au.created_at,i.paid_at,i.created_at),i.paid_at,i.payment_method,
     i.invoice_amount,i.payment_reference,coalesce(i.payment_recorded_by,au.actor,'Unknown'),
-    coalesce(nullif(i.business,''),i.name,'Vendor'),i.email,e.date,i.id,'manual/imported booking'
+    coalesce(nullif(i.business,''),i.name,'Vendor'),i.email,e.date,i.id,'manual/imported booking',i.id edit_id
    from market.imported_attendees i join market.events e on e.id=i.event_id
    left join lateral (
     select actor,created_at from market.audit
@@ -868,7 +868,7 @@ ${description}`;
      and not exists(select 1 from market.vendor_payments vp where vp.imported_attendee_id=i.id)
    union all
    select coalesce(au.created_at,b.paid_at),b.paid_at,b.payment_method,b.price,b.payment_reference,
-    coalesce(au.actor,'Unknown'),coalesce(nullif(a.business,''),a.name,'Vendor'),a.email,e.date,b.id,'online booking'
+    coalesce(au.actor,'Unknown'),coalesce(nullif(a.business,''),a.name,'Vendor'),a.email,e.date,b.id,'online booking',b.id edit_id
    from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id
    left join lateral (
     select actor,created_at from market.audit
@@ -882,7 +882,7 @@ ${description}`;
    select coalesce(au.created_at,vi.updated_at,vi.paid_at),vi.paid_at,vi.payment_method,
     greatest(0,coalesce(vi.amount,0)-coalesce(vi.discount,0)+coalesce(vi.late_fee,0)),vi.payment_reference,
     coalesce(au.actor,'Unknown'),coalesce(nullif(vi.business,''),vi.vendor_name,'Vendor'),vi.vendor_email,
-    null::date,vi.id,'monthly billing'
+    null::date,vi.id,'monthly billing',vi.id edit_id
    from market.vendor_invoices vi
    left join lateral (
     select actor,created_at from market.audit
@@ -1083,6 +1083,43 @@ trinitycraftersmarket@gmail.com`;
   if(!u.admin)return json({error:'Organizer access only'},403);
   const pay=await recordManualPayment(sql,u,p);
   return json({ok:true,payment:pay});
+ }
+ // §80 (Scott, Nov 18, 2026): the Payment Log had NO way to correct a
+ // recorded amount — Dawn Houts paid $75 for Nov 28 but every record
+ // said $60, and her invoice could be edited while the log row could
+ // not. payment-log-edit corrects the amount on the UNDERLYING record
+ // the log row came from (the log is a union of four sources, keyed by
+ // source + edit_id): a ledger payment (syncing an imported attendee's
+ // invoice_amount, the same sync vendor-payment does when recording),
+ // an imported attendee's invoice amount, or an online booking's
+ // price. Monthly-billing rows are refused — the Invoice Center owns
+ // those totals (discounts and late fees make a raw edit wrong).
+ // Every correction is audit-logged with the old amount.
+ if(action==='payment-log-edit'){
+  if(!u.admin)return json({error:'Organizer access only'},403);
+  const amount=Math.round(Number(p.amount)*100);if(!Number.isFinite(amount)||amount<=0)throw Error('Enter a valid payment amount.');
+  const source=String(p.source||''),id=String(p.edit_id||'');if(!id)throw Error('Payment not found.');
+  if(source==='monthly billing')throw Error('Monthly billing payments are edited from the Invoice Center, so the invoice totals stay in step.');
+  let oldAmount=null;
+  await sql.begin(async tx=>{
+   if(source==='payment ledger'){
+    const [cur]=await tx`select * from market.vendor_payments where id=${id}`;if(!cur)throw Error('Payment not found.');
+    if(cur.monthly_invoice_id)throw Error('This payment belongs to a monthly invoice — edit it from the Invoice Center so the invoice totals stay in step.');
+    oldAmount=Number(cur.amount);
+    await tx`update market.vendor_payments set amount=${amount} where id=${cur.id}`;
+    if(cur.imported_attendee_id)await tx`update market.imported_attendees set invoice_amount=${amount} where id=${cur.imported_attendee_id}`;
+   }else if(source==='manual/imported booking'){
+    const [cur]=await tx`select * from market.imported_attendees where id=${id}`;if(!cur)throw Error('Payment not found.');
+    oldAmount=Number(cur.invoice_amount||0);
+    await tx`update market.imported_attendees set invoice_amount=${amount} where id=${cur.id}`;
+   }else if(source==='online booking'){
+    const [cur]=await tx`select * from market.bookings where id=${id}`;if(!cur)throw Error('Payment not found.');
+    oldAmount=Number(cur.price||0);
+    await tx`update market.bookings set price=${amount} where id=${cur.id}`;
+   }else throw Error('Payment not found.');
+   await audit(tx,u,'vendor payment log edited',{source,record_id:id,payment_id:source==='payment ledger'?id:null,old_amount:oldAmount,amount});
+  });
+  return json({ok:true,amount});
  }
  if(action==='vendor-receipt'){
   if(!u.admin)return json({error:'Organizer access only'},403);

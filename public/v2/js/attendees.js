@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-79';
-import { attendeeRows, eventStats } from './data.js?v=20261118-79';
-import { parseAttendeePdf } from './pdfimport.js?v=20261118-79';
-import { printAttendance } from './print.js?v=20261118-79';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261118-79';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-81';
+import { attendeeRows, eventStats } from './data.js?v=20261118-81';
+import { parseAttendeePdf } from './pdfimport.js?v=20261118-81';
+import { printAttendance } from './print.js?v=20261118-81';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261118-81';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -92,7 +92,8 @@ export function renderAttendees(ctx, root, params = {}) {
         ${payChip(r)}
         ${attendanceChip(r)}
         ${spotOf(r) ? `<span class="status neutral">📍 Spot ${esc(spotOf(r))}</span>` : ''}
-        ${r.setup_checkin_at ? `<span class="status neutral">Online check-in ✓${r.setup_arrival_time ? ' · arrives ' + esc(clock(r.setup_arrival_time)) : ''}${r.setup_tables ? ' · ' + esc(r.setup_tables) + (Number(r.setup_tables) === 1 ? ' table' : ' tables') : ''}</span>` : '<span class="status neutral">Online check-in not done</span>'}
+        ${r.setup_checkin_at ? `<span class="status neutral">Online check-in ✓${r.setup_arrival_time ? ' · arrives ' + esc(clock(r.setup_arrival_time)) : ''}</span>` : '<span class="status neutral">Online check-in not done</span>'}
+        ${r.setup_tables ? `<span class="status neutral">Tables: ${esc(r.setup_tables)}</span>` : ''}
         ${r.featured_posted_at ? '<span class="status neutral">Featured ✓</span>' : ''}
         ${r.imported ? '<span class="status neutral">Imported record</span>' : ''}
       </div>
@@ -450,7 +451,7 @@ export function renderAttendees(ctx, root, params = {}) {
         market: loc?.market_name || event.title || 'Crafters Market',
         subtitle: nice(event.date) + ' · ' + (loc?.name || event.location || '') + ' · ' + clock(event.start_time) + '–' + clock(event.end_time),
         summary: rows.length + ' vendors · ' + rows.filter(r => r.payStatus === 'paid').length + ' paid · ' + rows.filter(r => r.attendance === 'checked_in').length + ' checked in',
-        headers: ['Space', 'Spot', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection', 'Setup Arrival'],
+        headers: ['Space', 'Spot', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection', 'Setup Arrival', 'Tables'],
         rows: rows.map(r => [
           r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'),
           spotOf(r) || '—',
@@ -460,7 +461,8 @@ export function renderAttendees(ctx, root, params = {}) {
           r.payStatus === 'paid' ? 'Paid' : 'Unpaid',
           r.attendance === 'checked_in' ? 'Checked in' : r.attendance === 'no_show' ? 'No show' : 'Not marked',
           INSP_PRINT[r.inspection_status] || 'Not inspected',
-          ARRIVAL_PRINT[String(r.setup_arrival_time || '').slice(0, 5)] || '—'
+          ARRIVAL_PRINT[String(r.setup_arrival_time || '').slice(0, 5)] || '—',
+          r.setup_tables ? String(r.setup_tables) : '—'
         ]),
         plans,
         legend

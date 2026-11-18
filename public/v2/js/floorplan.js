@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-79';
+import { api, esc, nice } from './api.js?v=20261118-81';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -282,7 +282,7 @@ export async function renderVendorFloorPlan(host, eventId, mineRow) {
         return `<div class="fp-booth${isMine ? ' mine' : ''}"><strong>${esc(id)}</strong><span>${label ? esc(label) : '<span class="muted">Open</span>'}</span></div>`;
       }).join('') + '</div>';
     }
-    host.innerHTML = `${head}${chips}<h3 class="fp-title">${esc(area.title)} <span class="status neutral">${filled} of ${area.capacity} assigned</span></h3>${body}`;
+    host.innerHTML = `${head}${chips}<h3 class="fp-title">${esc(area.title)} <span class="status neutral">${filled} of ${area.capacity} assigned</span></h3>${body}<p class="note">Booth spots are subject to change without notice.</p>`;
     fitPins(host);
     host.querySelectorAll('img.fp-img').forEach(img => { if (!img.complete) img.addEventListener('load', () => fitPins(host)); });
     host.querySelectorAll('[data-fp-area]').forEach(b => b.onclick = () => {
