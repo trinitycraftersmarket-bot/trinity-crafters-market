@@ -579,8 +579,8 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     });
   }
   const PLAN_PRINT_CSS='@page{size:letter portrait;margin:.4in}*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:#fff;font-family:Arial,Helvetica,sans-serif}.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}.plan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always}.plan-page.last{break-after:auto;page-break-after:auto}.plan-head{flex:0 0 auto}.plan-head h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.plan-head .sub{margin:0 4px 10px;color:#44554c;font-size:10pt}.plan-frame{flex:1 1 auto;min-height:0}.plan-frame img{display:block;width:100%;height:100%;object-fit:contain}@media print{.tools{display:none!important}}';
-  const PLAN_PRINT_SCRIPT='<script>function p(){setTimeout(function(){window.print();},150);}if(document.readyState==="complete")p();else window.addEventListener("load",p);<\/script>';
-  function printFloorPlan(){
+  // §76: no auto-print script (see the v2 print.js §76 note).
+    function printFloorPlan(){
     const event=events.find(e=>e.id===state.eventId);
     // One printed page PER area plan (an event can have numerous areas):
     // print every area that has a layout image or at least one assigned
@@ -600,7 +600,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       const sections=printable.map((x,i)=>'<section class="plan-page'+(i===printable.length-1?' last':'')+'"><div class="plan-head"><h1>'+safe(x.area.title)+' \u2014 floor plan</h1><p class="sub">'+safe(dateLabel)+' \u00b7 '+x.pins.length+' vendor'+(x.pins.length===1?'':'s')+' placed</p></div><div class="plan-frame"><img class="plan" alt="Floor plan with vendor names" src="'+urls[i]+'"></div></section>').join('');
       const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(String(event?.title||'Market')+' \u2014 floor plans')+'</title><style>'+PLAN_PRINT_CSS+'</style></head><body>'+
         '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/?from=print\'},800)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/?from=print" onclick="location.reload();return false;">← Back to the app</a></div>'+
-        sections+PLAN_PRINT_SCRIPT+'</body></html>';
+        sections+'</body></html>';
       popup.document.open();
       popup.document.write(doc);
       popup.document.close();

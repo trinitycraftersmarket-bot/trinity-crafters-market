@@ -2,7 +2,8 @@
 // Reports tab: the AR sheet opened as black text on the app's deep green —
 // unreadable — filling the screen with no way back. Root cause: print.js's
 // builders window.open() a bare document whose CSS sets a dark text color
-// but NO background, then window.onload → window.print(). In the Android
+// but NO background. (The window.onload → window.print() auto-fire
+// was removed in §76; see that section's note in print.js.) In the Android
 // app WebView (1) window.print() is a no-op, (2) the document has no
 // background of its own so the WebView's dark backdrop shows through, and
 // (3) there are no controls at all. Fix: every builder forces a light
@@ -92,12 +93,13 @@ test('§36 (behavioral): printTable (the AR sheet) — light canvas, controls, p
     '33 outstanding · TOTAL DUE $1,890.08');
   const html = doc.html;
   assertPrintableShell(html, 'printTable');
-  // Paper output unchanged: same @page, same table markup, auto-print kept.
+  // Paper output unchanged: same @page, same table markup. (Auto-print
+  // was pinned here until §76 removed it deliberately.)
   assert.ok(html.includes('@page{size:letter;margin:.5in}'), 'printTable: @page rule unchanged');
   assert.ok(html.includes('<table><thead><tr><th>Vendor</th><th>Email</th><th>Market / Period</th><th>Amount Due</th><th>Due Date</th></tr></thead>'), 'printTable: header row passes through untouched');
   assert.ok(html.includes('<tbody><tr><td>Blissfully Bakery</td><td>blissfulbakerysd@gmail.com</td><td>Sat, January 9, 2027</td><td>$30.00</td><td>10/24/2026</td></tr></tbody></table>'), 'printTable: body row passes through untouched');
   assert.ok(html.includes('<p class="summary">33 outstanding · TOTAL DUE $1,890.08</p>'), 'printTable: summary unchanged');
-  assert.ok(html.includes('window.onload=()=>window.print()'), 'printTable: onload auto-print kept');
+  assert.ok(!html.includes('window.onload=()=>window.print()'), 'printTable: no onload auto-print (§76 — the modal dialog swallowed the page controls)');
 });
 
 test('§36 (behavioral): printAttendance — light canvas, controls, paper markup unchanged', async () => {
@@ -122,7 +124,7 @@ test('§36 (behavioral): printAttendance — light canvas, controls, paper marku
   assert.ok(html.includes('<td>HI-01</td><td>A &amp; B &lt;Co&gt;</td><td>Ann</td>'), 'printAttendance: body row passes through untouched (still esc()-ed)');
   assert.ok(html.includes('.plan{break-before:page}'), 'printAttendance: floor plans still one per page');
   assert.ok(html.includes('<img src="data:image/png;base64,AAAA"'), 'printAttendance: original plan image still rendered');
-  assert.ok(html.includes('window.onload=()=>setTimeout(()=>window.print(),50)'), 'printAttendance: onload auto-print kept');
+  assert.ok(!html.includes('window.onload=()=>setTimeout(()=>window.print(),50)'), 'printAttendance: no onload auto-print (§76)');
 });
 
 test('§36 (behavioral): printExpenseReport — shared row replaces the lone button, paper markup unchanged', async () => {

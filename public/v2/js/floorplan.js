@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-75';
+import { api, esc, nice } from './api.js?v=20261118-76';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -379,7 +379,8 @@ export function composePlanCanvas(area, vendors) {
 // note, and is replaced once the composite images are rendered. The
 // toolbar (Print / \u2715 Close) never prints.
 const PLAN_PRINT_CSS = '@page{size:letter portrait;margin:.4in}*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:#fff;font-family:Arial,Helvetica,sans-serif}.tools{position:sticky;top:0;display:flex;gap:10px;padding:12px;background:#fff;border-bottom:1px solid #ccc;z-index:5}.tools button{padding:11px 20px;border:0;border-radius:7px;background:#175745;color:#fff;font-weight:bold;font-size:14px;cursor:pointer}.tools button.close{background:#e8eee8;color:#175745;border:1px solid #175745}.plan-page{display:flex;flex-direction:column;height:100%;overflow:hidden;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always}.plan-page.last{break-after:auto;page-break-after:auto}.plan-head{flex:0 0 auto}.plan-head h1{font:700 15pt Georgia,serif;color:#174d40;margin:10px 4px 2px}.plan-head .sub{margin:0 4px 10px;color:#44554c;font-size:10pt}.plan-frame{flex:1 1 auto;min-height:0}.plan-frame img{display:block;width:100%;height:100%;object-fit:contain}@media print{.tools{display:none!important}}';
-const PLAN_PRINT_SCRIPT = '<script>function p(){setTimeout(function(){window.print();},150);}if(document.readyState==="complete")p();else window.addEventListener("load",p);<\/script>';
+// §76: no auto-print script on the floor-plan page (see print.js §76
+// note) — the modal print dialog swallowed the page's own controls.
 // §74 (Scott, Nov 18, 2026): printouts open in THIS tab, never a popup.
 // On Scott's phone every window.open('_blank') print page got handed
 // off to the browser app ('it's still opening the browser'), where the
@@ -411,7 +412,7 @@ export async function printFloorPlan({ event, areas, area, vendors, dirty, toast
     PLAN_PRINT_CSS +
     '</style></head><body>' +
     '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a></div>' +
-    sections.join('') + PLAN_PRINT_SCRIPT +
+    sections.join('') +
     '</body></html>';
   popup.document.open();
   popup.document.write(doc);

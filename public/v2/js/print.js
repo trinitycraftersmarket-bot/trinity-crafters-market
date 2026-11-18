@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261118-75';
+import { esc } from './api.js?v=20261118-76';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
@@ -47,6 +47,12 @@ const niceShortDate = v => {
   return new Date(key + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
+// §76 (Nov 18, 2026): the print pages no longer auto-fire window.print()
+// on load. The auto-opened print dialog is modal in desktop Chrome —
+// while it is up, every click on the page (Close, Back) is swallowed,
+// which is what made the return controls look dead in verification;
+// in Scott's phone WebView the call was a no-op anyway. The Print
+// button is the deliberate way in now.
 // §74 (Scott, Nov 18, 2026): every printer in this file opens its page
 // in THIS tab ('_self'), never a '_blank' popup — on Scott's phone the
 // popups got handed off to the browser app and the generated pages (and
@@ -55,7 +61,7 @@ const niceShortDate = v => {
 export function printTable(title, subtitle, headers, rows, summary = '') {
   const w = window.open('', '_self');
   if (!w) throw Error('Could not open the print view in this browser.');
-  w.document.write(`<!doctype html><html><head><title>${esc(title)}</title><meta name="viewport" content="width=device-width"><style>@page{size:letter;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 12px}table{width:100%;border-collapse:collapse;table-layout:auto}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>${esc(title)}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table><footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer><script>window.onload=()=>window.print()<\/script></body></html>`);
+  w.document.write(`<!doctype html><html><head><title>${esc(title)}</title><meta name="viewport" content="width=device-width"><style>@page{size:letter;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 12px}table{width:100%;border-collapse:collapse;table-layout:auto}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>${esc(title)}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table><footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
   w.document.close();
 }
 
@@ -67,7 +73,7 @@ export function printAttendance({ market, subtitle, summary, headers, rows, plan
   const w = window.open('', '_self');
   if (!w) throw Error('Could not open the print view in this browser.');
   const planPages = plans.map(p => `<section class="plan"><h2>${esc(p.title)}</h2><img src="${p.image}" alt="${esc(p.title)}"></section>`).join('');
-  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter landscape;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:6.6in;object-fit:contain}@media screen{body{overflow-x:auto}table{min-width:1040px}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer><script>window.onload=()=>setTimeout(()=>window.print(),50)<\/script></body></html>`);
+  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter landscape;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:6.6in;object-fit:contain}@media screen{body{overflow-x:auto}table{min-width:1040px}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
   w.document.close();
 }
 
