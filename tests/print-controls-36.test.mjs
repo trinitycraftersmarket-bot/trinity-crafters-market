@@ -109,7 +109,11 @@ test('§36 (behavioral): printAttendance — light canvas, controls, paper marku
   });
   const html = doc.html;
   assertPrintableShell(html, 'printAttendance');
-  assert.ok(html.includes('@page{size:letter;margin:.5in}'), 'printAttendance: @page rule unchanged');
+  // §73 (Nov 18, 2026) deliberately changed this paper at Scott's
+  // direction: the list prints LANDSCAPE now (its Spot column made 11 —
+  // portrait crushed the columns on his phone), so the @page pin moves
+  // with it; everything else §36 pinned here is unchanged.
+  assert.ok(html.includes('@page{size:letter landscape;margin:.5in}'), 'printAttendance: @page rule (landscape since §73)');
   assert.ok(html.includes('<th>Space</th><th>Business</th><th>Vendor</th>'), 'printAttendance: header row passes through untouched');
   assert.ok(html.includes('<td>HI-01</td><td>A &amp; B &lt;Co&gt;</td><td>Ann</td>'), 'printAttendance: body row passes through untouched (still esc()-ed)');
   assert.ok(html.includes('.plan{break-before:page}'), 'printAttendance: floor plans still one per page');

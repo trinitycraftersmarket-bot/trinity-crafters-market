@@ -437,7 +437,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     const stylesheet='@page{size:letter portrait;margin:.48in .5in}'+
       '*{box-sizing:border-box}html,body{margin:0;padding:0;color:#172821;background:white;font:11pt Arial,Helvetica,sans-serif}'+
       'header{border-bottom:2px solid #174d40;padding-bottom:10px;margin-bottom:15px}h1{font:700 19pt Georgia,serif;color:#174d40;margin:0 0 5px}'+
-      'header p{margin:3px 0;color:#34443d;font-size:10pt}.summary{font-weight:700;margin:12px 0;font-size:10pt}.private{font-size:8pt;letter-spacing:.7px;text-transform:uppercase;font-weight:700}'+
+      'header p{margin:3px 0;color:#34443d;font-size:10pt}.summary{font-weight:700;margin:12px 0 4px;font-size:10pt}.legend{font-size:9pt;color:#34443d;margin:0 0 12px}.private{font-size:8pt;letter-spacing:.7px;text-transform:uppercase;font-weight:700}'+
       '.draft{font-weight:700;color:#a13d18;margin-top:5px}.area{break-inside:avoid-page;page-break-inside:avoid;margin:12px 0 16px}'+
       '.area-heading{display:flex;justify-content:space-between;gap:12px;align-items:baseline;border-bottom:1px solid #b9cec4;margin-bottom:5px}'+
       '.area-heading h2{margin:0;padding:3px 0 5px;font-size:13pt;color:#16483c}.area-heading span{font-size:9pt;color:#56675e}'+
@@ -455,6 +455,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '<p class="private">Private organizer copy — do not distribute to vendors</p>'+
       (state.dirty?'<p class="draft">UNSAVED CHANGES — this printout includes edits not yet saved online.</p>':'')+
       '</header><p class="summary">'+filled+' of '+total+' booths assigned · '+(total-filled)+' open · '+unassigned.length+' vendors awaiting a booth</p>'+
+      (()=>{const seen=new Map();for(const b of blocks){const first=(b.rows||[])[0];if(!first)continue;const prefix=String(first.id).split('-')[0];if(prefix&&!seen.has(prefix))seen.set(prefix,b.title||prefix);}return seen.size?'<p class="legend">Spot key: '+[...seen.entries()].map(([p,t])=>p+' = '+t).join(' · ')+'</p>':'';})()+
       sections+pending+'</body></html>';
     // Open directly in this click handler, before browser popup protections apply.
     const popup=window.open('','_blank');

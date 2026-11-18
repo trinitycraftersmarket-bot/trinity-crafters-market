@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-72';
-import { attendeeRows, eventStats } from './data.js?v=20261118-72';
-import { parseAttendeePdf } from './pdfimport.js?v=20261118-72';
-import { printAttendance } from './print.js?v=20261118-72';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261118-72';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-73';
+import { attendeeRows, eventStats } from './data.js?v=20261118-73';
+import { parseAttendeePdf } from './pdfimport.js?v=20261118-73';
+import { printAttendance } from './print.js?v=20261118-73';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261118-73';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -62,6 +62,15 @@ export function renderAttendees(ctx, root, params = {}) {
 
   const rowsNow = () => attendeeRows(ctx.state.admin, event.id);
   const findRow = (id, imported) => rowsNow().find(r => String(r.id) === String(id) && r.imported === imported);
+  // §73 (Scott, Nov 18, 2026): each vendor's booth spot (MR-19 and friends)
+  // shows on their Attendees card and in the printed list. Assignments live
+  // in the floor plans, so load them once for this event and resolve each
+  // row's spot with the same helper the vendor's own floor-plan view uses.
+  let spotAreas = [];
+  const spotOf = r => { const f = findVendorSpot(spotAreas, [r.id, r.vendor_id]); return f ? f.spot : ''; };
+  api('floor-area-plans', undefined, { event_id: event.id })
+    .then(res => { spotAreas = (res.areas || []).map(standardizeArea); draw(); })
+    .catch(() => { /* no floor plans — cards and print simply carry no spots */ });
   const mutate = async (call, okMsg) => {
     try {
       await call();
@@ -82,6 +91,7 @@ export function renderAttendees(ctx, root, params = {}) {
         <span class="status ${INSP_CLASS[r.inspection_status]}">${INSP_LABEL[r.inspection_status]}</span>
         ${payChip(r)}
         ${attendanceChip(r)}
+        ${spotOf(r) ? `<span class="status neutral">📍 Spot ${esc(spotOf(r))}</span>` : ''}
         ${r.setup_checkin_at ? `<span class="status neutral">Online check-in ✓${r.setup_arrival_time ? ' · arrives ' + esc(clock(r.setup_arrival_time)) : ''}${r.setup_tables ? ' · ' + esc(r.setup_tables) + (Number(r.setup_tables) === 1 ? ' table' : ' tables') : ''}</span>` : '<span class="status neutral">Online check-in not done</span>'}
         ${r.featured_posted_at ? '<span class="status neutral">Featured ✓</span>' : ''}
         ${r.imported ? '<span class="status neutral">Imported record</span>' : ''}
@@ -415,19 +425,31 @@ export function renderAttendees(ctx, root, params = {}) {
     // time ('99:99' sorts them last) print at the end.
     const rows = [...rowsNow()].sort((a, b) => String(a.setup_arrival_time || '99:99').slice(0, 5).localeCompare(String(b.setup_arrival_time || '99:99').slice(0, 5)));
     let plans = [];
+    let legend = '';
     try {
-      const res = await api('floor-area-plans', undefined, { event_id: event.id });
-      plans = (res.areas || []).map(standardizeArea).filter(a => imageAllowed(a.image_data_url))
-        .map(a => ({ title: a.title || 'Floor plan', image: a.image_data_url }));
+      const areas = spotAreas.length ? spotAreas : ((await api('floor-area-plans', undefined, { event_id: event.id })).areas || []).map(standardizeArea);
+      // §73: the plan pages must carry the vendors' NAMES — composite the
+      // assignment pins onto each layout image (composePlanCanvas, the
+      // same renderer the floor-plan print uses) instead of embedding the
+      // bare layout image, which printed with no names at all (Scott,
+      // Nov 18, 2026).
+      const floorRows = await api('floor-attendees', undefined, { event_id: event.id }).catch(() => []);
+      for (const a of areas) {
+        if (!resolvePins(a, floorRows || []).length && !imageAllowed(a.image_data_url)) continue;
+        const canvas = await composePlanCanvas(a, floorRows || []);
+        plans.push({ title: a.title || 'Floor plan', image: canvas.toDataURL('image/png') });
+      }
+      legend = spotLegend(areas.map(a => ({ title: a.title, spots: spotIds(a) })));
     } catch { /* no readable plans — print the list alone */ }
     try {
       printAttendance({
         market: loc?.market_name || event.title || 'Crafters Market',
         subtitle: nice(event.date) + ' · ' + (loc?.name || event.location || '') + ' · ' + clock(event.start_time) + '–' + clock(event.end_time),
         summary: rows.length + ' vendors · ' + rows.filter(r => r.payStatus === 'paid').length + ' paid · ' + rows.filter(r => r.attendance === 'checked_in').length + ' checked in',
-        headers: ['Space', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection', 'Setup Arrival'],
+        headers: ['Space', 'Spot', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection', 'Setup Arrival'],
         rows: rows.map(r => [
           r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'),
+          spotOf(r) || '—',
           r.business || '', r.name || '', r.category || '',
           r.phone || 'Not provided',
           String(r.email || '').replace(/,+\s*$/, '').trim() || 'Not provided',
@@ -436,7 +458,8 @@ export function renderAttendees(ctx, root, params = {}) {
           INSP_PRINT[r.inspection_status] || 'Not inspected',
           ARRIVAL_PRINT[String(r.setup_arrival_time || '').slice(0, 5)] || '—'
         ]),
-        plans
+        plans,
+        legend
       });
     } catch (e) { ctx.toast(e.message, true); }
   };

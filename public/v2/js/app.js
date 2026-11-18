@@ -17,39 +17,39 @@
 // UI's 27 buttons injected by 8 files are the anti-pattern this replaces
 // (audit §2, §3). Every data screen re-fetches its payload on entry and
 // after every mutation: the server is the only source of truth (§1 rule 1).
-import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName, todayKey } from './api.js?v=20261118-72';
-import { VERSION, STAGE } from './version.js?v=20261118-72';
-import { renderHome } from './home.js?v=20261118-72';
-import { renderEventDay } from './eventday.js?v=20261118-72';
-import { renderAttendees } from './attendees.js?v=20261118-72';
-import { renderApplications } from './applications.js?v=20261118-72';
-import { renderWaitlist } from './waitlist.js?v=20261118-72';
-import { renderMoves } from './moves.js?v=20261118-72';
-import { renderVendors } from './vendors.js?v=20261118-72';
-import { renderPayments } from './payments.js?v=20261118-72';
-import { renderInvoices } from './invoices.js?v=20261118-72';
-import { renderFloorEditor } from './flooredit.js?v=20261118-72';
-import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261118-72';
-import { renderComms } from './comms.js?v=20261118-72';
-import { renderFlyer } from './flyer.js?v=20261118-72';
-import { renderThreads } from './threads.js?v=20261118-72';
-import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261118-72';
-import { renderSocial } from './social.js?v=20261118-72';
-import { renderRsvps } from './rsvps.js?v=20261118-72';
-import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261118-72';
-import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261118-72';
-import { renderManualBooking } from './manualbooking.js?v=20261118-72';
-import { renderCancelled } from './cancelled.js?v=20261118-72';
-import { renderBanned } from './banned.js?v=20261118-72';
-import { renderRegistered } from './registered.js?v=20261118-72';
-import { renderFoodTrucks } from './foodtrucks.js?v=20261118-72';
-import { renderFoodTruckApply } from './trucksapply.js?v=20261118-72';
-import { renderShopperRsvp } from './shopper.js?v=20261118-72';
-import { renderCheckin } from './checkin.js?v=20261118-72';
-import { renderAppRecovery } from './apprecovery.js?v=20261118-72';
-import { renderBilling } from './billing.js?v=20261118-72';
-import { renderExpenses } from './expenses.js?v=20261118-72';
-import { renderReports } from './reports.js?v=20261118-72';
+import { api, fn, me, getConfig, sendSignInCode, verifySignInCode, getToken, signOut, esc, niceShort, marketName, todayKey } from './api.js?v=20261118-73';
+import { VERSION, STAGE } from './version.js?v=20261118-73';
+import { renderHome } from './home.js?v=20261118-73';
+import { renderEventDay } from './eventday.js?v=20261118-73';
+import { renderAttendees } from './attendees.js?v=20261118-73';
+import { renderApplications } from './applications.js?v=20261118-73';
+import { renderWaitlist } from './waitlist.js?v=20261118-73';
+import { renderMoves } from './moves.js?v=20261118-73';
+import { renderVendors } from './vendors.js?v=20261118-73';
+import { renderPayments } from './payments.js?v=20261118-73';
+import { renderInvoices } from './invoices.js?v=20261118-73';
+import { renderFloorEditor } from './flooredit.js?v=20261118-73';
+import { renderDates, renderCategories, renderManagers, renderConnections, renderSurveys, renderArchive, renderTools } from './setup.js?v=20261118-73';
+import { renderComms } from './comms.js?v=20261118-73';
+import { renderFlyer } from './flyer.js?v=20261118-73';
+import { renderThreads } from './threads.js?v=20261118-73';
+import { renderChatAdmin, renderChatVendor } from './chat.js?v=20261118-73';
+import { renderSocial } from './social.js?v=20261118-73';
+import { renderRsvps } from './rsvps.js?v=20261118-73';
+import { renderVendorHome, renderVendorBookings, renderVendorApply, renderVendorProfile } from './vendor.js?v=20261118-73';
+import { renderManagerHome, renderManagerEventDay, renderManagerApplications, renderManagerFloor, managerSections, managerCan } from './manager.js?v=20261118-73';
+import { renderManualBooking } from './manualbooking.js?v=20261118-73';
+import { renderCancelled } from './cancelled.js?v=20261118-73';
+import { renderBanned } from './banned.js?v=20261118-73';
+import { renderRegistered } from './registered.js?v=20261118-73';
+import { renderFoodTrucks } from './foodtrucks.js?v=20261118-73';
+import { renderFoodTruckApply } from './trucksapply.js?v=20261118-73';
+import { renderShopperRsvp } from './shopper.js?v=20261118-73';
+import { renderCheckin } from './checkin.js?v=20261118-73';
+import { renderAppRecovery } from './apprecovery.js?v=20261118-73';
+import { renderBilling } from './billing.js?v=20261118-73';
+import { renderExpenses } from './expenses.js?v=20261118-73';
+import { renderReports } from './reports.js?v=20261118-73';
 
 // The five groups and every section in them (audit §3.1 — every legacy
 // button mapped). `live` sections render real screens in this stage.

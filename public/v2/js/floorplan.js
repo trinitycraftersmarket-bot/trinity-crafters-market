@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-72';
+import { api, esc, nice } from './api.js?v=20261118-73';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -190,6 +190,23 @@ export async function renderSavedFloorPlan(host, eventId) {
 // master vendor id resolve too — the server keys vendor_names by both
 // id spaces (§31). Pin labels come from that vendor_names map, never
 // from the staff-only floor-attendees payload.
+// §73 (Scott, Nov 18, 2026): the printed reports carry a legend for the
+// booth-code prefixes — "MR = Main Event Room" and so on — derived from
+// the event's own areas so it always matches the codes on the page.
+// areas: [{title, spots: [spotId, ...]}; the prefix is the part of the
+// spot id before its '-'. Returns '' when no area has spots.
+export function spotLegend(areas) {
+  const seen = new Map();
+  for (const a of areas || []) {
+    const first = (a.spots || [])[0];
+    if (!first) continue;
+    const prefix = String(first).split('-')[0];
+    if (prefix && !seen.has(prefix)) seen.set(prefix, a.title || prefix);
+  }
+  if (!seen.size) return '';
+  return 'Spot key: ' + [...seen.entries()].map(([p, t]) => p + ' = ' + t).join(' · ');
+}
+
 export function findVendorSpot(areas, rowIds) {
   const ids = new Set((rowIds || []).map(String));
   for (const area of areas || []) {
@@ -427,7 +444,7 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
   const stylesheet = '@page{size:letter portrait;margin:.48in .5in}' +
     '*{box-sizing:border-box}html,body{margin:0;padding:0;color:#172821;background:white;font:11pt Arial,Helvetica,sans-serif}' +
     'header{border-bottom:2px solid #174d40;padding-bottom:10px;margin-bottom:15px}h1{font:700 19pt Georgia,serif;color:#174d40;margin:0 0 5px}' +
-    'header p{margin:3px 0;color:#34443d;font-size:10pt}.summary{font-weight:700;margin:12px 0;font-size:10pt}.private{font-size:8pt;letter-spacing:.7px;text-transform:uppercase;font-weight:700}' +
+    'header p{margin:3px 0;color:#34443d;font-size:10pt}.summary{font-weight:700;margin:12px 0 4px;font-size:10pt}.legend{font-size:9pt;color:#34443d;margin:0 0 12px}.private{font-size:8pt;letter-spacing:.7px;text-transform:uppercase;font-weight:700}' +
     '.draft{font-weight:700;color:#a13d18;margin-top:5px}.area{break-inside:avoid-page;page-break-inside:avoid;margin:12px 0 16px}' +
     '.area-heading{display:flex;justify-content:space-between;gap:12px;align-items:baseline;border-bottom:1px solid #b9cec4;margin-bottom:5px}' +
     '.area-heading h2{margin:0;padding:3px 0 5px;font-size:13pt;color:#16483c}.area-heading span{font-size:9pt;color:#56675e}' +
@@ -438,6 +455,7 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center}.button-row a{color:#175745;font-weight:bold;font-size:13px}.button-row p{flex-basis:100%;margin:2px 0 0;font-size:9pt;color:#56675e}' +
     'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}' +
     '@media print{.button-row{display:none!important}}';
+  const legend = spotLegend(blocks.map(b => ({ title: b.title, spots: b.rows.map(r => r.id) })));
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' + stylesheet + '</style></head><body>' +
     '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/\'},700)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>' +
     '<header><h1>' + esc(title) + '</h1><p><strong>' + esc(dateText) + '</strong> · ' + esc(venue?.name || event.title || '') + '</p>' +
@@ -445,6 +463,7 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     '<p class="private">Private organizer copy — do not distribute to vendors</p>' +
     (dirty ? '<p class="draft">UNSAVED CHANGES — this printout includes edits not yet saved online.</p>' : '') +
     '</header><p class="summary">' + filled + ' of ' + total + ' booths assigned · ' + (total - filled) + ' open · ' + unassigned.length + ' vendors awaiting a booth</p>' +
+    (legend ? '<p class="legend">' + esc(legend) + '</p>' : '') +
     sections + pending + '</body></html>';
   const popup = window.open('', '_blank');
   if (!popup) { toast('Your browser blocked the print preview. Allow pop-ups for this site and try again.', true); return; }
