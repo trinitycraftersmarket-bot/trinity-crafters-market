@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261118-71';
+import { api, esc, nice } from './api.js?v=20261118-72';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -384,7 +384,7 @@ export async function printFloorPlan({ event, areas, area, vendors, toast }) {
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' +
     PLAN_PRINT_CSS +
     '</style></head><body>' +
-    '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close()">\u2715 Close</button></div>' +
+    '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/\'},700)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/v2/">← Back to the app</a></div>' +
     sections.join('') + PLAN_PRINT_SCRIPT +
     '</body></html>';
   popup.document.open();
@@ -435,11 +435,11 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     'th{background:#e8f1eb;color:#173d33;text-align:left;font-size:9pt;padding:6px;border:1px solid #d3dfd7}' +
     'td{padding:6px 8px;border:1px solid #d3dfd7;overflow-wrap:anywhere;font-size:10pt;line-height:1.15;height:25px}' +
     '.booth{width:21%;font-weight:700}.check{width:16%;text-align:center}.tick{display:inline-block;width:14px;height:14px;border:1.3px solid #65796c;border-radius:2px}' +
-    '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px}' +
+    '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center}.button-row a{color:#175745;font-weight:bold;font-size:13px}.button-row p{flex-basis:100%;margin:2px 0 0;font-size:9pt;color:#56675e}' +
     'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}' +
     '@media print{.button-row{display:none!important}}';
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' + stylesheet + '</style></head><body>' +
-    '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close()">✕ Close</button></div>' +
+    '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/\'},700)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>' +
     '<header><h1>' + esc(title) + '</h1><p><strong>' + esc(dateText) + '</strong> · ' + esc(venue?.name || event.title || '') + '</p>' +
     (venue?.address ? '<p>' + esc(venue.address) + '</p>' : '') +
     '<p class="private">Private organizer copy — do not distribute to vendors</p>' +

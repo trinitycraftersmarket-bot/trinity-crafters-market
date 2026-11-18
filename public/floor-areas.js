@@ -445,11 +445,11 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       'th{background:#e8f1eb;color:#173d33;text-align:left;font-size:9pt;padding:6px;border:1px solid #d3dfd7}'+
       'td{padding:6px 8px;border:1px solid #d3dfd7;overflow-wrap:anywhere;font-size:10pt;line-height:1.15;height:25px}'+
       '.booth{width:21%;font-weight:700}.check{width:16%;text-align:center}.tick{display:inline-block;width:14px;height:14px;border:1.3px solid #65796c;border-radius:2px}'+
-      '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px}'+
+      '.open{color:#777;font-style:italic}.button-row{position:sticky;top:0;background:#fffefb;padding:12px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center}.button-row a{color:#175745;font-weight:bold;font-size:13px}.button-row p{flex-basis:100%;margin:2px 0 0;font-size:9pt;color:#56675e}'+
       'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}'+
       '@media print{.button-row{display:none!important}}';
     const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(title)+'</title><style>'+stylesheet+'</style></head><body>'+
-      '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close()">✕ Close</button></div>'+
+      '<div class="button-row"><button type="button" onclick="window.print()">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/\'},700)">✕ Close</button><a href="https://trinitylutzmarkets.com/">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>'+
       '<header><h1>'+safe(title)+'</h1><p><strong>'+safe(dateText)+'</strong> · '+safe(venue?.name||event.title||'')+'</p>'+
       (venue?.address?'<p>'+safe(venue.address)+'</p>':'')+
       '<p class="private">Private organizer copy — do not distribute to vendors</p>'+
@@ -596,7 +596,7 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     Promise.all(printable.map(x=>renderComposite(x.area,x.pins))).then(urls=>{
       const sections=printable.map((x,i)=>'<section class="plan-page'+(i===printable.length-1?' last':'')+'"><div class="plan-head"><h1>'+safe(x.area.title)+' \u2014 floor plan</h1><p class="sub">'+safe(dateLabel)+' \u00b7 '+x.pins.length+' vendor'+(x.pins.length===1?'':'s')+' placed</p></div><div class="plan-frame"><img class="plan" alt="Floor plan with vendor names" src="'+urls[i]+'"></div></section>').join('');
       const doc='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+safe(String(event?.title||'Market')+' \u2014 floor plans')+'</title><style>'+PLAN_PRINT_CSS+'</style></head><body>'+
-        '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close()">\u2715 Close</button></div>'+
+        '<div class="tools"><button type="button" onclick="window.print()">Print floor plan</button><button type="button" class="close" onclick="window.close();setTimeout(function(){if(!window.closed&&history.length>1)history.back()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/\'},700)">\u2715 Close</button><a href="https://trinitylutzmarkets.com/">← Back to the app</a></div>'+
         sections+PLAN_PRINT_SCRIPT+'</body></html>';
       popup.document.open();
       popup.document.write(doc);
