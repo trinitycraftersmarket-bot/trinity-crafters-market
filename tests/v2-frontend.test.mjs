@@ -115,7 +115,11 @@ test('stage-2 screens use the same endpoints as the legacy UI', () => {
   const att = read('attendees.js');
   for (const s of ["'move-space'", "'vendor-payment'", "'imported-attendance'", "'checkin-reminder'", "'featured-post'"])
     assert.ok(att.includes(s), `attendees.js must use ${s}`);
-  assert.ok(!att.includes("'inspection'"), 'attendees management must not duplicate the Event Day inspection flow');
+  // §70 (Scott, Nov 18, 2026) deliberately reverses the old Stage-1 rule that
+  // kept inspection/check-in off Attendees: attendees now carries the same
+  // inspection + attendance actions as Event Day, plus the mass approve.
+  for (const s of ["'inspection'", "'inspection-bulk-approve'", "'attendance'"])
+    assert.ok(att.includes(s), `attendees.js must use ${s} (§70)`);
   const wait = read('waitlist.js');
   assert.ok(wait.includes("'waitlist-offer'"), 'waitlist.js must use the waitlist-offer action');
   assert.ok(wait.includes('waitlistOffers'), 'waitlist.js must read live offer state from the payload');

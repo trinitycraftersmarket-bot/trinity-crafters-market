@@ -1,15 +1,19 @@
 // Attendees management screen: the per-event vendor list for organizing —
 // move space, move date, record payment, cancel vendor, check-in reminders,
 // featured posts, CSV export. This is the management half of the legacy Attendees
-// (report) panel; inspection and check-in deliberately live ONLY on Event
-// Day (Stage 1) so there is one place that runs the day — here they are
-// shown as read-only chips. Same server-is-truth rule: every action is a
-// server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-69';
-import { attendeeRows, eventStats } from './data.js?v=20261118-69';
-import { parseAttendeePdf } from './pdfimport.js?v=20261118-69';
-import { printAttendance } from './print.js?v=20261118-69';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261118-69';
+// (report) panel. Inspection and check-in originally lived ONLY on Event Day
+// (Stage 1); §70 (Scott, Nov 18, 2026) brought them here too — a per-card
+// Approve inspection / Check in button and a mass inspection-approve for the
+// date — because Scott runs the day from this list. The mass approve touches
+// ONLY vendors not yet inspected: any inspection status Scott set by hand
+// (above all a failed / refused inspection) is never overwritten. Same
+// server-is-truth rule: every action is a server call, then a full re-fetch,
+// then a re-render from fresh data.
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-70';
+import { attendeeRows, eventStats } from './data.js?v=20261118-70';
+import { parseAttendeePdf } from './pdfimport.js?v=20261118-70';
+import { printAttendance } from './print.js?v=20261118-70';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261118-70';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -51,6 +55,7 @@ export function renderAttendees(ctx, root, params = {}) {
       <button class="btn small" id="v2-att-csv">Export CSV</button>
       <button class="btn small" id="v2-att-import">Import attendees from PDF</button>
       <button class="btn small" id="v2-att-print">Print attendance list</button>
+      <button class="btn small" id="v2-att-insp-all">✓ Approve all inspections</button>
       <button class="btn small ghost" data-go-eventday>Open Event Day for inspections &amp; check-in</button>
     </div>`;
 
@@ -86,6 +91,11 @@ export function renderAttendees(ctx, root, params = {}) {
       <div class="vendor-actions">
         <button class="btn small" data-act="move-space" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">⇄ Move space</button>
         <button class="btn small" data-act="move-date" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">📅 Move date</button>
+        ${r.attendance === 'checked_in'
+          ? `<button class="btn small" data-act="attendance" data-state="clear" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">Undo check-in</button>`
+          : r.inspection_status === 'approved'
+            ? `<button class="btn primary small" data-act="attendance" data-state="checked_in" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">✓ Check in</button>`
+            : `<button class="btn primary small" data-act="inspect-approve" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">Approve inspection</button>`}
         ${r.payStatus !== 'paid' ? `<button class="btn primary small" data-act="pay" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">Record payment</button>` : ''}
         <button class="btn small ghost" data-act="more" data-id="${esc(r.id)}" data-imported="${r.imported ? '1' : '0'}">More ⋯</button>
       </div>
@@ -287,6 +297,12 @@ export function renderAttendees(ctx, root, params = {}) {
       else if (btn.dataset.act === 'move-date') moveDateSheet(r);
       else if (btn.dataset.act === 'pay') paySheet(r);
       else if (btn.dataset.act === 'more') moreSheet(r);
+      else if (btn.dataset.act === 'inspect-approve') mutate(
+        () => api('inspection', { id: r.id, imported: r.imported, status: 'approved', notes: '' }),
+        'Inspection approved for ' + (r.business || r.name) + '.');
+      else if (btn.dataset.act === 'attendance') mutate(
+        () => api(r.imported ? 'imported-attendance' : 'attendance', { id: r.id, state: btn.dataset.state }),
+        btn.dataset.state === 'checked_in' ? (r.business || r.name) + ' checked in.' : 'Check-in cleared for ' + (r.business || r.name) + '.');
     });
   }
   function importSheet() {
@@ -362,6 +378,24 @@ export function renderAttendees(ctx, root, params = {}) {
   const search = root.querySelector('#v2-att-search');
   search.oninput = () => { view.q = search.value.trim().toLowerCase(); draw(); };
   root.querySelector('[data-go-eventday]').onclick = () => ctx.navigate('event-day', { event: String(event.id) });
+  root.querySelector('#v2-att-insp-all').onclick = () => {
+    // §70: mass-approve ONLY the vendors not yet inspected. Anyone Scott
+    // already marked by hand — approved, needs correction, or refused
+    // (failed) — is left exactly as he left them; the server enforces the
+    // same rule, this count is just what the confirm sheet promises.
+    const pending = rowsNow().filter(r => r.inspection_status === 'not_inspected').length;
+    if (!pending) { ctx.toast('No pending inspections on this date — everyone is already marked.'); return; }
+    ctx.openSheet(`
+      <h3 class="sheet-title">Approve all inspections</h3>
+      <p><strong>${esc(nice(event.date))}</strong></p>
+      <p class="note">This approves inspection for the ${pending} vendor${pending === 1 ? '' : 's'} on this date who ${pending === 1 ? 'has' : 'have'} not been inspected yet. Anyone you already marked yourself — including a failed inspection — stays exactly as you left them.</p>
+      <div class="sheet-actions"><button type="button" class="btn" data-sheet-close>Not yet</button><button class="btn primary" id="v2-att-insp-all-go">Approve ${pending} inspection${pending === 1 ? '' : 's'}</button></div>`);
+    ctx.sheetEl.querySelector('#v2-att-insp-all-go').onclick = () => {
+      ctx.closeSheet();
+      mutate(() => api('inspection-bulk-approve', { event_id: event.id }),
+        'Inspections approved for this date.');
+    };
+  };
   root.querySelector('#v2-att-csv').onclick = () => {
     const rows = rowsNow();
     const csv = [['Vendor', 'Business', 'Disclosed', 'Approved', 'Not Approved', 'Category', 'Space', 'Inspection', 'Inspection Notes', 'Attendance'],

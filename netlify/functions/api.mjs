@@ -1298,6 +1298,20 @@ trinitycraftersmarket@gmail.com`;
   if(!updated)throw Error('That vendor record was not found, so nothing was updated. Reload the list and try again.');
   await audit(sql,u,'vendor inspection',{id:p.id,imported:!!p.imported,status:p.status,notes:p.notes||null,updated});return json({ok:true,updated});
  }
+ if(action==='inspection-bulk-approve'){
+  // §70 (Scott, Nov 18, 2026): mass-approve inspections for one market date
+  // from the Attendees screen. ONLY vendors not yet inspected are touched —
+  // any status Scott set by hand (approved, needs_correction, and above all
+  // refused / failed inspection) stays exactly as he left it.
+  if(!(u.admin||u.manager))return json({error:'Organizer or Manager access only'},403);
+  if(!p.event_id)throw Error('Choose a market date first.');
+  const who=u.email||'Staff',at=new Date().toISOString();
+  const b=await sql`update market.bookings set inspection_status='approved',inspected_at=${at},inspected_by=${who} where event_id=${p.event_id} and status in ('approved','held','paid') and inspection_status='not_inspected' returning id`;
+  const i=await sql`update market.imported_attendees set inspection_status='approved',inspected_at=${at},inspected_by=${who} where event_id=${p.event_id} and not cancelled and inspection_status='not_inspected' returning id`;
+  const updated=b.length+i.length;
+  await audit(sql,u,'vendor inspection bulk approve',{event_id:p.event_id,updated});
+  return json({ok:true,updated});
+ }
  if(action==='imported-attendance'){
   if(!p.id||!['checked_in','no_show','clear','remove'].includes(p.state))throw Error('Choose an attendance status.');
   if(p.state==='remove'){

@@ -10,6 +10,7 @@ const ACTION_PERMISSION={
  'imported-attendance':'attendees',
  'checkin-reminder':'attendees',
  inspection:'attendees',
+ 'inspection-bulk-approve':'attendees',
  'category-review-approve':'attendees',
  'payment-reminder-now':'applications'
 };
