@@ -449,7 +449,7 @@ ${description}`;
  }
  if(action==='mine'){
   const regular=await sql`select b.*,e.date,e.start_time,e.end_time,l.name location,a.business,a.name,a.email,'booking' source from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id where a.user_id=${u.id}`;
-  const imported=await sql`select i.id,null::uuid application_id,i.event_id,lower(i.space) space,coalesce(i.invoice_amount,0) price,case when i.cancelled then 'cancelled' when i.payment_status='paid' then 'paid' else 'approved' end status,false category_exception,null::timestamptz hold_until,null::text invoice_reference,null::text payment_reference,null::text decision_reason,null::timestamptz paid_at,(i.attendance_state='checked_in') checked_in,(i.attendance_state='no_show') no_show,null::timestamptz waitlist_offered_at,'Imported' payment_method,i.inspection_status,i.inspection_notes,i.inspected_at,i.inspected_by,i.approved_products,i.declined_products,i.setup_arrival_time,i.setup_checkin_at,e.date,e.start_time,e.end_time,l.name location,coalesce(nullif(i.business,''),i.name) business,i.name,i.email,'imported' source from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where lower(trim(both ' ,' from i.email))=lower(${u.email})`;
+  const imported=await sql`select i.id,null::uuid application_id,i.event_id,lower(i.space) space,coalesce(i.invoice_amount,0) price,case when i.cancelled then 'cancelled' when i.payment_status='paid' then 'paid' else 'approved' end status,false category_exception,null::timestamptz hold_until,null::text invoice_reference,null::text payment_reference,null::text decision_reason,null::timestamptz paid_at,(i.attendance_state='checked_in') checked_in,(i.attendance_state='no_show') no_show,null::timestamptz waitlist_offered_at,'Imported' payment_method,i.inspection_status,i.inspection_notes,i.inspected_at,i.inspected_by,i.approved_products,i.declined_products,i.setup_arrival_time,i.setup_tables,i.setup_checkin_at,e.date,e.start_time,e.end_time,l.name location,coalesce(nullif(i.business,''),i.name) business,i.name,i.email,'imported' source from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id where lower(trim(both ' ,' from i.email))=lower(${u.email})`;
   // §13.5 claiming: imported rows matched by the verified account email
   // attach to the vendor's profile (link recorded in vendor_profiles);
   // the rows themselves stay imported — counts/twins are unaffected.
@@ -457,15 +457,15 @@ ${description}`;
   return json([...regular,...imported].sort((a,b)=>String(a.date).localeCompare(String(b.date))));
  }
  if(action==='vendor-setup-checkin'&&req.method==='POST'){
-  const p=await req.json(),allowed=['08:15','08:30','08:45','09:00'];if(!allowed.includes(p.arrival_time))throw Error('Choose an available setup arrival time.');
+  const p=await req.json(),allowed=['08:15','08:30','08:45','09:00'];if(!allowed.includes(p.arrival_time))throw Error('Choose an available setup arrival time.');const tables=Number(p.tables);if(![1,2].includes(tables))throw Error('Choose how many tables you are bringing: 1 or 2.');
   if(p.source==='imported'){
    const [x]=await sql`select i.id,e.date from market.imported_attendees i join market.events e on e.id=i.event_id where i.id=${p.id} and lower(trim(both ' ,' from i.email))=lower(${u.email}) and not i.cancelled`;if(!x)throw Error('Booking not found.');
-   await sql`update market.imported_attendees set setup_arrival_time=${p.arrival_time},setup_checkin_at=now() where id=${x.id}`;
+   await sql`update market.imported_attendees set setup_arrival_time=${p.arrival_time},setup_tables=${tables},setup_checkin_at=now() where id=${x.id}`;
   }else{
    const [x]=await sql`select b.id,e.date from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id where b.id=${p.id} and a.user_id=${u.id} and b.status in ('approved','held','paid')`;if(!x)throw Error('Booking not found.');
-   await sql`update market.bookings set setup_arrival_time=${p.arrival_time},setup_checkin_at=now() where id=${x.id}`;
+   await sql`update market.bookings set setup_arrival_time=${p.arrival_time},setup_tables=${tables},setup_checkin_at=now() where id=${x.id}`;
   }
-  await audit(sql,u,'vendor online check-in',{id:p.id,source:p.source,arrival_time:p.arrival_time});return json({ok:true});
+  await audit(sql,u,'vendor online check-in',{id:p.id,source:p.source,arrival_time:p.arrival_time,tables});return json({ok:true});
  }
  if(action==='upload-ticket'&&req.method==='POST'){
  const p=await req.json();if(!['image/jpeg','image/png','image/webp'].includes(p.type))throw Error('Choose a JPG, PNG or WebP photo.');
@@ -702,7 +702,7 @@ ${description}`;
   const canApplications=hasStaffPermission(u,'applications'),canAttendees=hasStaffPermission(u,'attendees'),canWaitlist=hasStaffPermission(u,'waitlist'),canMessages=hasStaffPermission(u,'vendor_messages');
   let applications=[];
   if(canApplications||canAttendees||canWaitlist||canMessages){
-   const all=await sql`select b.id,b.application_id,b.event_id,b.space,a.vendor_id,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,b.checked_in,b.no_show,b.setup_arrival_time,b.setup_checkin_at,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`;
+   const all=await sql`select b.id,b.application_id,b.event_id,b.space,a.vendor_id,a.name,a.business,a.email,a.phone,a.description,a.photos,c.name category,b.checked_in,b.no_show,b.setup_arrival_time,b.setup_tables,b.setup_checkin_at,case when b.status in ('approved','held','paid') then 'approved' else b.status end status from market.bookings b join market.applications a on a.id=b.application_id join market.categories c on c.id=a.category_id order by a.created_at desc`;
    applications=all.filter(b=>canApplications||canMessages||(canAttendees&&b.status==='approved')||(canWaitlist&&b.status==='waitlist'));
   }
   const imported=canAttendees?await sql`select * from market.imported_attendees order by created_at`:[];
@@ -831,8 +831,8 @@ ${description}`;
  if(action==='admin'){
   await ensureApplicationAttempts(sql);await ensureWaitlistSchema(sql);await ensureHallway(sql);await ensureCoupons(sql);
   const applicationAttempts=await sql`select aa.*,c.name category_name from market.application_attempts aa left join market.categories c on c.id=aa.category_id where aa.last_seen_at>now()-interval '45 days' and aa.status<>'completed' order by case when aa.status in ('failed','draft','submitting') then 0 else 1 end,aa.last_seen_at desc limit 250`;
-  await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz, add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists payment_recorded_at timestamptz, add column if not exists payment_recorded_by text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
-  await sql`alter table market.bookings add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text`;
+  await sql`alter table market.imported_attendees add column if not exists payment_reference text, add column if not exists approval_code text, add column if not exists card_brand text, add column if not exists card_last4 text, add column if not exists payment_processor_status text, add column if not exists paid_at timestamptz, add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists payment_recorded_at timestamptz, add column if not exists payment_recorded_by text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text, add column if not exists setup_tables smallint`;
+  await sql`alter table market.bookings add column if not exists featured_posted_at timestamptz, add column if not exists social_products text, add column if not exists cancellation_reason text, add column if not exists cancelled_at timestamptz, add column if not exists cancelled_by text, add column if not exists setup_tables smallint`;
   await sql`alter table market.vendor_payments add column if not exists monthly_invoice_id uuid references market.vendor_invoices`;
   const monthlyInvoices=await sql`select vi.*,coalesce((select json_agg(json_build_object('id',vp.id,'amount',vp.amount,'payment_method',vp.payment_method,'paid_at',vp.paid_at,'note',vp.note,'recorded_by',vp.recorded_by,'receipt_sent_at',vp.receipt_sent_at) order by vp.paid_at asc,vp.created_at asc) from market.vendor_payments vp where vp.monthly_invoice_id=vi.id),'[]'::json) payments,coalesce((select sum(vp.amount) from market.vendor_payments vp where vp.monthly_invoice_id=vi.id),0)::int paid_total from market.vendor_invoices vi order by vi.created_at desc`;
   const paymentLog=await sql`select * from (

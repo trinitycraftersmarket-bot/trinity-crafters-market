@@ -483,6 +483,8 @@ alter table market.bookings add column if not exists inspected_at timestamptz;
 alter table market.bookings add column if not exists inspected_by text;
 alter table market.bookings add column if not exists setup_arrival_time time;
 alter table market.bookings add column if not exists setup_checkin_at timestamptz;
+alter table market.bookings add column if not exists setup_tables smallint;
+alter table market.imported_attendees add column if not exists setup_tables smallint;
 
 -- market.applications: master-vendor link (insert — api.mjs:334; backfill —
 -- netlify/functions/system-tools.mjs:39); regular-vendor / PayPal subscription

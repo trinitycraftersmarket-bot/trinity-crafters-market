@@ -179,10 +179,10 @@ async function clearFloorAssignments(tx, eventId, recordId) {
 // store 'Inside'/'Outside', matching server/twins.mjs).
 async function performTransfer(tx, {source, target, space}) {
   if (source.source_type === 'booking') {
-    await tx`update market.bookings set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, checked_in = false, no_show = false where id = ${source.source_id}`;
+    await tx`update market.bookings set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, setup_tables = null, checked_in = false, no_show = false where id = ${source.source_id}`;
     if (space !== source.space) await tx`update market.bookings set space = ${space} where id = ${source.source_id}`;
   } else {
-    await tx`update market.imported_attendees set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, attendance_state = 'not_marked' where id = ${source.source_id}`;
+    await tx`update market.imported_attendees set event_id = ${target.id}, setup_checkin_at = null, setup_arrival_time = null, setup_tables = null, attendance_state = 'not_marked' where id = ${source.source_id}`;
     if (space !== source.space) await tx`update market.imported_attendees set space = ${space === 'indoor' ? 'Inside' : space === 'hallway' ? 'Hallway' : 'Outside'} where id = ${source.source_id}`;
     await tx`delete from market.imported_category_reservations where imported_attendee_id = ${source.source_id}`;
     if (source.category_id) await tx`insert into market.imported_category_reservations(imported_attendee_id, event_id, category_id, space) values(${source.source_id}, ${target.id}, ${source.category_id}, ${space}) on conflict(imported_attendee_id, category_id) do nothing`;

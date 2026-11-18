@@ -92,7 +92,7 @@ export function managerAttendeeRows(manager, eventId) {
       business: b.business, name: b.name, email: b.email, phone: b.phone,
       category: b.category, space: b.space,
       attendance: b.checked_in ? 'checked_in' : b.no_show ? 'no_show' : 'not_marked',
-      setup_arrival_time: b.setup_arrival_time, setup_checkin_at: b.setup_checkin_at,
+      setup_arrival_time: b.setup_arrival_time, setup_tables: b.setup_tables, setup_checkin_at: b.setup_checkin_at,
       inspection_status: undefined,
       disclosed: b.description || ''
     }));
@@ -103,7 +103,7 @@ export function managerAttendeeRows(manager, eventId) {
       business: i.business || i.name, name: i.name, email: i.email, phone: i.phone,
       category: i.category, space: i.space,
       attendance: i.attendance_state || 'not_marked',
-      setup_arrival_time: i.setup_arrival_time, setup_checkin_at: i.setup_checkin_at,
+      setup_arrival_time: i.setup_arrival_time, setup_tables: i.setup_tables, setup_checkin_at: i.setup_checkin_at,
       inspection_status: i.inspection_status || 'not_inspected',
       inspection_notes: i.inspection_notes || '',
       disclosed: i.selling || i.category || ''

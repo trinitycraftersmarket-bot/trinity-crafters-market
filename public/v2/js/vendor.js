@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261116-48';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261116-48';
+import { api, fn, esc, nice, money } from './api.js?v=20261118-69';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261118-69';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -52,7 +52,7 @@ function bookingCard(ctx, r) {
       <div class="contact">${esc(r.location || '')} · ${esc(spaceName(r.space))} · ${money(r.price)}</div>
     </div><span class="status ${statusClass(r)}">${esc(String(r.status || '').toUpperCase())}</span></div>
     <p class="note"><strong>Status:</strong> ${esc(statusText(r))}</p>
-    ${r.setup_checkin_at ? `<p class="note"><strong>Online check-in complete.</strong> Arrival time: ${esc(r.setup_arrival_time || '')}.</p>`
+    ${r.setup_checkin_at ? `<p class="note"><strong>Online check-in complete.</strong> Arrival time: ${esc(r.setup_arrival_time || '')}.${r.setup_tables ? ` Bringing <strong>${esc(r.setup_tables)} table${Number(r.setup_tables) === 1 ? '' : 's'}</strong>.` : ''}</p>`
       : r.setup_arrival_time ? `<p class="note"><strong>Setup arrival selected:</strong> ${esc(r.setup_arrival_time)}. Check in when you arrive on market day.</p>` : ''}
     ${r.payment_reference ? `<p class="note"><strong>Payment reference:</strong> ${esc(r.payment_reference)}</p>` : ''}
     ${r.decision_reason ? `<p class="note"><strong>Organizer note:</strong> ${esc(r.decision_reason)}</p>` : ''}
@@ -66,7 +66,10 @@ function bookingCard(ctx, r) {
         <label class="sheet-field">Choose your setup arrival time
           <select name="arrival_time" required><option value="">Choose arrival time</option><option>08:15</option><option>08:30</option><option>08:45</option><option>09:00</option></select>
         </label>
-        <div class="vendor-actions"><button class="btn small">Save arrival time</button></div>
+        <label class="sheet-field">How many tables are you bringing?
+          <select name="tables" required><option value="">Choose</option><option value="1">1 table</option><option value="2">2 tables</option></select>
+        </label>
+        <div class="vendor-actions"><button class="btn small">Save check-in</button></div>
       </form>` : ''}
     ${moveChip(ctx, r)}
     <div class="vendor-actions">
@@ -83,8 +86,8 @@ function wireBookingCard(ctx, root, r) {
   if (form) form.onsubmit = async e => {
     e.preventDefault();
     try {
-      await api('vendor-setup-checkin', { id: r.id, source: r.source, arrival_time: new FormData(form).get('arrival_time') });
-      ctx.toast('Arrival time saved.');
+      await api('vendor-setup-checkin', { id: r.id, source: r.source, arrival_time: new FormData(form).get('arrival_time'), tables: new FormData(form).get('tables') });
+      ctx.toast('Check-in saved.');
       await ctx.refreshData();
       renderVendorBookings(ctx, root); // re-render from the fresh payload
     } catch (err) { ctx.toast(err.message, true); }
@@ -227,7 +230,7 @@ export function renderVendorHome(ctx, root) {
       <h3>${esc(nice(next.date))}</h3>
       <p class="note">${esc(next.location || '')} · ${esc(spaceName(next.space))} · Setup from 8:30 AM — be ready by 9:45 AM.</p>
       <p><span class="status ${statusClass(next)}">${esc(statusText(next))}</span></p>
-      ${next.setup_arrival_time ? `<p class="note">Setup arrival: <strong>${esc(next.setup_arrival_time)}</strong></p>` : '<p class="note">You have not picked a setup arrival time yet — choose one in My Bookings.</p>'}
+      ${next.setup_arrival_time ? `<p class="note">Setup arrival: <strong>${esc(next.setup_arrival_time)}</strong>${next.setup_tables ? ` · Bringing <strong>${esc(next.setup_tables)} table${Number(next.setup_tables) === 1 ? '' : 's'}</strong>` : ''}</p>` : '<p class="note">You have not picked a setup arrival time yet — choose one in My Bookings.</p>'}
       <div class="vendor-actions">
         <button class="btn primary small" data-go="vbookings">My Bookings</button>
         <button class="btn small" id="v2-home-fp">🗺️ Where will you be</button>

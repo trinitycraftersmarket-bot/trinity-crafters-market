@@ -5,11 +5,11 @@
 // Day (Stage 1) so there is one place that runs the day — here they are
 // shown as read-only chips. Same server-is-truth rule: every action is a
 // server call, then a full re-fetch, then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261116-48';
-import { attendeeRows, eventStats } from './data.js?v=20261116-48';
-import { parseAttendeePdf } from './pdfimport.js?v=20261116-48';
-import { printAttendance } from './print.js?v=20261116-48';
-import { imageAllowed, standardizeArea } from './floorplan.js?v=20261116-48';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261118-69';
+import { attendeeRows, eventStats } from './data.js?v=20261118-69';
+import { parseAttendeePdf } from './pdfimport.js?v=20261118-69';
+import { printAttendance } from './print.js?v=20261118-69';
+import { imageAllowed, standardizeArea } from './floorplan.js?v=20261118-69';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -76,7 +76,7 @@ export function renderAttendees(ctx, root, params = {}) {
         <span class="status ${INSP_CLASS[r.inspection_status]}">${INSP_LABEL[r.inspection_status]}</span>
         ${payChip(r)}
         ${attendanceChip(r)}
-        ${r.setup_checkin_at ? `<span class="status neutral">Online check-in ✓${r.setup_arrival_time ? ' · arrives ' + esc(clock(r.setup_arrival_time)) : ''}</span>` : '<span class="status neutral">Online check-in not done</span>'}
+        ${r.setup_checkin_at ? `<span class="status neutral">Online check-in ✓${r.setup_arrival_time ? ' · arrives ' + esc(clock(r.setup_arrival_time)) : ''}${r.setup_tables ? ' · ' + esc(r.setup_tables) + (Number(r.setup_tables) === 1 ? ' table' : ' tables') : ''}</span>` : '<span class="status neutral">Online check-in not done</span>'}
         ${r.featured_posted_at ? '<span class="status neutral">Featured ✓</span>' : ''}
         ${r.imported ? '<span class="status neutral">Imported record</span>' : ''}
       </div>
