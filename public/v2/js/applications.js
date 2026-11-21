@@ -9,8 +9,8 @@
 // from a legacy module. v2 cannot import legacy modules, so the flag here
 // uses the scan SAVED on the application at submit time
 // (agreements.category_scan) — the same data the legacy review reads first.
-import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261118-81';
-import { normalizeSpace, attendeeRows } from './data.js?v=20261118-81';
+import { api, fn, esc, money, nice, niceShort } from './api.js?v=20261121-82';
+import { normalizeSpace, attendeeRows } from './data.js?v=20261121-82';
 
 const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', held: 'Payment due', paid: 'Paid', waitlist: 'Wait-list', declined: 'Declined', cancelled: 'Cancelled', expired: 'Expired' };
 const STATUS_CLASS = { pending: 'warn', approved: 'neutral', held: 'warn', paid: 'ok', waitlist: 'neutral', declined: 'bad', cancelled: 'bad', expired: 'bad' };
@@ -115,15 +115,26 @@ export function renderApplications(ctx, root) {
   // §19 flag + who-sells-what conflict panel (owner's exact line format:
   // "<Business> sells <products>", "products not listed" when the record
   // carries none — the server never invents product text).
+  const sellsLine = (business, sells) => `${esc(business || 'Vendor')} sells ${esc(String(sells || '').trim() || 'products not listed')}`;
   function creditFlagHtml(b) {
     const c = creditFor(b);
     return c ? `<p class="note">💳 Holds a ${money(c.remaining_amount)} credit from ${esc(nice(c.source_date))}.</p>` : '';
   }
+  // §82 (Scott, Nov 21, 2026): "add to the category flag with who is
+  // there and what they sell" — the category flag itself names the
+  // vendors who already hold the filled category on this date and what
+  // they sell, from the same application-conflicts payload the panel
+  // below uses, so the double-booking is visible on the flag without
+  // opening anything else.
+  function conflictHoldersHtml(b) {
+    const c = conflictMap?.[b.id];
+    if (!c || !(c.vendors || []).length) return '';
+    return `<br><strong>Already in ${esc(c.category)}:</strong><br>${c.vendors.map(v => sellsLine(v.business, v.sells)).join('<br>')}`;
+  }
   function conflictPanelHtml(b) {
     const c = conflictMap?.[b.id];
     if (!c) return '';
-    const line = (business, sells) => `${esc(business || 'Vendor')} sells ${esc(String(sells || '').trim() || 'products not listed')}`;
-    return `<p class="note flag-note"><strong>⚠ Category conflict — who sells what (${esc(c.category)} is full for this date)</strong><br>${line(c.applicant.business, c.applicant.sells)}<br>${(c.vendors || []).map(v => line(v.business, v.sells)).join('<br>')}</p>`;
+    return `<p class="note flag-note"><strong>⚠ Category conflict — who sells what (${esc(c.category)} is full for this date)</strong><br>${sellsLine(c.applicant.business, c.applicant.sells)}<br>${(c.vendors || []).map(v => sellsLine(v.business, v.sells)).join('<br>')}</p>`;
   }
   function approveCreditSheet(b) {
     const c = creditFor(b);
@@ -179,9 +190,9 @@ export function renderApplications(ctx, root) {
       <p class="note"><strong>Contact:</strong> ${esc(b.email || '')}${b.phone ? ' · ' + esc(b.phone) : ''}<br><strong>Booking ID:</strong> ${esc(b.id || '—')}</p>
       ${b.description ? `<p class="note"><strong>Sells:</strong> ${esc(String(b.description).slice(0, 180))}${String(b.description).length > 180 ? '…' : ''}</p>` : ''}
       ${b.ban_flagged ? `<p class="note flag-note"><strong>⚠ Potential banned-vendor match:</strong> ${esc(b.ban_match_reason || 'Review this application before approval.')}</p>` : ''}
-      ${flag ? `<p class="note flag-note"><strong>⚠ Category review needed</strong> — selected: ${esc(b.category || 'Not selected')}${flag.overlaps.length ? '<br>Products appear to fit: ' + flag.overlaps.map(esc).join(' · ') : ''}${flag.conflicts.length ? '<br><strong>Filled/sold-out conflict: ' + flag.conflicts.map(esc).join(' · ') + '</strong>' : ''}</p>` : ''}
+      ${flag ? `<p class="note flag-note"><strong>⚠ Category review needed</strong> — selected: ${esc(b.category || 'Not selected')}${flag.overlaps.length ? '<br>Products appear to fit: ' + flag.overlaps.map(esc).join(' · ') : ''}${flag.conflicts.length ? '<br><strong>Filled/sold-out conflict: ' + flag.conflicts.map(esc).join(' · ') + '</strong>' : ''}${conflictHoldersHtml(b)}</p>` : ''}
       ${creditFlagHtml(b)}
-      ${conflictPanelHtml(b)}
+      ${flag ? '' : conflictPanelHtml(b)}
       ${b.status === 'held' && b.hold_until ? `<p class="note"><strong>Payment deadline:</strong> ${esc(new Date(b.hold_until).toLocaleString('en-US', { timeZone: 'America/New_York' }))} Eastern</p>` : ''}
       ${b.status === 'held' && b.invoice_reference ? `<p class="note"><strong>${/^INV2-/i.test(String(b.invoice_reference)) ? 'PayPal invoice' : 'Invoice sent manually'} · Ref ${esc(b.invoice_reference)}</strong></p>` : ''}
       ${b.status === 'paid' && b.payment_reference ? `<p class="note"><strong>Payment ref:</strong> ${esc(b.payment_reference)}</p>` : ''}
