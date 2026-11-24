@@ -403,6 +403,18 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     };
     renderMap();
   }
+  // §83: group assigned booth rows by the vendor's elected setup
+  // check-in time — mirror of the v2 boothCheckinGroups helper in
+  // floorplan.js (see its note). Rows are {id, name, time}.
+  function boothCheckinGroups(rows){
+    const label=raw=>{const m=/^(\d{1,2}):(\d{2})/.exec(String(raw||'').trim());if(!m)return String(raw||'').trim();let h=Number(m[1]);const ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+m[2]+' '+ap;};
+    const minutes=raw=>{const m=/^(\d{1,2}):(\d{2})/.exec(String(raw||'').trim());return m?Number(m[1])*60+Number(m[2]):Number.MAX_SAFE_INTEGER;};
+    const boothSort=(a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true});
+    const byTime=new Map(),none=[];
+    for(const r of rows||[]){const raw=String(r.time||'').trim();if(!raw){none.push(r);continue;}if(!byTime.has(raw))byTime.set(raw,[]);byTime.get(raw).push(r);}
+    const groups=[...byTime.entries()].sort((a,b)=>minutes(a[0])-minutes(b[0])||label(a[0]).localeCompare(label(b[0]))).map(([raw,rs])=>({time:raw,label:label(raw),rows:rs.slice().sort(boothSort)}));
+    return {groups,none:none.slice().sort(boothSort)};
+  }
   function printAssignments(){
     const event=events.find(e=>e.id===state.eventId);
     if(state.dirty){notice('Your changes are still saving — wait a moment, then print.');return;}
@@ -413,24 +425,34 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
     // Organizer-only printout; never transmitted through vendor mail.
     const vendorById=new Map(state.vendors.map(v=>[String(v.id),v]));
     const assigned=new Set();
-    const blocks=state.areas.map(area=>{
-      const boothRows=Array.from({length:area.capacity},(_,i)=>{
-        const id=spot(area,i),vendorId=String(area.assignments[id]?.vendor_id||'');
+    // §83: flat assigned rows carrying each vendor's elected check-in
+    // time; open booths move to a summary line (see the v2 note).
+    const boothRows=[],openByArea=[];
+    let total=0;
+    for(const area of state.areas){
+      total+=area.capacity;
+      const open=[];
+      Array.from({length:area.capacity},(_,i)=>spot(area,i)).forEach(id=>{
+        const vendorId=String(area.assignments[id]?.vendor_id||'');
         const vendor=vendorById.get(vendorId);
-        if(vendor)assigned.add(vendorId);
-        return {id,name:vendor?String(vendor.business||vendor.name||'Unnamed vendor'):'— Open —'};
+        if(vendor){assigned.add(vendorId);boothRows.push({id,name:String(vendor.business||vendor.name||'Unnamed vendor'),time:String(vendor.setup_arrival_time||'')});}
+        else open.push(id);
       });
-      return {title:String(area.title),space:String(area.space_type),capacity:area.capacity,filled:boothRows.filter(r=>r.name!=='— Open —').length,rows:boothRows};
-    });
+      if(open.length)openByArea.push({title:String(area.title),spots:open});
+    }
+    const filled=boothRows.length;
     const unassigned=state.vendors.filter(v=>!assigned.has(String(v.id))).sort((a,b)=>String(a.business||a.name||'').localeCompare(String(b.business||b.name||'')));
-    const total=blocks.reduce((n,b)=>n+b.capacity,0),filled=blocks.reduce((n,b)=>n+b.filled,0);
     const eventDate=new Date(String(event.date).slice(0,10)+'T12:00:00');
     const dateText=Number.isNaN(eventDate.getTime())?String(event.date||''):eventDate.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
     const title=String(venue?.market_name||event.title||'Market')+' — Booth Assignments';
-    const sections=blocks.map(area=>'<section class="area"><div class="area-heading"><h2>'+safe(area.title)+'</h2><span>'+area.filled+' / '+area.capacity+' assigned · '+safe(area.space)+'</span></div>'+
-      '<table><thead><tr><th class="booth">Booth</th><th>Vendor / Business</th><th class="check">Checked in</th></tr></thead><tbody>'+
-      area.rows.map(r=>'<tr><td class="booth">'+safe(r.id)+'</td><td'+(r.name==='— Open —'?' class="open"':'')+'>'+safe(r.name)+'</td><td class="check"><span class="tick"></span></td></tr>').join('')+
-      '</tbody></table></section>').join('');
+    const checkinTable=rows=>'<table><thead><tr><th class="booth">Booth</th><th>Vendor / Business</th><th class="check">Checked in</th></tr></thead><tbody>'+
+      rows.map(r=>'<tr><td class="booth">'+safe(r.id)+'</td><td>'+safe(r.name)+'</td><td class="check"><span class="tick"></span></td></tr>').join('')+
+      '</tbody></table>';
+    const grouped=boothCheckinGroups(boothRows);
+    const sections=grouped.groups.map(g=>'<section class="area"><div class="area-heading"><h2>Check-in '+safe(g.label)+'</h2><span>'+g.rows.length+' vendor'+(g.rows.length===1?'':'s')+'</span></div>'+
+      checkinTable(g.rows)+'</section>').join('')+
+      (grouped.none.length?'<section class="area"><div class="area-heading"><h2>No check-in time chosen</h2><span>'+grouped.none.length+' vendor'+(grouped.none.length===1?'':'s')+' — not checked in online</span></div>'+
+      checkinTable(grouped.none)+'</section>':'');
     const pending=unassigned.length?'<section class="area"><div class="area-heading"><h2>Unassigned / Overflow</h2><span>'+unassigned.length+' vendor(s)</span></div>'+
       '<table><thead><tr><th>Vendor / Business</th><th class="booth">Booking</th><th>Placement notes</th></tr></thead><tbody>'+
       unassigned.map(v=>'<tr><td>'+safe(v.business||v.name||'Unnamed vendor')+'</td><td>'+safe(v.space||'')+'</td><td>&nbsp;</td></tr>').join('')+
@@ -457,7 +479,8 @@ export function setupFloorAreaManager({host,eventSelect,events,locations,api,esc
       '<p class="private">Private organizer copy — do not distribute to vendors</p>'+
       (state.dirty?'<p class="draft">UNSAVED CHANGES — this printout includes edits not yet saved online.</p>':'')+
       '</header><p class="summary">'+filled+' of '+total+' booths assigned · '+(total-filled)+' open · '+unassigned.length+' vendors awaiting a booth</p>'+
-      (()=>{const seen=new Map();for(const b of blocks){const first=(b.rows||[])[0];if(!first)continue;const prefix=String(first.id).split('-')[0];if(prefix&&!seen.has(prefix))seen.set(prefix,b.title||prefix);}return seen.size?'<p class="legend">Spot key: '+[...seen.entries()].map(([p,t])=>p+' = '+t).join(' · ')+'</p>':'';})()+
+      (()=>{const seen=new Map();for(const area of state.areas){if(!area.capacity)continue;const prefix=String(spot(area,0)).split('-')[0];if(prefix&&!seen.has(prefix))seen.set(prefix,String(area.title)||prefix);}return seen.size?'<p class="legend">Spot key: '+[...seen.entries()].map(([p,t])=>p+' = '+t).join(' · ')+'</p>':'';})()+
+      (openByArea.length?'<p class="legend">Open booths: '+openByArea.map(a=>safe(a.title)+': '+a.spots.map(safe).join(', ')).join(' · ')+'</p>':'')+
       sections+pending+'</body></html>';
     // §79 mirror: the plan pages for this event ride at the back of
     // the booth assignments printout (see the v2 printBoothList note).

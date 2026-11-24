@@ -84,12 +84,12 @@ const setupRowKey=v=>v.vendor_id?'vendor:'+v.vendor_id:setupEmail(v.email)?'emai
 function dedupeSetupRows(rows){const map=new Map(),rank=v=>v.source==='imported'?2:v.status==='paid'||v.payment_status==='paid'?5:v.status==='held'?4:v.status==='approved'?3:v.status==='pending'?2:1;for(const v of rows||[]){const k=setupRowKey(v),old=map.get(k);if(!old||rank(v)>rank(old))map.set(k,v);}return [...map.values()];}
 async function loadSetupRows(sql,eventId){
  return await sql`select * from (
-  select 'booking'::text source,b.id,b.event_id,a.vendor_id,a.name,a.business,a.email,a.phone,c.name category,lower(trim(b.space)) space,b.status,
+  select 'booking'::text source,b.id,b.event_id,a.vendor_id,a.name,a.business,a.email,a.phone,c.name category,lower(trim(b.space)) space,b.status,b.setup_arrival_time,
    coalesce(nullif(a.description,''),c.name) products
   from market.bookings b join market.applications a on a.id=b.application_id left join market.categories c on c.id=a.category_id
   where b.event_id=${eventId} and b.status in ('approved','held','paid')
   union all
-  select 'imported'::text source,i.id,i.event_id,i.vendor_id,i.name,i.business,i.email,i.phone,nullif(i.category,'') category,lower(trim(i.space)) space,coalesce(nullif(i.payment_status,''),'paid') status,
+  select 'imported'::text source,i.id,i.event_id,i.vendor_id,i.name,i.business,i.email,i.phone,nullif(i.category,'') category,lower(trim(i.space)) space,coalesce(nullif(i.payment_status,''),'paid') status,i.setup_arrival_time,
    coalesce(nullif(i.selling,''),nullif(i.category,''),'Local handmade goods') products
   from market.imported_attendees i where i.event_id=${eventId} and not coalesce(i.cancelled,false)
  ) q order by business,name`;

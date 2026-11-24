@@ -67,6 +67,9 @@ test('§73: the attendance print composites names onto the plan pages and prints
 
 test('§73: the Booth Assignments printouts carry the legend', () => {
   assert.ok(FP.includes("'<p class=\"legend\">' + esc(legend) + '</p>'"), 'v2 booth list prints the legend');
-  assert.ok(FP.includes('const legend = spotLegend(blocks.map('), 'v2 booth legend derives from its own blocks');
+  // §83 (Nov 24, 2026): printBoothList no longer builds per-area blocks
+  // (its tables are grouped by check-in time now), so the legend is
+  // derived from the areas directly — same spotLegend, same output.
+  assert.ok(FP.includes('const legend = spotLegend(areas.map('), 'v2 booth legend derives from its areas');
   assert.ok(CLASSIC.includes('Spot key: '), 'classic booth list prints the legend');
 });

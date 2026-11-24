@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261121-82';
+import { api, esc, nice } from './api.js?v=20261124-83';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -429,33 +429,83 @@ export function boothPlanSections(targets, urls, sub) {
   return targets.map((t, i) => '<section class="plan-page"><h2>' + esc(t.area.title) + ' — floor plan</h2><p class="sub">' + esc(sub) + ' · ' + t.pins.length + ' vendor' + (t.pins.length === 1 ? '' : 's') + ' placed</p><img class="plan" alt="Floor plan with vendor names" src="' + urls[i] + '">' + (t.pins.length ? '<div class="plan-names"><strong>Vendor names:</strong> ' + t.pins.map(p => esc(p.spot) + ' — ' + esc(p.label)).join(' · ') + '</div>' : '') + '</section>').join('');
 }
 
-// Print the booth list: every area as a check-in table, plus the
-// unassigned/overflow list. Organizer-only printout (the legacy wording
-// is preserved: it is never sent to vendors).
+// §83 (Scott, Nov 24, 2026): "I want their elected check in time to
+// show on this report, then grouped by time on the print out, anyone
+// who didn't check in gets put at the bottom of the report." The booth
+// list is no longer one table per area: assigned booths are grouped by
+// the setup arrival time the vendor elected at online check-in
+// (setup_arrival_time, carried on the floor-attendees rows since §83),
+// earliest first, and vendors who never completed online check-in —
+// no elected time — form the last group. Pure helper so the grouping
+// is testable without a DOM: rows are {id, name, time}.
+export function boothCheckinGroups(rows) {
+  const label = raw => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(raw || '').trim());
+    if (!m) return String(raw || '').trim();
+    let h = Number(m[1]);
+    const ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + m[2] + ' ' + ap;
+  };
+  const minutes = raw => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(raw || '').trim());
+    return m ? Number(m[1]) * 60 + Number(m[2]) : Number.MAX_SAFE_INTEGER;
+  };
+  const boothSort = (a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+  const byTime = new Map(), none = [];
+  for (const r of rows || []) {
+    const raw = String(r.time || '').trim();
+    if (!raw) { none.push(r); continue; }
+    if (!byTime.has(raw)) byTime.set(raw, []);
+    byTime.get(raw).push(r);
+  }
+  const groups = [...byTime.entries()]
+    .sort((a, b) => minutes(a[0]) - minutes(b[0]) || label(a[0]).localeCompare(label(b[0])))
+    .map(([raw, rs]) => ({ time: raw, label: label(raw), rows: rs.slice().sort(boothSort) }));
+  return { groups, none: none.slice().sort(boothSort) };
+}
+
+// Print the booth list: assigned booths grouped by elected check-in
+// time (§83), plus the unassigned/overflow list. Organizer-only
+// printout (the legacy wording is preserved: it is never sent to
+// vendors).
 export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
   if (dirty) { toast('Your changes are still saving — wait for the saved checkmark, then print.', true); return; }
   if (!event || !areas.length) { toast('Choose an event with floor plan areas before printing.', true); return; }
   const vendorById = new Map((vendors || []).map(v => [String(v.id), v]));
   const assigned = new Set();
-  const blocks = areas.map(area => {
-    const rows = spotIds(area).map(id => {
+  // §83: one flat row per assigned booth, carrying the vendor's elected
+  // check-in time; open booths are collected per area for the summary
+  // line (they have no vendor and no time, so they leave the tables).
+  const boothRows = [], openByArea = [];
+  let total = 0;
+  for (const area of areas) {
+    total += area.capacity;
+    const open = [];
+    for (const id of spotIds(area)) {
       const vendorId = String(area.assignments[id]?.vendor_id || '');
       const vendor = vendorById.get(vendorId);
-      if (vendor) assigned.add(vendorId);
-      return { id, name: vendor ? String(vendor.business || vendor.name || 'Unnamed vendor') : '— Open —' };
-    });
-    return { title: String(area.title), space: String(area.space_type), capacity: area.capacity, filled: rows.filter(r => r.name !== '— Open —').length, rows };
-  });
+      if (vendor) {
+        assigned.add(vendorId);
+        boothRows.push({ id, name: String(vendor.business || vendor.name || 'Unnamed vendor'), time: String(vendor.setup_arrival_time || '') });
+      } else open.push(id);
+    }
+    if (open.length) openByArea.push({ title: String(area.title), spots: open });
+  }
+  const filled = boothRows.length;
   const unassigned = (vendors || []).filter(v => !assigned.has(String(v.id)))
     .sort((a, b) => String(a.business || a.name || '').localeCompare(String(b.business || b.name || '')));
-  const total = blocks.reduce((n, b) => n + b.capacity, 0), filled = blocks.reduce((n, b) => n + b.filled, 0);
   const d = new Date(String(event.date).slice(0, 10) + 'T12:00:00');
   const dateText = Number.isNaN(d.getTime()) ? String(event.date || '') : d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const title = String(venue?.market_name || event.title || 'Market') + ' — Booth Assignments';
-  const sections = blocks.map(area => '<section class="area"><div class="area-heading"><h2>' + esc(area.title) + '</h2><span>' + area.filled + ' / ' + area.capacity + ' assigned · ' + esc(area.space) + '</span></div>' +
-    '<table><thead><tr><th class="booth">Booth</th><th>Vendor / Business</th><th class="check">Checked in</th></tr></thead><tbody>' +
-    area.rows.map(r => '<tr><td class="booth">' + esc(r.id) + '</td><td' + (r.name === '— Open —' ? ' class="open"' : '') + '>' + esc(r.name) + '</td><td class="check"><span class="tick"></span></td></tr>').join('') +
-    '</tbody></table></section>').join('');
+  const checkinTable = rows => '<table><thead><tr><th class="booth">Booth</th><th>Vendor / Business</th><th class="check">Checked in</th></tr></thead><tbody>' +
+    rows.map(r => '<tr><td class="booth">' + esc(r.id) + '</td><td>' + esc(r.name) + '</td><td class="check"><span class="tick"></span></td></tr>').join('') +
+    '</tbody></table>';
+  const grouped = boothCheckinGroups(boothRows);
+  const sections = grouped.groups.map(g => '<section class="area"><div class="area-heading"><h2>Check-in ' + esc(g.label) + '</h2><span>' + g.rows.length + ' vendor' + (g.rows.length === 1 ? '' : 's') + '</span></div>' +
+    checkinTable(g.rows) + '</section>').join('') +
+    (grouped.none.length ? '<section class="area"><div class="area-heading"><h2>No check-in time chosen</h2><span>' + grouped.none.length + ' vendor' + (grouped.none.length === 1 ? '' : 's') + ' — not checked in online</span></div>' +
+      checkinTable(grouped.none) + '</section>' : '');
   const pending = unassigned.length ? '<section class="area"><div class="area-heading"><h2>Unassigned / Overflow</h2><span>' + unassigned.length + ' vendor(s)</span></div>' +
     '<table><thead><tr><th>Vendor / Business</th><th class="booth">Booking</th><th>Placement notes</th></tr></thead><tbody>' +
     unassigned.map(v => '<tr><td>' + esc(v.business || v.name || 'Unnamed vendor') + '</td><td>' + esc(v.space || '') + '</td><td>&nbsp;</td></tr>').join('') +
@@ -475,7 +525,8 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     'button{padding:10px 18px;border:0;border-radius:7px;background:#175745;color:white;font-weight:bold;font-size:13px;cursor:pointer}' +
     '@media print{.button-row{display:none!important}}' +
     '.plan-page{break-before:page;page-break-before:always}.plan-page h2{font:700 14pt Georgia,serif;color:#174d40;margin:0 0 2px}.plan-page .sub{margin:0 0 8px;color:#44554c;font-size:10pt}.plan-page img{width:100%;max-height:8.4in;object-fit:contain}.plan-names{margin-top:8px;font-size:10pt;line-height:1.55;color:#22312a}';
-  const legend = spotLegend(blocks.map(b => ({ title: b.title, spots: b.rows.map(r => r.id) })));
+  const legend = spotLegend(areas.map(a => ({ title: String(a.title), spots: spotIds(a) })));
+  const openLine = openByArea.length ? '<p class="legend">Open booths: ' + openByArea.map(a => esc(a.title) + ': ' + a.spots.map(esc).join(', ')).join(' · ') + '</p>' : '';
   const doc = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><style>' + stylesheet + '</style></head><body>' +
     '<div class="button-row"><button type="button" onclick="if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.print()}else{window.print()}">Print / Save as PDF</button><button type="button" style="background:#e8eee8;color:#175745;border:1px solid #175745" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href=\'https://trinitylutzmarkets.com/v2/?from=print\'},800)">✕ Close</button><a href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>In the app, the Print button above opens the print dialog. In a browser you can also use ⋮ → Share → Print.</p></div>' +
     '<header><h1>' + esc(title) + '</h1><p><strong>' + esc(dateText) + '</strong> · ' + esc(venue?.name || event.title || '') + '</p>' +
@@ -484,6 +535,7 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
     (dirty ? '<p class="draft">UNSAVED CHANGES — this printout includes edits not yet saved online.</p>' : '') +
     '</header><p class="summary">' + filled + ' of ' + total + ' booths assigned · ' + (total - filled) + ' open · ' + unassigned.length + ' vendors awaiting a booth</p>' +
     (legend ? '<p class="legend">' + esc(legend) + '</p>' : '') +
+    openLine +
     sections + pending + '</body></html>';
   const popup = window.open('', '_self');
   if (!popup) { toast('Could not open the print view in this browser.', true); return; }
