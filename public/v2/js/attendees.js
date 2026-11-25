@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261125-105';
-import { attendeeRows, eventStats } from './data.js?v=20261125-105';
-import { parseAttendeePdf } from './pdfimport.js?v=20261125-105';
-import { printAttendance } from './print.js?v=20261125-105';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261125-105';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261125-106';
+import { attendeeRows, eventStats } from './data.js?v=20261125-106';
+import { parseAttendeePdf } from './pdfimport.js?v=20261125-106';
+import { printAttendance } from './print.js?v=20261125-106';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261125-106';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -290,6 +290,7 @@ export function renderAttendees(ctx, root, params = {}) {
       <p class="note">${esc(nice(event.date))} · ${r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'} · ${esc(r.category || '')}</p>
       <div class="sheet-menu">
         ${!r.setup_checkin_at && String(r.email || '').trim() ? `<button class="menu-item" data-more="reminder"><span><b>Send online check-in reminder</b><span>Emails the vendor to complete check-in</span></span><span class="chev">›</span></button>` : ''}
+        ${String(r.email || '').trim() ? `<button class="menu-item" data-more="resend-setup"><span><b>Resend setup email</b><span>They say they never got it — email it to just this vendor again</span></span><span class="chev">›</span></button>` : ''}
         <button class="menu-item" data-more="featured"><span><b>Create featured vendor post</b><span>Draft, copy and mark them featured</span></span><span class="chev">›</span></button>
         <button class="menu-item" data-more="cancel"><span><b>Cancel vendor</b><span>Releases the space and emails a confirmation</span></span><span class="chev">›</span></button>
       </div>`);
@@ -298,6 +299,7 @@ export function renderAttendees(ctx, root, params = {}) {
       if (act === 'featured') featuredSheet(r);
       else if (act === 'cancel') cancelSheet(r);
       else if (act === 'reminder') { ctx.closeSheet(); mutate(() => api('checkin-reminder', { id: r.id, imported: r.imported }), 'Online check-in reminder sent to ' + (r.business || r.name) + '.'); }
+      else if (act === 'resend-setup') { ctx.closeSheet(); fn('setup-checkin', { action: 'resend-setup', record_id: r.id, source: r.imported ? 'imported' : 'booking' }).then(() => ctx.toast('Setup email resent to ' + (r.business || r.name) + '.')).catch(e => ctx.toast(e.message, true)); }
     });
   }
 

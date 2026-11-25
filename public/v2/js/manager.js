@@ -5,9 +5,9 @@
 // `manager` payload does not carry (prices, payment internals,
 // inspection on booking rows) are not rendered at all. Everything
 // renders from the manager payload; every mutation re-fetches it.
-import { api, fn, esc, nice } from './api.js?v=20261125-105';
-import { managerAttendeeRows } from './data.js?v=20261125-105';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261125-105';
+import { api, fn, esc, nice } from './api.js?v=20261125-106';
+import { managerAttendeeRows } from './data.js?v=20261125-106';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261125-106';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const fmtWhen = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
@@ -152,7 +152,7 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
             <button type="button" class="btn small ${r.attendance === 'no_show' ? 'danger' : ''}" data-m-att="${esc(r.id)}|no_show">No-show</button>
             <button type="button" class="btn small" data-m-att="${esc(r.id)}|not_marked">Clear</button>
           </div>
-          ${r.email ? `<div class="vendor-actions"><button type="button" class="btn small" data-m-proof="${esc(r.id)}">📧 Email proof</button></div><div data-proof-slot="${esc(r.id)}"></div>` : ''}
+          ${r.email ? `<div class="vendor-actions"><button type="button" class="btn small" data-m-proof="${esc(r.id)}">📧 Email proof</button><button type="button" class="btn small" data-m-resend="${esc(r.id)}">↻ Resend setup email</button></div><div data-proof-slot="${esc(r.id)}"></div>` : ''}
           ${r.inspection_status !== undefined ? `
           <form class="inspection-form" data-m-insp="${esc(r.id)}">
             <label class="sheet-field">Inspection
@@ -166,6 +166,16 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
     if (nb) nb.onclick = () => noshowSheet(notArrived, nb);
     const tb = rowsEl.querySelector('#v2-m-tables');
     if (tb) tb.onclick = () => tablesSheet(missingTables.length, tb);
+    rowsEl.querySelectorAll('[data-m-resend]').forEach(b => b.onclick = async () => {
+      const row = managerAttendeeRows(ctx.state.manager, eventId).find(r => String(r.id) === String(b.dataset.mResend));
+      if (!row) return;
+      b.disabled = true;
+      try {
+        await fn('setup-checkin', { action: 'resend-setup', record_id: row.id, source: row.imported ? 'imported' : 'booking' });
+        ctx.toast('Setup email resent to ' + (row.business || row.name) + '.');
+      } catch (e) { ctx.toast(e.message, true); }
+      b.disabled = false;
+    });
     rowsEl.querySelectorAll('[data-m-proof]').forEach(b => b.onclick = async () => {
       const row = managerAttendeeRows(ctx.state.manager, eventId).find(r => String(r.id) === String(b.dataset.mProof));
       const pslot = rowsEl.querySelector(`[data-proof-slot="${CSS.escape(b.dataset.mProof)}"]`);

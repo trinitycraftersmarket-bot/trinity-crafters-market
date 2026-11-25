@@ -78,6 +78,38 @@ export default async req=>{
     return json({ok:true,recipient,sent_at:delivery.sent_at});
    }
 
+   if(p.action==='resend-setup'){
+    // §112 (Scott, Nov 25): a vendor says they never got the setup email —
+    // resend it to JUST them. Same email as the single reminder, but with
+    // no already-checked-in block and no check-in-window block: a resend
+    // is a resend, whenever they ask.
+    if(!u.admin&&!u.manager)return json({error:'Organizer access required.'},403);
+    if(!recordId)throw Error('Vendor record is required.');
+    let row;
+    if(source==='imported'){
+     [row]=await sql`select i.id,i.name,i.business,i.email,i.space,e.date,e.start_time,e.title,l.name location,l.market_name
+       from market.imported_attendees i join market.events e on e.id=i.event_id join market.locations l on l.id=e.location_id
+       where i.id=${recordId} and not i.cancelled and i.payment_status='paid'`;
+    }else{
+     [row]=await sql`select b.id,a.name,a.business,a.email,b.space,e.date,e.start_time,e.title,l.name location,l.market_name
+       from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id join market.locations l on l.id=e.location_id
+       where b.id=${recordId} and b.status in ('approved','held','paid')`;
+    }
+    if(!row)return json({error:'Vendor booking not found.'},404);
+    const recipient=normalizedEmail(row.email);
+    if(!recipient)throw Error('This vendor does not have an email address.');
+    const [dateInfo]=await sql`select to_char(${row.date}::date,'FMDay, FMMonth FMDD, YYYY') label`;
+    const market=row.market_name||row.title||'Crafters Market',dateLabel=dateInfo?.label||String(row.date).slice(0,10);
+    const subject=`Online Check-In Is Required — ${market} — ${dateLabel}`;
+    const body=`Hi ${row.name||row.business||'Vendor'},\n\nThis is a reminder that online setup check-in is required for ${market} on ${dateLabel}.\n\nPlease choose your setup arrival time (8:15, 8:30, 8:45, or 9:00 AM) and tell us how many tables you are bringing (1 or 2). Online check-in closes automatically 24 hours before the market.\n\nComplete your check-in here:\nhttps://trinitylutzmarkets.com/#account\n\nAll booth spots are tentative. Booth assignments are finalized from the completed check-ins, and the main room will be filled first. If you do not complete online check-in, you risk losing your assigned spot — we will fill the main room from the vendors who have checked in, and vendors who have not checked in will be placed in whatever spaces remain. Final floor plan assignments will be sent Friday. No vendors are admitted after 9:00 AM — arrive after 9:00 AM and you will likely lose your spot, with absolutely no refund.${hamptonNote(row.location)}\n\nThank you!\nTrinity Crafters Market / Lutz Crafter's Market`;
+    await sql.begin(async tx=>{await queue(tx,recipient,subject,body);await audit(tx,u,'vendor setup email resent',{source,record_id:String(recordId),recipient,date:String(row.date).slice(0,10)});});
+    await flushMail();
+    let [delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;
+    for(let attempt=0;attempt<3&&!delivery?.sent_at&&!delivery?.error;attempt++){await flushMail();[delivery]=await sql`select sent_at,error from market.outbox where recipient=${recipient} and subject=${subject} order by created_at desc limit 1`;}
+    if(!delivery?.sent_at)throw Error(delivery?.error||'The setup email could not be delivered. Please try again.');
+    return json({ok:true,recipient,sent_at:delivery.sent_at});
+   }
+
    if(p.action==='remind-all'){
     if(!u.admin&&!u.manager)return json({error:'Organizer access required.'},403);
     if(!p.event_id)throw Error('Choose a market date.');
