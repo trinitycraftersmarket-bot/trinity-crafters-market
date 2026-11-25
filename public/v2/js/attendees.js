@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261125-98';
-import { attendeeRows, eventStats } from './data.js?v=20261125-98';
-import { parseAttendeePdf } from './pdfimport.js?v=20261125-98';
-import { printAttendance } from './print.js?v=20261125-98';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261125-98';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261125-99';
+import { attendeeRows, eventStats } from './data.js?v=20261125-99';
+import { parseAttendeePdf } from './pdfimport.js?v=20261125-99';
+import { printAttendance } from './print.js?v=20261125-99';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261125-99';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -474,8 +474,16 @@ export function renderAttendees(ctx, root, params = {}) {
       heading: key ? 'Check-in ' + (ARRIVAL_PRINT[key] || key) : 'No check-in time chosen',
       rows: rs
     }));
+    // §104: fetch the email proof (every email sent to each vendor on
+    // this date, with opens) so it prints at the bottom of the packet.
+    let emailProof = null;
+    try {
+      const rep = await fn('setup-checkin', { action: 'email-report', event_id: event.id });
+      emailProof = { vendors: rep.vendors || [] };
+    } catch { emailProof = { error: true }; }
     try {
       printAttendance({
+        emailProof,
         market: loc?.market_name || event.title || 'Crafters Market',
         subtitle: nice(event.date) + ' · ' + (loc?.name || event.location || '') + ' · ' + clock(event.start_time) + '–' + clock(event.end_time),
         summary: rows.length + ' vendors · ' + rows.filter(r => r.payStatus === 'paid').length + ' paid · ' + rows.filter(r => r.attendance === 'checked_in').length + ' checked in',

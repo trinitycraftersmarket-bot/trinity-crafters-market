@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261125-98';
+import { esc } from './api.js?v=20261125-99';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
@@ -50,6 +50,7 @@ const PRINT_ONCLICK = "if(window.TrinityPrint&&TrinityPrint.print){TrinityPrint.
 function printControls() {
   return `<div class="print-controls"><button type="button" onclick="${PRINT_ONCLICK}">Print / Save PDF</button> <button type="button" onclick="window.close();setTimeout(function(){if(!window.closed)location.reload()},300);setTimeout(function(){if(!window.closed)location.href='https://trinitylutzmarkets.com/v2/?from=print'},800)">Close</button> <a class="print-back" href="https://trinitylutzmarkets.com/v2/?from=print" onclick="location.reload();return false;">← Back to the app</a><p>On a phone? Printing lives in the browser menu — ⋮ → Share → Print / Save as PDF — or tap Back to the app to return.</p></div>`;
 }
+const fmtProofDate = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
 const dateKey = v => String(v || '').slice(0, 10);
 const niceShortDate = v => {
   const key = dateKey(v);
@@ -79,16 +80,23 @@ export function printTable(title, subtitle, headers, rows, summary = '') {
 // the event's saved floor plans — the ORIGINAL uploaded plan images,
 // one plan per page, per the standing floor-plan standard (never a
 // redrawn schematic).
-export function printAttendance({ market, subtitle, summary, headers, rows = [], groups = null, plans = [], legend = '' }) {
+export function printAttendance({ market, subtitle, summary, headers, rows = [], groups = null, plans = [], legend = '', emailProof = null }) {
   const w = window.open('', '_self');
   if (!w) throw Error('Could not open the print view in this browser.');
   const planPages = plans.map(p => `<section class="plan${p.names && p.names.length ? ' with-names' : ''}"><h2>${esc(p.title)}</h2><img src="${p.image}" alt="${esc(p.title)}">${p.names && p.names.length ? `<div class="plan-names"><h3>Vendor names — ${esc(p.title)}</h3><ul>${p.names.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}</section>`).join('');
+  // §104 (Scott, Nov 25, 2026): the Email Proof section rides at the very
+  // bottom of the market-day packet, grouped by vendor — the address on
+  // file, every email sent to it, and whether it was opened — so a
+  // vendor who claims "nobody told me" can be shown the receipts.
+  const emailHtml = !emailProof ? '' : emailProof.error
+    ? `<section class="proof"><h2>Email Proof</h2><p>Email history could not be loaded for this printout.</p></section>`
+    : `<section class="proof"><h2>Email Proof — every email sent to each vendor</h2><p class="legend">Sent times are exact. Open tracking starts November 25, 2026: Apple Mail can register an open automatically, and some mail apps block open tracking, so "Not opened" means no open was recorded — the email was still sent to the address shown.</p>${(emailProof.vendors || []).map(v => `<div class="proof-vendor"><h3>${esc(v.business || v.name || '')}${v.name && v.business && v.name !== v.business ? ' — ' + esc(v.name) : ''} · ${esc(v.email || 'No email on file')} · Emailed ${v.sends.length} time${v.sends.length === 1 ? '' : 's'}</h3>${v.sends.length ? `<table><thead><tr><th>Sent</th><th>Subject</th><th>Opened</th></tr></thead><tbody>${v.sends.map(snd => `<tr><td>${esc(fmtProofDate(snd.sent_at || snd.created_at))}</td><td>${esc(snd.error ? 'FAILED TO SEND — ' + (snd.subject || '') : (snd.subject || ''))}</td><td>${esc(snd.opened_at ? 'Yes — ' + fmtProofDate(snd.opened_at) + (Number(snd.open_count) > 1 ? ' (' + snd.open_count + ' opens)' : '') : 'Not opened')}</td></tr>`).join('')}</tbody></table>` : '<p class="legend">No emails sent to this vendor.</p>'}</div>`).join('')}</section>`;
   const headHtml = `<thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>`;
   const bodyHtml = rs => `<tbody>${rs.map(r => `<tr>${r.map(v => v === '☐' ? '<td><span class=\"chk\">☐</span></td>' : `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
   const listHtml = groups
     ? groups.map(g => `<h3 class=\"grp\">${esc(g.heading)}</h3><table>${headHtml}${bodyHtml(g.rows)}</table>`).join('')
     : `<table>${headHtml}${bodyHtml(rows)}</table>`;
-  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter portrait;margin:0;background:#fff}html{background:#fff}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:11pt;margin:0;padding:.5in;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:15px 6px 7px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:9.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}.chk{font-size:15pt;line-height:1}.grp{font-size:12.5pt;font-weight:bold;margin:16px 0 4px;break-after:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page;padding-top:.5in}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:9in;object-fit:contain}.plan.with-names img{max-height:7.4in}.plan-names{margin-top:10px}.plan-names h3{font-size:11pt;margin:0 0 4px}.plan-names ul{columns:3;column-gap:20px;margin:0;padding-left:15px;font-size:9pt;line-height:1.55}@media(max-width:700px){.plan-names ul{columns:2}}@media screen{body{overflow-x:auto}table{min-width:680px}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}${listHtml}${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
+  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter portrait;margin:0;background:#fff}html{background:#fff}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:11pt;margin:0;padding:.5in;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:15px 6px 7px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:9.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}.chk{font-size:15pt;line-height:1}.grp{font-size:12.5pt;font-weight:bold;margin:16px 0 4px;break-after:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page;padding-top:.5in}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:9in;object-fit:contain}.plan.with-names img{max-height:7.4in}.plan-names{margin-top:10px}.plan-names h3{font-size:11pt;margin:0 0 4px}.plan-names ul{columns:3;column-gap:20px;margin:0;padding-left:15px;font-size:9pt;line-height:1.55}@media(max-width:700px){.plan-names ul{columns:2}}.proof{break-before:page;padding-top:.5in}.proof h2{font-size:14pt;font-weight:bold}.proof-vendor{margin:0 0 14px;break-inside:avoid}.proof-vendor h3{font-size:11pt;margin:0 0 4px}.proof table{font-size:9.5pt}@media screen{body{overflow-x:auto}table{min-width:680px}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}${listHtml}${planPages}${emailHtml}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
   w.document.close();
 }
 

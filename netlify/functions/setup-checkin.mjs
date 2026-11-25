@@ -1,4 +1,4 @@
-import {db,identity,audit,queue,flushMail} from '../../server/core.mjs';
+import {db,identity,audit,queue,flushMail,ensureOutboxTracking} from '../../server/core.mjs';
 
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const ARRIVALS=new Set(['08:15','08:30','08:45','09:00']);
@@ -109,6 +109,27 @@ export default async req=>{
     await sql.begin(async tx=>{for(const v of rows)await queue(tx,normalizedEmail(v.email),subject,`Hi ${v.name||'Vendor'},\n\nGood news \u2014 you are already checked in online for ${market} on ${day}. We just need one more detail: how many tables are you bringing, 1 or 2?\n\nIndoor spaces are 6x9 and that size is strictly enforced \u2014 your entire setup must fit within your 6x9 space, so please plan accordingly.\n\nSign in, open your booking for this market, and tap Update check-in to add it:\nhttps://trinitylutzmarkets.com/#account\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'table count request to checked-in vendors',{event_id:String(p.event_id),count:rows.length});});
     await flushMail();
     return json({ok:true,count:rows.length});
+   }
+
+   if(p.action==='email-report'){
+    if(!u.admin&&!u.manager)return json({error:'Organizer access required.'},403);
+    if(!p.event_id)throw Error('Choose a market date first.');
+    await ensureOutboxTracking(sql);
+    const [ev]=await sql`select e.date,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;
+    if(!ev)throw Error('Market not found.');
+    const roster=await sql`select business,name,email from (
+      select a.business,a.name,a.email from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${p.event_id} and b.status in ('approved','held','paid')
+      union all
+      select i.business,i.name,i.email from market.imported_attendees i where i.event_id=${p.event_id} and not i.cancelled and i.payment_status='paid'
+    ) q order by business,name`;
+    const wanted=new Set(roster.map(r=>normalizedEmail(r.email)).filter(Boolean));
+    const all=await sql`select recipient,subject,created_at,sent_at,error,opened_at,open_count,last_opened_at from market.outbox where sent_at is not null or error is not null order by created_at desc limit 5000`;
+    const byEmail={};
+    for(const row of all){const k=normalizedEmail(row.recipient);if(!wanted.has(k))continue;(byEmail[k] ||= []).push(row);}
+    const seen=new Set(),vendors=[];
+    for(const r of roster){const k=normalizedEmail(r.email);if(k&&seen.has(k))continue;if(k)seen.add(k);vendors.push({business:r.business,name:r.name,email:r.email,sends:byEmail[k]||[]});}
+    await audit(sql,u,'email proof report viewed',{event_id:p.event_id});
+    return json({ok:true,market:ev.market_name||'',location:ev.location||'',date:ev.date,vendors});
    }
 
    const arrival=String(p.arrival_time||'').slice(0,5);

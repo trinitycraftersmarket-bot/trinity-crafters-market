@@ -60,12 +60,24 @@ export async function identityWithBan(req){
 export async function banned(tx,u,phone){return (await tx`select id from market.bans where active and (user_id=${u.id} or email=${u.email} or phone=${normalizePhone(phone)})`).length>0;}
 export async function expire(tx=db()){await tx`update market.bookings set status='expired' where status='held' and hold_until<=now()`;}
 export async function audit(tx,u,action,detail){await tx`insert into market.audit(actor,action,detail) values(${u.email||u},${action},${tx.json(detail)})`;}
+const newTrackToken=()=>crypto.randomUUID().replace(/-/g,'')+crypto.randomUUID().replace(/-/g,'');
+let outboxTrackingReady=false;
+export async function ensureOutboxTracking(sql){
+ if(outboxTrackingReady)return;
+ await sql`alter table market.outbox add column if not exists track_token text`;
+ await sql`alter table market.outbox add column if not exists opened_at timestamptz`;
+ await sql`alter table market.outbox add column if not exists last_opened_at timestamptz`;
+ await sql`alter table market.outbox add column if not exists open_count integer not null default 0`;
+ outboxTrackingReady=true;
+}
 export async function queue(tx,to,subject,body,htmlBody=null,attachments=null){
- const [row]=await tx`insert into market.outbox(recipient,subject,body,html_body,attachments) values(${to},${subject},${body},${htmlBody},${attachments?tx.json(attachments):null}) returning id`;
+ await ensureOutboxTracking(db());
+ const [row]=await tx`insert into market.outbox(recipient,subject,body,html_body,attachments,track_token) values(${to},${subject},${body},${htmlBody},${attachments?tx.json(attachments):null},${newTrackToken()}) returning id`;
  return row;
 }
 export async function flushMail(){
  if(!process.env.RESEND_API_KEY||!process.env.MAIL_FROM)return {sent:0,failed:0};
+ await ensureOutboxTracking(db());
  let sent=0,failed=0;
  for(let batch=0;batch<25;batch++){
   let processed=0;
@@ -85,7 +97,13 @@ export async function flushMail(){
    for(const r of rows){
     try{
      const attachments=Array.isArray(r.attachments)?r.attachments.filter(a=>a&&a.filename&&a.content).map(a=>({filename:String(a.filename).slice(0,180),content:String(a.content)})):[];
-     const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body,...(r.html_body?{html:r.html_body}:{}),...(attachments.length?{attachments}:{})}),signal:AbortSignal.timeout(10000)});
+     let token=r.track_token;
+     if(!token){token=newTrackToken();await tx`update market.outbox set track_token=${token} where id=${r.id}`;}
+     const pixel='<img src="'+(process.env.URL||'https://trinitylutzmarkets.com')+'/.netlify/functions/track?t='+token+'" width="1" height="1" alt="" style="display:none">';
+     let html;
+     if(r.html_body){html=/<\/body>/i.test(r.html_body)?r.html_body.replace(/<\/body>/i,pixel+'</body>'):r.html_body+pixel;}
+     else{html='<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1a1a1a;max-width:640px">'+String(r.body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')+'</div>'+pixel;}
+     const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body,...(html?{html}:{}),...(attachments.length?{attachments}:{})}),signal:AbortSignal.timeout(10000)});
      if(!res.ok){const info=await res.json().catch(()=>({}));const detail=String(info.message||info.error||info.name||'').slice(0,300);throw Error('Email delivery failed: '+res.status+(detail?' — '+detail:''));}
      await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;sent++;
     }catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;failed++;}
