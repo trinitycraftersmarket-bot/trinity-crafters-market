@@ -5,9 +5,9 @@
 // that fresh data. This screen never edits a local copy of a row, so what
 // it shows is always what the server has — and it survives a reload,
 // because a reload does the same fetch.
-import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261125-95';
-import { attendeeRows, eventStats } from './data.js?v=20261125-95';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261125-95';
+import { api, esc, money, nice, clock, marketName, isToday } from './api.js?v=20261125-96';
+import { attendeeRows, eventStats } from './data.js?v=20261125-96';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261125-96';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_CLASS = { not_inspected: 'warn', approved: 'ok', needs_correction: 'bad', refused: 'bad' };
@@ -87,6 +87,7 @@ export function renderEventDay(ctx, root, params = {}) {
     <div class="filters" role="group" aria-label="Filter attendees">
       ${[['all', 'All'], ['pending', 'Inspection pending'], ['unpaid', 'Unpaid'], ['inside', 'Inside'], ['outside', 'Outside']].map(([k, t]) => `<button class="chip-btn ${view.filter === k ? 'active' : ''}" data-filter="${k}">${t}</button>`).join('')}
     </div>
+    <div id="v2-noshow-slot"></div>
     <div class="vendor-list" id="v2-vendor-list"></div>
     <h3 class="section-title" id="v2-floorplan-title">Floor plan</h3>
     <section class="card fp-card"><div id="v2-floorplan"></div></section>
@@ -101,6 +102,13 @@ export function renderEventDay(ctx, root, params = {}) {
     const stats = eventStats(fresh, event);
     const summary = root.querySelector('#v2-day-summary');
     if (summary) summary.textContent = `${stats.vendors} vendors · ${stats.checkedIn} checked in · ${stats.inspectionsPending} inspections pending${stats.unpaidCount ? ' · ' + stats.unpaidCount + ' unpaid (' + money(stats.unpaidDue) + ')' : ''}. Tap Approve and the chip updates from the server — no refresh needed.`;
+    const notArrived = attendeeRows(fresh, event.id).filter(r => r.attendance !== 'checked_in' && r.attendance !== 'no_show');
+    const noshowSlot = root.querySelector('#v2-noshow-slot');
+    if (noshowSlot) {
+      noshowSlot.innerHTML = notArrived.length ? `<div class="vendor-actions"><button class="btn danger" id="v2-noshow-all">Mark All No-Shows & Cancel (${notArrived.length})</button></div>` : '';
+      const nb = noshowSlot.querySelector('#v2-noshow-all');
+      if (nb) nb.onclick = () => noshowSheet(notArrived, nb);
+    }
     const rows = attendeeRows(fresh, event.id).filter(rowMatches);
     const list = root.querySelector('#v2-vendor-list');
     if (list) list.innerHTML = rows.map(cardHtml).join('') || `<div class="card empty-card">${stats.vendors ? 'No vendors match this search or filter.' : 'No attendees for this date yet.'}</div>`;
@@ -128,6 +136,29 @@ export function renderEventDay(ctx, root, params = {}) {
     state === 'checked_in' ? 'Vendor checked in.' : state === 'no_show' ? 'Marked as no show.' : 'Attendance cleared.'
   );
   const findRow = (id, imported) => attendeeRows(ctx.state.admin, event.id).find(r => String(r.id) === String(id) && r.imported === imported);
+
+  const noshowSheet = (rows, btn) => {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Mark all no-shows & cancel</h3>
+      <p>These <strong>${rows.length} vendor${rows.length === 1 ? '' : 's'}</strong> have not arrived. Each will be marked as a no-show, their booking for this date cancelled, and emailed that no-show bookings get absolutely no refund. Freed spots will be offered to the waitlist.</p>
+      <p class="note">${rows.map(r => esc(r.business || r.name || 'Vendor')).join('<br>')}</p>
+      <div class="sheet-actions"><button class="btn" data-sheet-close>Cancel</button><button class="btn danger" id="v2-noshow-send">Mark ${rows.length} no-show${rows.length === 1 ? '' : 's'} & cancel</button></div>`);
+    ctx.sheetEl.querySelector('#v2-noshow-send').onclick = async () => {
+      ctx.closeSheet();
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      try {
+        const v = await api('eventday-noshow-all', { event_id: event.id });
+        await ctx.refreshAdmin();
+        draw();
+        ctx.toast('Marked ' + v.count + ' no-show(s), cancelled their bookings and emailed ' + v.emailed + '. Waitlist offers sent for the freed spots.');
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Mark All No-Shows & Cancel (' + rows.length + ')';
+        ctx.toast(e.message, true);
+      }
+    };
+  };
 
   const notesSheet = (row, status) => {
     const title = status === 'refused' ? 'Refuse compliance' : 'Needs correction';

@@ -1696,6 +1696,26 @@ trinitycraftersmarket@gmail.com`;
   const checked=p.state==='checked_in',absent=p.state==='no_show';
   await sql`update market.bookings set checked_in=${checked},no_show=${absent} where id=${p.id}`;await audit(sql,u,'attendance',{id:p.id,state:p.state});return json({ok:true});
  }
+ if(action==='eventday-noshow-all'){
+  if(!p.event_id)throw Error('Choose a market date.');
+  const [event]=await sql`select e.id,e.date,e.title,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;if(!event)throw Error('Market date not found.');
+  const day=marketDateLabel(event.date),market=event.market_name||event.title||'Trinity Crafters Market',subject='Cancelled for no-show \u2014 '+market+' \u2014 '+day;
+  const regular=await sql`select b.id,b.space,a.name,a.email from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${p.event_id} and b.status in ('approved','held','paid') and not coalesce(b.checked_in,false) and not coalesce(b.no_show,false)`;
+  const imported=await sql`select i.id,i.space,i.name,i.email from market.imported_attendees i where i.event_id=${p.event_id} and not i.cancelled and i.payment_status='paid' and coalesce(i.attendance_state,'') not in ('checked_in','no_show')`;
+  let emailed=0;
+  await sql.begin(async tx=>{
+   await tx`select pg_advisory_xact_lock(708821)`;
+   for(const v of regular)await tx`update market.bookings set no_show=true,status='cancelled',cancellation_reason='No show',cancelled_at=now(),cancelled_by=${u.email} where id=${v.id}`;
+   for(const v of imported)await tx`update market.imported_attendees set attendance_state='no_show',cancelled=true where id=${v.id}`;
+   const seen=new Set();
+   for(const v of [...regular,...imported]){const email=String(v.email||'').replace(/,+\s*$/,'').trim().toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)||seen.has(email))continue;seen.add(email);await queue(tx,email,subject,`Hi ${v.name||'Vendor'},\n\nYou did not arrive for ${market} on ${day}, so your booth has been marked as a no-show and your booking for this date has been cancelled.\n\nAs a reminder, no vendors are admitted after 9:00 AM on market day, and no-show bookings are not refunded \u2014 absolutely no refunds.\n\nYour spot has been released to the vendors on our waitlist.\n\nIf you believe you were marked as a no-show in error, please call or text Scott at 727-326-3958.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);emailed++;}
+   await audit(tx,u,'mass no-show cancel',{event_id:p.event_id,count:regular.length+imported.length,emailed});
+   const spaces=[...new Set([...regular,...imported].map(v=>String(v.space||'').trim().toLowerCase()).filter(Boolean))];
+   if(spaces.length)for(const sp of spaces)await scanWaitlist(tx,p.event_id,{space:sp,actor:u});else await scanWaitlist(tx,p.event_id,{actor:u});
+  });
+  await flushMail();
+  return json({ok:true,count:regular.length+imported.length,emailed});
+ }
  if(action==='ban'){
  // §42: banning is SILENT — this action never emails the vendor, on
  // create or on re-activation (the old send branch queued a "you
