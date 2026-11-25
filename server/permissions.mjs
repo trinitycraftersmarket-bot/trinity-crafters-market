@@ -9,6 +9,7 @@ const ACTION_PERMISSION={
  attendance:'attendees',
  'imported-attendance':'attendees',
  'checkin-reminder':'attendees',
+ 'eventday-noshow-all':'attendees',
  inspection:'attendees',
  'inspection-bulk-approve':'attendees',
  'category-review-approve':'attendees',

@@ -5,11 +5,12 @@
 // `manager` payload does not carry (prices, payment internals,
 // inspection on booking rows) are not rendered at all. Everything
 // renders from the manager payload; every mutation re-fetches it.
-import { api, esc, nice } from './api.js?v=20261125-100';
-import { managerAttendeeRows } from './data.js?v=20261125-100';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261125-100';
+import { api, fn, esc, nice } from './api.js?v=20261125-101';
+import { managerAttendeeRows } from './data.js?v=20261125-101';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261125-101';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
+const fmtWhen = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
 export const MANAGER_SECTIONS = [
   { id: 'meventday', label: 'Event Day', sub: 'Attendance and check-in for a market', perm: 'attendees' },
   { id: 'mapplications', label: 'Applications', sub: 'Review pending and waitlisted applications', perm: 'applications' },
@@ -79,6 +80,52 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
     <div id="v2-m-rows"><div class="card empty-card">Loading vendors…</div></div>
     <section class="card"><h3 class="section-title">Floor plan</h3><div id="v2-m-floor"></div></section>`;
   const rowsEl = root.querySelector('#v2-m-rows');
+  let proofCache = { eventId: '', vendors: null };
+
+  function noshowSheet(list, btn) {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Mark all no-shows & cancel</h3>
+      <p>These <strong>${list.length} vendor${list.length === 1 ? '' : 's'}</strong> have not arrived. Each will be marked as a no-show, their booking for this date cancelled, and emailed that no-show bookings get absolutely no refund. Freed spots will be offered to the waitlist.</p>
+      <p class="note">${list.map(r => esc(r.business || r.name || 'Vendor')).join('<br>')}</p>
+      <div class="sheet-actions"><button class="btn" data-sheet-close>Cancel</button><button class="btn danger" id="v2-m-noshow-send">Mark ${list.length} no-show${list.length === 1 ? '' : 's'} & cancel</button></div>`);
+    ctx.sheetEl.querySelector('#v2-m-noshow-send').onclick = async () => {
+      ctx.closeSheet();
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      try {
+        const v = await api('eventday-noshow-all', { event_id: eventId });
+        ctx.toast('Marked ' + v.count + ' no-show(s), cancelled their bookings and emailed ' + v.emailed + '. Waitlist offers sent for the freed spots.');
+        await ctx.refreshData();
+        draw();
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Mark All No-Shows & Cancel (' + list.length + ')';
+        ctx.toast(e.message, true);
+      }
+    };
+  }
+
+  function tablesSheet(count, btn) {
+    ctx.openSheet(`
+      <h3 class="sheet-title">Ask for table counts</h3>
+      <p>Email <strong>${count} checked-in vendor${count === 1 ? '' : 's'}</strong> for <strong>${esc(eventLabel(ctx, eventId))}</strong> who ${count === 1 ? 'has' : 'have'} not told us how many tables they are bringing, and ask them to add it (1 or 2)?</p>
+      <p>Subject: <strong>Quick update needed: how many tables are you bringing?</strong></p>
+      <div class="sheet-actions"><button class="btn" data-sheet-close>Cancel</button><button class="btn primary" id="v2-m-tables-send">Send to ${count}</button></div>`);
+    ctx.sheetEl.querySelector('#v2-m-tables-send').onclick = async () => {
+      ctx.closeSheet();
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      try {
+        const v = await fn('setup-checkin', { action: 'remind-tables', event_id: eventId });
+        btn.textContent = 'Requests Sent ✓';
+        ctx.toast('Table count request sent to ' + v.count + ' vendor(s).');
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Email Checked-In Vendors Missing Table Count (' + count + ')';
+        ctx.toast(e.message, true);
+      }
+    };
+  }
 
   function draw() {
     let rows = managerAttendeeRows(ctx.state.manager, eventId);
@@ -87,8 +134,13 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
       rows = rows.filter(r => [r.business, r.name, r.email, r.category, r.disclosed].some(v => String(v || '').toLowerCase().includes(q)));
     }
     const checked = rows.filter(r => r.attendance === 'checked_in').length;
+    const allRows = managerAttendeeRows(ctx.state.manager, eventId);
+    const notArrived = allRows.filter(r => r.attendance !== 'checked_in' && r.attendance !== 'no_show');
+    const missingTables = allRows.filter(r => (r.setup_checkin_at || r.setup_arrival_time) && !r.setup_tables && !/out/i.test(String(r.space || '')));
     rowsEl.innerHTML = `
       <p class="note"><strong>${rows.length} vendor(s) · ${checked} checked in</strong> — ${esc(eventLabel(ctx, eventId))}</p>
+      ${notArrived.length ? `<div class="vendor-actions"><button class="btn danger" id="v2-m-noshow-all">Mark All No-Shows & Cancel (${notArrived.length})</button></div>` : ''}
+      ${missingTables.length ? `<div class="vendor-actions"><button class="btn" id="v2-m-tables">Email Checked-In Vendors Missing Table Count (${missingTables.length})</button></div>` : ''}
       <div class="vendor-list">${rows.map(r => `
         <article class="card vendor">
           <div class="vendor-top"><div><h3>${esc(r.business || r.name || 'Vendor')}</h3>
@@ -100,6 +152,7 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
             <button type="button" class="btn small ${r.attendance === 'no_show' ? 'danger' : ''}" data-m-att="${esc(r.id)}|no_show">No-show</button>
             <button type="button" class="btn small" data-m-att="${esc(r.id)}|not_marked">Clear</button>
           </div>
+          ${r.email ? `<div class="vendor-actions"><button type="button" class="btn small" data-m-proof="${esc(r.id)}">📧 Email proof</button></div><div data-proof-slot="${esc(r.id)}"></div>` : ''}
           ${r.inspection_status !== undefined ? `
           <form class="inspection-form" data-m-insp="${esc(r.id)}">
             <label class="sheet-field">Inspection
@@ -109,6 +162,26 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
             <div class="vendor-actions"><button class="btn small">Save inspection</button></div>
           </form>` : ''}
         </article>`).join('') || '<div class="card empty-card">No vendors for this date yet.</div>'}</div>`;
+    const nb = rowsEl.querySelector('#v2-m-noshow-all');
+    if (nb) nb.onclick = () => noshowSheet(notArrived, nb);
+    const tb = rowsEl.querySelector('#v2-m-tables');
+    if (tb) tb.onclick = () => tablesSheet(missingTables.length, tb);
+    rowsEl.querySelectorAll('[data-m-proof]').forEach(b => b.onclick = async () => {
+      const row = managerAttendeeRows(ctx.state.manager, eventId).find(r => String(r.id) === String(b.dataset.mProof));
+      const pslot = rowsEl.querySelector(`[data-proof-slot="${CSS.escape(b.dataset.mProof)}"]`);
+      if (!row || !pslot) return;
+      if (pslot.innerHTML) { pslot.innerHTML = ''; return; }
+      pslot.innerHTML = '<p class="note">Loading email history…</p>';
+      try {
+        if (!proofCache.vendors || proofCache.eventId !== eventId) {
+          const rep = await fn('setup-checkin', { action: 'email-report', event_id: eventId });
+          proofCache = { eventId, vendors: rep.vendors || [] };
+        }
+        const v = proofCache.vendors.find(x => String(x.email || '').toLowerCase() === String(row.email || '').toLowerCase());
+        if (!v || !v.sends.length) { pslot.innerHTML = '<p class="note">No emails sent to ' + esc(row.email || 'this vendor') + ' yet.</p>'; return; }
+        pslot.innerHTML = `<p class="note">Emailed <strong>${v.sends.length} time${v.sends.length === 1 ? '' : 's'}</strong> to ${esc(v.email || '')}:</p>` + v.sends.map(snd => `<p class="note">${esc(fmtWhen(snd.sent_at || snd.created_at))} — ${esc(snd.error ? 'FAILED — ' + (snd.subject || '') : (snd.subject || ''))} — ${snd.opened_at ? 'Opened ✓ ' + esc(fmtWhen(snd.opened_at)) : 'Not opened'}</p>`).join('');
+      } catch (e) { pslot.innerHTML = `<p class="note">${esc(e.message)}</p>`; }
+    });
     rowsEl.querySelectorAll('[data-m-att]').forEach(b => b.onclick = async () => {
       const [id, stateName] = b.dataset.mAtt.split('|');
       const row = managerAttendeeRows(ctx.state.manager, eventId).find(r => String(r.id) === String(id));
