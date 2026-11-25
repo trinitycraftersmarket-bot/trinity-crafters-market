@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261124-88';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261124-88';
+import { api, fn, esc, nice, money } from './api.js?v=20261124-89';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261124-89';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -228,7 +228,7 @@ export function renderVendorHome(ctx, root) {
     ${next ? `<section class="card next-card">
       <p class="note">Your next market</p>
       <h3>${esc(nice(next.date))}</h3>
-      <p class="note">${esc(next.location || '')} · ${esc(spaceName(next.space))} · Setup from 8:30 AM — be ready by 9:45 AM.</p>
+      <p class="note">${esc(next.location || '')} · ${esc(spaceName(next.space))} · Setup from 8:15 AM — be ready by 9:45 AM.</p>
       <p><span class="status ${statusClass(next)}">${esc(statusText(next))}</span></p>
       ${next.setup_arrival_time ? `<p class="note">Setup arrival: <strong>${esc(next.setup_arrival_time)}</strong>${next.setup_tables ? ` · Bringing <strong>${esc(next.setup_tables)} table${Number(next.setup_tables) === 1 ? '' : 's'}</strong>` : ''}</p>` : '<p class="note">You have not picked a setup arrival time yet — choose one in My Bookings.</p>'}
       <div class="vendor-actions">

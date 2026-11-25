@@ -14,11 +14,11 @@
 // organizer's concurrent edits instead of overwriting them, the canvas
 // composite print, and the setup instructions email. Native confirm()
 // dialogs are replaced by the shared sheet system (§6.2).
-import { api, esc, nice, clock, marketName } from './api.js?v=20261124-88';
+import { api, esc, nice, clock, marketName } from './api.js?v=20261124-89';
 import {
   imageAllowed, standardizeArea, spotId, spotIds, spotLabel, clampPct, vendorLabel,
   resolvePinPosition, resolvePins, fitPins, composePlanCanvas, printFloorPlan, printBoothList
-} from './floorplan.js?v=20261124-88';
+} from './floorplan.js?v=20261124-89';
 
 let view = { eventId: '' };
 const clone = data => JSON.parse(JSON.stringify(data));
@@ -87,7 +87,7 @@ ${address}
 Event Date: ${event ? nice(event.date) : '[Event Date]'}
 Market Hours: ${event ? clock(event.start_time) : '10 AM'}–${event ? clock(event.end_time) : '3 PM'}
 
-Setup begins as early as 8:30 AM. All vendors must be completely set up and ready by 9:45 AM. No vendors will be admitted for setup after 9:00 AM.
+Setup begins as early as 8:15 AM. All vendors must be completely set up and ready by 9:45 AM. No vendors will be admitted for setup after 9:00 AM.
 
 All vendors must remain set up until the market closes. Packing up early may result in being banned from future events.
 
