@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261125-103';
-import { attendeeRows, eventStats } from './data.js?v=20261125-103';
-import { parseAttendeePdf } from './pdfimport.js?v=20261125-103';
-import { printAttendance } from './print.js?v=20261125-103';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261125-103';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261125-104';
+import { attendeeRows, eventStats } from './data.js?v=20261125-104';
+import { parseAttendeePdf } from './pdfimport.js?v=20261125-104';
+import { printAttendance } from './print.js?v=20261125-104';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261125-104';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
