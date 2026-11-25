@@ -95,7 +95,7 @@ test('§36 (behavioral): printTable (the AR sheet) — light canvas, controls, p
   assertPrintableShell(html, 'printTable');
   // Paper output unchanged: same @page, same table markup. (Auto-print
   // was pinned here until §76 removed it deliberately.)
-  assert.ok(html.includes('@page{size:letter;margin:.5in}'), 'printTable: @page rule unchanged');
+  assert.ok(html.includes('@page{size:letter;margin:.5in;background:#fff}'), 'printTable: @page rule unchanged');
   assert.ok(html.includes('<table><thead><tr><th>Vendor</th><th>Email</th><th>Market / Period</th><th>Amount Due</th><th>Due Date</th></tr></thead>'), 'printTable: header row passes through untouched');
   assert.ok(html.includes('<tbody><tr><td>Blissfully Bakery</td><td>blissfulbakerysd@gmail.com</td><td>Sat, January 9, 2027</td><td>$30.00</td><td>10/24/2026</td></tr></tbody></table>'), 'printTable: body row passes through untouched');
   assert.ok(html.includes('<p class="summary">33 outstanding · TOTAL DUE $1,890.08</p>'), 'printTable: summary unchanged');
@@ -119,7 +119,7 @@ test('§36 (behavioral): printAttendance — light canvas, controls, paper marku
   // direction: the list prints LANDSCAPE now (its Spot column made 11 —
   // portrait crushed the columns on his phone), so the @page pin moves
   // with it; everything else §36 pinned here is unchanged.
-  assert.ok(html.includes('@page{size:letter portrait;margin:.5in}'), 'printAttendance: @page rule (portrait since §84; landscape §73–§83)');
+  assert.ok(html.includes('@page{size:letter portrait;margin:.5in;background:#fff}'), 'printAttendance: @page rule (portrait since §84; landscape §73–§83)');
   assert.ok(html.includes('<th>Space</th><th>Business</th><th>Vendor</th>'), 'printAttendance: header row passes through untouched');
   assert.ok(html.includes('<td>HI-01</td><td>A &amp; B &lt;Co&gt;</td><td>Ann</td>'), 'printAttendance: body row passes through untouched (still esc()-ed)');
   assert.ok(html.includes('.plan{break-before:page}'), 'printAttendance: floor plans still one per page');
@@ -140,7 +140,7 @@ test('§36 (behavioral): printExpenseReport — shared row replaces the lone but
   // The pre-§36 lone button is gone (the shared row's button carries type="button").
   assert.ok(!html.includes('<button onclick="window.print()">'), 'printExpenseReport: lone Print button replaced');
   // Paper output unchanged: landscape @page, itemized table, its own @media print button rule kept.
-  assert.ok(html.includes('@page{size:letter landscape;margin:.45in}'), 'printExpenseReport: @page rule unchanged');
+  assert.ok(html.includes('@page{size:letter landscape;margin:.45in;background:#fff}'), 'printExpenseReport: @page rule unchanged');
   assert.ok(html.includes('@media print{button{display:none}}'), 'printExpenseReport: its original @media print button rule kept');
   assert.ok(html.includes('<th>Expense date</th><th>Market date</th><th>Market</th><th>Category</th><th>Description / Payee</th><th>Qty</th><th>Amount</th><th>Notes</th>'), 'printExpenseReport: header row passes through untouched');
   assert.ok(html.includes('<strong>Tablecloths</strong><div>Amazon</div>'), 'printExpenseReport: row description/payee untouched');

@@ -53,7 +53,7 @@ test('§84: the list prints in headed sections, one per check-in time', () => {
 test('§84: the print is plain, readable and portrait throughout', () => {
   assert.ok(attBlock.includes('font-size:11pt'), 'body type bumped to 11pt');
   assert.ok(attBlock.includes('th,td{padding:7px 6px;'), 'roomier rows');
-  assert.ok(attBlock.includes('@page{size:letter portrait;margin:.5in}'), 'the list page is portrait');
+  assert.ok(attBlock.includes('@page{size:letter portrait;margin:.5in;background:#fff}'), 'the list page is portrait');
   assert.ok(!attBlock.includes('planpage'), 'no mixed-orientation named pages');
   assert.ok(attBlock.includes('.plan img{width:100%;max-height:9in'), 'plan image sized for the portrait page');
 });

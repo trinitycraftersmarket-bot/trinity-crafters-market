@@ -14,8 +14,8 @@
 // imported rows, monthly-invoices record-payment for monthly rows).
 // Cancelled monthly invoices no longer appear here at all (money.js:
 // they are due $0, not receivables).
-import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261124-89';
-import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261124-89';
+import { api, esc, getToken, money, nice, niceShort, marketName } from './api.js?v=20261125-90';
+import { invoiceRows, invoiceStats, isOverdue, isDueSoon, overdueDays } from './money.js?v=20261125-90';
 
 let view = { q: '', status: '', eventId: '' };
 
