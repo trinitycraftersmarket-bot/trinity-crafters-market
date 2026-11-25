@@ -15,7 +15,7 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261124-84';
+import { api, esc, nice } from './api.js?v=20261124-85';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
@@ -155,7 +155,7 @@ export async function renderSavedFloorPlan(host, eventId) {
       const head = '<h3 class="fp-title">' + esc(area.title) + ' <span class="status neutral">' + filled + ' of ' + area.capacity + ' assigned</span></h3>';
       if (imageAllowed(area.image_data_url)) {
         const pins = resolvePins(area, vendors).map(p =>
-          '<span class="fp-pin" style="left:' + p.x + '%;top:' + p.y + '%">' + esc(p.label) + '</span>').join('');
+          '<span class="fp-pin" style="left:' + p.x + '%;top:' + p.y + '%">' + esc(p.label) + '<span class="pin-spot">' + esc(p.spot) + '</span></span>').join('');
         return head + '<div class="fp-map"><img class="fp-img" alt="Saved floor plan for ' + esc(area.title) + '" src="' + area.image_data_url + '">' + pins + '</div>';
       }
       const boothRows = spotIds(area).map(id => {
@@ -272,7 +272,7 @@ export async function renderVendorFloorPlan(host, eventId, mineRow) {
     let body;
     if (imageAllowed(area.image_data_url)) {
       const pins = resolvePins(area, vendors).map(p =>
-        `<span class="fp-pin${rowIds.has(String(p.vendorId)) ? ' mine' : ''}" style="left:${p.x}%;top:${p.y}%">${esc(p.label)}</span>`).join('');
+        `<span class="fp-pin${rowIds.has(String(p.vendorId)) ? ' mine' : ''}" style="left:${p.x}%;top:${p.y}%">${esc(p.label)}<span class="pin-spot">${esc(p.spot)}</span></span>`).join('');
       body = `<div class="fp-map"><img class="fp-img" alt="Floor plan for ${esc(area.title)}" src="${area.image_data_url}">${pins}</div>`;
     } else {
       body = '<div class="fp-booths">' + spotIds(area).map(id => {
@@ -322,7 +322,13 @@ function drawPinsOnCanvas(ctx, W, H, pins) {
       fontPx = Math.max(12, Math.round(fontPx * 0.85));
     }
     const padX = 10, padY = 7, lineH = Math.round(fontPx * 1.18);
-    const rw = Math.ceil(textW) + padX * 2, rh = lineH * lines.length + padY * 2;
+    // §85 (Scott, Nov 24, 2026): the full spot ID (MR-06, H1-02) prints
+    // under the vendor name — the bare number baked into the uploaded
+    // artwork doesn't say which room the booth is in.
+    const spotPx = Math.max(11, Math.round(fontPx * 0.8)), spotH = Math.round(spotPx * 1.2);
+    ctx.font = '800 ' + spotPx + 'px Arial,Helvetica,sans-serif';
+    textW = Math.max(textW, ctx.measureText(p.spot).width);
+    const rw = Math.ceil(textW) + padX * 2, rh = lineH * lines.length + spotH + padY * 2;
     let cx = p.x / 100 * W, cy = p.y / 100 * H;
     cx = Math.max(rw / 2 + 4, Math.min(W - rw / 2 - 4, cx));
     cy = Math.max(rh / 2 + 4, Math.min(H - rh / 2 - 4, cy));
@@ -337,7 +343,11 @@ function drawPinsOnCanvas(ctx, W, H, pins) {
     ctx.fillStyle = 'rgba(255,255,255,0.97)'; ctx.fill();
     ctx.lineWidth = Math.max(2, W * 0.0016); ctx.strokeStyle = '#16594a'; ctx.stroke();
     ctx.fillStyle = '#103e35'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = '700 ' + fontPx + 'px Arial,Helvetica,sans-serif';
     lines.forEach((l, i) => ctx.fillText(l, cx, y + padY + i * lineH));
+    ctx.font = '800 ' + spotPx + 'px Arial,Helvetica,sans-serif';
+    ctx.fillStyle = '#16594a';
+    ctx.fillText(p.spot, cx, y + padY + lines.length * lineH);
   }
 }
 

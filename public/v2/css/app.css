@@ -210,6 +210,7 @@ button.stat-btn:active{transform:scale(.99)}
 .fp-map{position:relative;width:100%;max-width:680px;margin:12px auto 18px;background:#f7f3e7;border:1px solid #c8d6ce;border-radius:10px;overflow:hidden;min-height:160px}
 .fp-img{display:block;width:100%;height:auto;object-fit:contain}
 .fp-pin{position:absolute;z-index:2;transform:translate(-50%,-50%);background:rgba(255,255,255,.97);color:#103e35;border:1px solid #16594a;border-radius:6px;font-size:clamp(9px,1.3vw,12px);line-height:1.15;font-weight:700;padding:5px 7px;max-width:26%;text-align:center;overflow-wrap:anywhere;pointer-events:none;box-shadow:0 1px 3px rgba(18,63,56,.25)}
+.fp-pin .pin-spot{display:block;font-size:.88em;font-weight:800;letter-spacing:.04em;color:#16594a;margin-top:1px}
 .fp-booths{max-width:680px;margin:12px auto 18px}
 .fp-booth{display:flex;justify-content:space-between;gap:12px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;margin:4px 0;font-size:13.5px;background:var(--card-2)}
 

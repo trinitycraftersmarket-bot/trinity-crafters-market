@@ -14,11 +14,11 @@
 // organizer's concurrent edits instead of overwriting them, the canvas
 // composite print, and the setup instructions email. Native confirm()
 // dialogs are replaced by the shared sheet system (§6.2).
-import { api, esc, nice, clock, marketName } from './api.js?v=20261124-84';
+import { api, esc, nice, clock, marketName } from './api.js?v=20261124-85';
 import {
   imageAllowed, standardizeArea, spotId, spotIds, clampPct, vendorLabel,
   resolvePinPosition, resolvePins, fitPins, composePlanCanvas, printFloorPlan, printBoothList
-} from './floorplan.js?v=20261124-84';
+} from './floorplan.js?v=20261124-85';
 
 let view = { eventId: '' };
 const clone = data => JSON.parse(JSON.stringify(data));
@@ -247,7 +247,9 @@ export function renderFloorEditor(ctx, root, params = {}) {
       pin.className = 'fp-pin fe-pin';
       pin.style.left = x + '%';
       pin.style.top = y + '%';
-      pin.textContent = String(vendor.business || vendor.name);
+      // §85: the tag carries the full spot ID under the name, so the
+      // plan reads MR-06 / H1-02 instead of the artwork's bare number.
+      pin.innerHTML = esc(String(vendor.business || vendor.name)) + '<span class="pin-spot">' + esc(id) + '</span>';
       pin.title = id + ' — drag to move ' + String(vendor.business || vendor.name);
       pin.setAttribute('aria-label', 'Drag ' + id + ' ' + String(vendor.business || vendor.name) + ' to reposition');
       let drag = null;
