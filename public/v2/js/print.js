@@ -4,7 +4,7 @@
 // expense reports' letter-landscape itemized sheet). Both open a new
 // window with a self-contained document and print it on load — the same
 // documents the classic app produces, cell for cell.
-import { esc } from './api.js?v=20261124-83';
+import { esc } from './api.js?v=20261124-84';
 
 const usd = n => '$' + (Number(n || 0) / 100).toFixed(2);
 
@@ -79,11 +79,16 @@ export function printTable(title, subtitle, headers, rows, summary = '') {
 // the event's saved floor plans — the ORIGINAL uploaded plan images,
 // one plan per page, per the standing floor-plan standard (never a
 // redrawn schematic).
-export function printAttendance({ market, subtitle, summary, headers, rows, plans = [], legend = '' }) {
+export function printAttendance({ market, subtitle, summary, headers, rows = [], groups = null, plans = [], legend = '' }) {
   const w = window.open('', '_self');
   if (!w) throw Error('Could not open the print view in this browser.');
   const planPages = plans.map(p => `<section class="plan${p.names && p.names.length ? ' with-names' : ''}"><h2>${esc(p.title)}</h2><img src="${p.image}" alt="${esc(p.title)}">${p.names && p.names.length ? `<div class="plan-names"><h3>Vendor names — ${esc(p.title)}</h3><ul>${p.names.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}</section>`).join('');
-  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter landscape;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:10pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:6px 5px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:8.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:6.6in;object-fit:contain}.plan.with-names img{max-height:5.3in}.plan-names{margin-top:10px}.plan-names h3{font-size:11pt;margin:0 0 4px}.plan-names ul{columns:3;column-gap:20px;margin:0;padding-left:15px;font-size:9pt;line-height:1.55}@media(max-width:700px){.plan-names ul{columns:2}}@media screen{body{overflow-x:auto}table{min-width:1040px}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
+  const headHtml = `<thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>`;
+  const bodyHtml = rs => `<tbody>${rs.map(r => `<tr>${r.map(v => v === '☐' ? '<td><span class=\"chk\">☐</span></td>' : `<td>${esc(v ?? '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  const listHtml = groups
+    ? groups.map(g => `<h3 class=\"grp\">${esc(g.heading)}</h3><table>${headHtml}${bodyHtml(g.rows)}</table>`).join('')
+    : `<table>${headHtml}${bodyHtml(rows)}</table>`;
+  w.document.write(`<!doctype html><html><head><title>Attendance List</title><meta name="viewport" content="width=device-width"><style>@page{size:letter portrait;margin:.5in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;font-size:11pt;margin:0;background:#fff}h1{font-size:19pt;margin:0 0 3px}h2{font-size:12pt;font-weight:normal;margin:0 0 12px}.summary{font-weight:bold;margin:0 0 4px}.legend{font-size:9pt;color:#333;margin:0 0 12px}table{width:100%;border-collapse:collapse}th,td{padding:7px 6px;border-bottom:1px solid #bbb;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{font-size:9.5pt;text-transform:uppercase;border-bottom:2px solid #222}tr{break-inside:avoid}.chk{font-size:15pt;line-height:1}.grp{font-size:12.5pt;font-weight:bold;margin:16px 0 4px;break-after:avoid}footer{margin-top:16px;font-size:8pt;color:#555}.plan{break-before:page}.plan h2{font-size:14pt;font-weight:bold}.plan img{width:100%;max-height:9in;object-fit:contain}.plan.with-names img{max-height:7.4in}.plan-names{margin-top:10px}.plan-names h3{font-size:11pt;margin:0 0 4px}.plan-names ul{columns:3;column-gap:20px;margin:0;padding-left:15px;font-size:9pt;line-height:1.55}@media(max-width:700px){.plan-names ul{columns:2}}@media screen{body{overflow-x:auto}table{min-width:0}}${PRINT_CONTROLS_CSS}</style></head><body>${printControls()}<h1>Trinity Crafters Market</h1><h2>Attendance List · ${esc(market || '')}${subtitle ? ' · ' + esc(subtitle) : ''}</h2>${summary ? `<p class="summary">${esc(summary)}</p>` : ''}${legend ? `<p class="legend">${esc(legend)}</p>` : ''}${listHtml}${planPages}<footer>Printed ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern</footer></body></html>`);
   w.document.close();
 }
 

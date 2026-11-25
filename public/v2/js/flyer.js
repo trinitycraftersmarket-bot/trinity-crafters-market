@@ -7,7 +7,7 @@
 // is read back per recipient from the mail queue: the screen lists
 // delivered, failed (with the reason) and still-queued separately and
 // never calls a queued or failed email "sent".
-import { fnq, esc, nice } from './api.js?v=20261124-83';
+import { fnq, esc, nice } from './api.js?v=20261124-84';
 
 const FLYER_MAX_BYTES = 10 * 1024 * 1024;
 

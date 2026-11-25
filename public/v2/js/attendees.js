@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261124-83';
-import { attendeeRows, eventStats } from './data.js?v=20261124-83';
-import { parseAttendeePdf } from './pdfimport.js?v=20261124-83';
-import { printAttendance } from './print.js?v=20261124-83';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261124-83';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261124-84';
+import { attendeeRows, eventStats } from './data.js?v=20261124-84';
+import { parseAttendeePdf } from './pdfimport.js?v=20261124-84';
+import { printAttendance } from './print.js?v=20261124-84';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261124-84';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -424,7 +424,12 @@ export function renderAttendees(ctx, root, params = {}) {
     // §71 (Scott, Nov 18, 2026): the printed list runs in desired check-in
     // (setup arrival) order, earliest first; vendors who never picked a
     // time ('99:99' sorts them last) print at the end.
-    const rows = [...rowsNow()].sort((a, b) => String(a.setup_arrival_time || '99:99').slice(0, 5).localeCompare(String(b.setup_arrival_time || '99:99').slice(0, 5)));
+    // §84 (Scott, Nov 24, 2026): inside each check-in time, names run in
+    // ABC order by the person's first name — that's the name Scott hears
+    // at the door. The no-check-in vendors sort last the same way.
+    const rows = [...rowsNow()].sort((a, b) =>
+      String(a.setup_arrival_time || '99:99').slice(0, 5).localeCompare(String(b.setup_arrival_time || '99:99').slice(0, 5))
+      || String(a.name || a.business || '').localeCompare(String(b.name || b.business || '')));
     let plans = [];
     let legend = '';
     try {
@@ -446,24 +451,44 @@ export function renderAttendees(ctx, root, params = {}) {
       }
       legend = spotLegend(areas.map(a => ({ title: a.title, spots: spotIds(a) })));
     } catch { /* no readable plans — print the list alone */ }
+    // §84: one printed section per check-in time, headed "Check-in
+    // 8:15 AM"; vendors who never checked in online form the last
+    // section, "No check-in time chosen".
+    const rowCells = r => [
+      r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'),
+      spotOf(r) || '—',
+      (r.business || '') + (r.name && r.name !== r.business ? ' — ' + r.name : ''),
+      r.category || '',
+      r.phone || 'Not provided',
+      ARRIVAL_PRINT[String(r.setup_arrival_time || '').slice(0, 5)] || '—',
+      r.setup_tables ? String(r.setup_tables) : '—',
+      '☐'
+    ];
+    const byTime = new Map();
+    for (const r of rows) {
+      const key = String(r.setup_arrival_time || '').slice(0, 5);
+      if (!byTime.has(key)) byTime.set(key, []);
+      byTime.get(key).push(rowCells(r));
+    }
+    const groups = [...byTime.entries()].map(([key, rs]) => ({
+      heading: key ? 'Check-in ' + (ARRIVAL_PRINT[key] || key) : 'No check-in time chosen',
+      rows: rs
+    }));
     try {
       printAttendance({
         market: loc?.market_name || event.title || 'Crafters Market',
         subtitle: nice(event.date) + ' · ' + (loc?.name || event.location || '') + ' · ' + clock(event.start_time) + '–' + clock(event.end_time),
         summary: rows.length + ' vendors · ' + rows.filter(r => r.payStatus === 'paid').length + ' paid · ' + rows.filter(r => r.attendance === 'checked_in').length + ' checked in',
-        headers: ['Space', 'Spot', 'Business', 'Vendor', 'Category', 'Phone', 'Email', 'Payment', 'Attendance', 'Inspection', 'Setup Arrival', 'Tables'],
-        rows: rows.map(r => [
-          r.space || (r.spaceNorm === 'outdoor' ? 'Outside' : r.spaceNorm === 'hallway' ? 'Hallway' : 'Inside'),
-          spotOf(r) || '—',
-          r.business || '', r.name || '', r.category || '',
-          r.phone || 'Not provided',
-          String(r.email || '').replace(/,+\s*$/, '').trim() || 'Not provided',
-          r.payStatus === 'paid' ? 'Paid' : 'Unpaid',
-          r.attendance === 'checked_in' ? 'Checked in' : r.attendance === 'no_show' ? 'No show' : 'Not marked',
-          INSP_PRINT[r.inspection_status] || 'Not inspected',
-          ARRIVAL_PRINT[String(r.setup_arrival_time || '').slice(0, 5)] || '—',
-          r.setup_tables ? String(r.setup_tables) : '—'
-        ]),
+        // §84 (Scott, Nov 24, 2026): the door list drops Email, Payment,
+        // Attendance and Inspection — Scott works those in the app. What
+        // prints: who, where, what they sell, phone, when they arrive, how
+        // many tables, and an empty Checked In box to tick by hand.
+        // Business and Vendor share ONE column — business first, the
+        // person's name after it when the two differ (printed once when
+        // they're the same) — so the list fits portrait at readable size
+        // with nothing dropped: one orientation for the whole packet.
+        headers: ['Space', 'Spot', 'Business / Vendor', 'Category', 'Phone', 'Setup Arrival', 'Tables', 'Checked In'],
+        groups,
         plans,
         legend
       });

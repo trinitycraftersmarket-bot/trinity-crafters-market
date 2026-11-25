@@ -13,8 +13,11 @@
 //   attendance list gains a Spot column + the legend line.
 // - The attendance print's plan pages composite the assignment pins onto
 //   the layout images (composePlanCanvas — the floor-plan print's own
-//   renderer) so names print; the list prints landscape and no longer
-//   crushes on a phone screen (min-width + horizontal scroll on screen).
+//   renderer) so names print; the list printed landscape (§73–§83) and
+//   no longer crushed on a phone screen (min-width + horizontal scroll
+//   on screen). §84 (Nov 24, 2026) superseded the orientation: the
+//   whole packet — list and plan pages — prints portrait now, with a
+//   combined Business / Vendor column keeping it readable.
 // - The Booth Assignments printout (v2 + classic) gains the legend too.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,16 +55,17 @@ test('§73 (behavioral): spotLegend builds the abbreviation key from the event a
 test('§73: Attendees cards and the printed list carry the booth spot', () => {
   assert.ok(ATT.includes('findVendorSpot(spotAreas, [r.id, r.vendor_id])'), 'cards resolve spots through the shared helper and both id spaces');
   assert.ok(ATT.includes('📍 Spot ${esc(spotOf(r))}'), 'the card chip shows the spot');
-  assert.ok(ATT.includes("headers: ['Space', 'Spot', 'Business'"), 'the printed list has a Spot column after Space');
+  assert.ok(ATT.includes("headers: ['Space', 'Spot', 'Business / Vendor'"), 'the printed list has a Spot column after Space (§84: combined name column)');
   assert.ok(ATT.includes("spotOf(r) || '—'"), 'unassigned vendors print a dash, not a blank');
   assert.ok(ATT.includes('legend') && ATT.includes('spotLegend(areas.map('), 'the printed list carries the legend');
 });
 
-test('§73: the attendance print composites names onto the plan pages and prints landscape', () => {
+test('§73: the attendance print composites names onto the plan pages and prints portrait (§84)', () => {
   assert.ok(ATT.includes("api('floor-attendees'"), 'pin labels come from the floor-attendees rows');
   assert.ok(ATT.includes('composePlanCanvas(a, floorRows || [])'), 'plan pages are composited canvases, not bare layout images');
-  assert.ok(PRINT.includes('size:letter landscape'), 'the attendance list prints landscape so its columns fit');
-  assert.ok(PRINT.includes('min-width:1040px'), 'on screen the table scrolls instead of crushing on a phone');
+  const attPrint = PRINT.slice(PRINT.indexOf('export function printAttendance'), PRINT.indexOf('export function printExpenseReport'));
+  assert.ok(attPrint.includes('size:letter portrait'), 'the attendance list prints portrait since §84 (was landscape §73–§83)');
+  assert.ok(attPrint.includes('table{min-width:0}'), 'portrait fits without the old forced min-width');
   assert.ok(PRINT.includes('legend = \'\'') && PRINT.includes('class="legend"'), 'printAttendance renders the optional legend line');
 });
 

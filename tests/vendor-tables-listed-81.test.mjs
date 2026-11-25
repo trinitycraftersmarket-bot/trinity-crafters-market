@@ -27,6 +27,6 @@ test('§81: Attendees and Event Day cards carry a labelled Tables chip', () => {
 });
 
 test('§81: the printed Attendance List has a Tables column beside Setup Arrival', () => {
-  assert.ok(ATT.includes("'Setup Arrival', 'Tables']"), 'Tables header follows Setup Arrival');
+  assert.ok(ATT.includes("'Setup Arrival', 'Tables', 'Checked In']"), 'Tables header follows Setup Arrival (§84: the Checked In box column follows Tables)');
   assert.ok(ATT.includes("r.setup_tables ? String(r.setup_tables) : '—'"), 'rows print the stated count or a dash');
 });
