@@ -6,8 +6,8 @@
 // payload's paymentLog (server-built ledger); search and the date range
 // filter it here, grouping/totals come from js/money.js — the same module
 // the Invoice Center uses, so the two screens always agree.
-import { api, esc, money, nice, niceShort } from './api.js?v=20261125-104';
-import { invoiceRows, invoiceStats, isOverdue, overdueDays, paymentGroups } from './money.js?v=20261125-104';
+import { api, esc, money, nice, niceShort } from './api.js?v=20261125-105';
+import { invoiceRows, invoiceStats, isOverdue, overdueDays, paymentGroups } from './money.js?v=20261125-105';
 
 let view = { q: '', from: '', to: '', method: '', unpaidOnly: false };
 

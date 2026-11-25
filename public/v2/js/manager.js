@@ -5,9 +5,9 @@
 // `manager` payload does not carry (prices, payment internals,
 // inspection on booking rows) are not rendered at all. Everything
 // renders from the manager payload; every mutation re-fetches it.
-import { api, fn, esc, nice } from './api.js?v=20261125-104';
-import { managerAttendeeRows } from './data.js?v=20261125-104';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261125-104';
+import { api, fn, esc, nice } from './api.js?v=20261125-105';
+import { managerAttendeeRows } from './data.js?v=20261125-105';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261125-105';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const fmtWhen = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
@@ -179,7 +179,7 @@ export function renderManagerEventDay(ctx, root, { attendeesMode = false } = {})
         }
         const v = proofCache.vendors.find(x => String(x.email || '').toLowerCase() === String(row.email || '').toLowerCase());
         if (!v || !v.sends.length) { pslot.innerHTML = '<p class="note">No emails sent to ' + esc(row.email || 'this vendor') + ' yet.</p>'; return; }
-        pslot.innerHTML = `<p class="note">Emailed <strong>${v.sends.length} time${v.sends.length === 1 ? '' : 's'}</strong> to ${esc(v.email || '')}:</p>` + v.sends.map(snd => `<p class="note">${esc(fmtWhen(snd.sent_at || snd.created_at))} — ${esc(snd.error ? 'FAILED — ' + (snd.subject || '') : (snd.subject || ''))} — ${snd.opened_at ? 'Opened ✓ ' + esc(fmtWhen(snd.opened_at)) : 'Not opened'}</p>`).join('');
+        pslot.innerHTML = `<p class="note">Emailed <strong>${v.sends.length} time${v.sends.length === 1 ? '' : 's'}</strong> to ${esc(v.email || '')}:</p>` + v.sends.map(snd => `<p class="note">${esc(fmtWhen(snd.sent_at || snd.created_at))} — ${esc(snd.error ? 'FAILED — ' + (snd.subject || '') : (snd.subject || ''))} — ${snd.opened_at ? 'Opened ✓ ' + esc(fmtWhen(snd.opened_at)) : 'Not opened'}${snd.error ? '<br>Reason: ' + esc(snd.error) : ''}</p>`).join('');
       } catch (e) { pslot.innerHTML = `<p class="note">${esc(e.message)}</p>`; }
     });
     rowsEl.querySelectorAll('[data-m-att]').forEach(b => b.onclick = async () => {

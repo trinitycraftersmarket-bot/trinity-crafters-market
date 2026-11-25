@@ -6,7 +6,7 @@
 // emails the vendor), same arrival slots (8:15 / 8:30 / 8:45 / 9:00 AM),
 // same 24-hour close. The vendor side of check-in already lives in the
 // v2 vendor portal (vendor.js); this is the organizer side.
-import { esc, getToken, nice } from './api.js?v=20261125-104';
+import { esc, getToken, nice } from './api.js?v=20261125-105';
 
 const timeLabel = t => ({ '08:15': '8:15 AM', '08:30': '8:30 AM', '08:45': '8:45 AM', '09:00': '9:00 AM' }[String(t || '').slice(0, 5)] || 'Not selected');
 
@@ -57,6 +57,7 @@ export function renderCheckin(ctx, root) {
         <article class="card vendor">
           <div class="contact">${esc(fmtWhen(snd.sent_at || snd.created_at))}</div>
           <div><strong>${esc(snd.error ? 'FAILED TO SEND — ' + (snd.subject || '') : (snd.subject || ''))}</strong></div>
+          ${snd.error ? `<div class="contact">Reason: ${esc(snd.error)}</div>` : ''}
           <div class="contact">${snd.opened_at ? 'Opened ✓ ' + esc(fmtWhen(snd.opened_at)) + (Number(snd.open_count) > 1 ? ' · ' + snd.open_count + ' opens' : '') : 'Not opened'}</div>
         </article>`).join('')}</div>` : '<p class="note">No emails sent to this vendor yet.</p>'}`;
   }
