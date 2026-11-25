@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261124-85';
-import { attendeeRows, eventStats } from './data.js?v=20261124-85';
-import { parseAttendeePdf } from './pdfimport.js?v=20261124-85';
-import { printAttendance } from './print.js?v=20261124-85';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLegend } from './floorplan.js?v=20261124-85';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261124-86';
+import { attendeeRows, eventStats } from './data.js?v=20261124-86';
+import { parseAttendeePdf } from './pdfimport.js?v=20261124-86';
+import { printAttendance } from './print.js?v=20261124-86';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261124-86';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -67,7 +67,7 @@ export function renderAttendees(ctx, root, params = {}) {
   // in the floor plans, so load them once for this event and resolve each
   // row's spot with the same helper the vendor's own floor-plan view uses.
   let spotAreas = [];
-  const spotOf = r => { const f = findVendorSpot(spotAreas, [r.id, r.vendor_id]); return f ? f.spot : ''; };
+  const spotOf = r => { const f = findVendorSpot(spotAreas, [r.id, r.vendor_id]); return f ? spotLabel(f.spot) : ''; };
   api('floor-area-plans', undefined, { event_id: event.id })
     .then(res => { spotAreas = (res.areas || []).map(standardizeArea); draw(); })
     .catch(() => { /* no floor plans — cards and print simply carry no spots */ });

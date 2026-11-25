@@ -15,11 +15,25 @@
 // pulls each whole label inside the image. The Event Day read-only view,
 // the booth editor (flooredit.js) and both print paths all resolve pins
 // through resolvePins() below — there is no second copy of this math.
-import { api, esc, nice } from './api.js?v=20261124-85';
+import { api, esc, nice } from './api.js?v=20261124-86';
 
 export const imageAllowed = url => typeof url === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(url);
 export const standardizeArea = area => ({ ...area, assignments: area.assignments && typeof area.assignments === 'object' ? area.assignments : {}, image_data_url: area.image_data_url || '' });
 export const spotId = (area, i) => String(area.prefix || area.area_key.toUpperCase()) + '-' + String(i + 1).padStart(2, '0');
+// §86 (Scott, Nov 24, 2026): the Hilton Garden Inn numbers its booths
+// continuously through the rooms — Main Room 1–21, Hallway 1 is 23–27,
+// Hallway 2 is 28–30 — so a bare H1-01 means nothing in the real room.
+// Storage keys stay H1-01… (the server's save/validation is built on
+// them); spotLabel() is the ONLY number a person ever reads, on the
+// reports, the plan tags, and the booth lists.
+export const SPOT_LABEL_START = { H1: 23, H2: 28 };
+export function spotLabel(id) {
+  const m = /^([A-Z]+[0-9]*)-(\d+)$/.exec(String(id || ''));
+  if (!m) return String(id || '');
+  const start = SPOT_LABEL_START[m[1]];
+  if (!start) return String(id);
+  return m[1] + '-' + String(start + Number(m[2]) - 1).padStart(2, '0');
+}
 export const spotIds = area => Array.from({ length: area.capacity }, (_, i) => spotId(area, i));
 
 const gridPosition = (a, i) => {
@@ -101,7 +115,7 @@ export function resolvePins(area, vendors) {
       key = Math.round(x) + ',' + Math.round(y);
     }
     used.set(key, id);
-    pins.push({ spot: id, index: i, vendorId: String(entry.vendor_id), label, x, y });
+    pins.push({ spot: id, spotLabel: spotLabel(id), index: i, vendorId: String(entry.vendor_id), label, x, y });
   });
   return pins;
 }
@@ -155,7 +169,7 @@ export async function renderSavedFloorPlan(host, eventId) {
       const head = '<h3 class="fp-title">' + esc(area.title) + ' <span class="status neutral">' + filled + ' of ' + area.capacity + ' assigned</span></h3>';
       if (imageAllowed(area.image_data_url)) {
         const pins = resolvePins(area, vendors).map(p =>
-          '<span class="fp-pin" style="left:' + p.x + '%;top:' + p.y + '%">' + esc(p.label) + '<span class="pin-spot">' + esc(p.spot) + '</span></span>').join('');
+          '<span class="fp-pin" style="left:' + p.x + '%;top:' + p.y + '%">' + esc(p.label) + '<span class="pin-spot">' + esc(p.spotLabel) + '</span></span>').join('');
         return head + '<div class="fp-map"><img class="fp-img" alt="Saved floor plan for ' + esc(area.title) + '" src="' + area.image_data_url + '">' + pins + '</div>';
       }
       const boothRows = spotIds(area).map(id => {
@@ -272,7 +286,7 @@ export async function renderVendorFloorPlan(host, eventId, mineRow) {
     let body;
     if (imageAllowed(area.image_data_url)) {
       const pins = resolvePins(area, vendors).map(p =>
-        `<span class="fp-pin${rowIds.has(String(p.vendorId)) ? ' mine' : ''}" style="left:${p.x}%;top:${p.y}%">${esc(p.label)}<span class="pin-spot">${esc(p.spot)}</span></span>`).join('');
+        `<span class="fp-pin${rowIds.has(String(p.vendorId)) ? ' mine' : ''}" style="left:${p.x}%;top:${p.y}%">${esc(p.label)}<span class="pin-spot">${esc(p.spotLabel)}</span></span>`).join('');
       body = `<div class="fp-map"><img class="fp-img" alt="Floor plan for ${esc(area.title)}" src="${area.image_data_url}">${pins}</div>`;
     } else {
       body = '<div class="fp-booths">' + spotIds(area).map(id => {
@@ -327,7 +341,7 @@ function drawPinsOnCanvas(ctx, W, H, pins) {
     // artwork doesn't say which room the booth is in.
     const spotPx = Math.max(11, Math.round(fontPx * 0.8)), spotH = Math.round(spotPx * 1.2);
     ctx.font = '800 ' + spotPx + 'px Arial,Helvetica,sans-serif';
-    textW = Math.max(textW, ctx.measureText(p.spot).width);
+    textW = Math.max(textW, ctx.measureText(p.spotLabel).width);
     const rw = Math.ceil(textW) + padX * 2, rh = lineH * lines.length + spotH + padY * 2;
     let cx = p.x / 100 * W, cy = p.y / 100 * H;
     cx = Math.max(rw / 2 + 4, Math.min(W - rw / 2 - 4, cx));
@@ -347,7 +361,7 @@ function drawPinsOnCanvas(ctx, W, H, pins) {
     lines.forEach((l, i) => ctx.fillText(l, cx, y + padY + i * lineH));
     ctx.font = '800 ' + spotPx + 'px Arial,Helvetica,sans-serif';
     ctx.fillStyle = '#16594a';
-    ctx.fillText(p.spot, cx, y + padY + lines.length * lineH);
+    ctx.fillText(p.spotLabel, cx, y + padY + lines.length * lineH);
   }
 }
 
@@ -497,8 +511,8 @@ export function printBoothList({ event, venue, areas, vendors, dirty, toast }) {
       const vendor = vendorById.get(vendorId);
       if (vendor) {
         assigned.add(vendorId);
-        boothRows.push({ id, name: String(vendor.business || vendor.name || 'Unnamed vendor'), time: String(vendor.setup_arrival_time || '') });
-      } else open.push(id);
+        boothRows.push({ id: spotLabel(id), name: String(vendor.business || vendor.name || 'Unnamed vendor'), time: String(vendor.setup_arrival_time || '') });
+      } else open.push(spotLabel(id));
     }
     if (open.length) openByArea.push({ title: String(area.title), spots: open });
   }

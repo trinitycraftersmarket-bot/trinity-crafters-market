@@ -1903,6 +1903,13 @@ export async function deleteAreaPlan(sql,p,u){
  });
 }
 
+// §86 (Scott, Nov 24, 2026): vendors read the VENUE booth number in
+// their setup email — Hallway 1 is booths 23–27 and Hallway 2 is
+// 28–30 at the Hilton Garden Inn, while storage keys stay H1-01….
+// Mirrors spotLabel() in public/v2/js/floorplan.js; keep the two in sync.
+const SPOT_LABEL_START={H1:23,H2:28};
+const spotLabelServer=id=>{const m=/^([A-Z]+[0-9]*)-(\d+)$/.exec(String(id||''));if(!m)return String(id||'');const s=SPOT_LABEL_START[m[1]];return s?m[1]+'-'+String(s+Number(m[2])-1).padStart(2,'0'):String(id);};
+
 // Per-recipient floor-plan packages for the setup email. Each area's
 // attachment is the client's composed NAMED plan when one was supplied
 // for that area in the payload (areaImages, keyed by area_key) and the
@@ -1926,7 +1933,7 @@ async function eventAreaMailPackages(sql,eventId,rows,areaImages={}){
    const email=setupEmail(vendor.email);
    if(!email)continue;
    const list=rowsForArea.get(email)||[];
-   list.push(spot);rowsForArea.set(email,list);
+   list.push(spotLabelServer(spot));rowsForArea.set(email,list);
   }
   for(const [email,spots] of rowsForArea){
    let pkg=byEmail.get(email);if(!pkg){pkg={attachments:[],notes:[],available_areas:[]};byEmail.set(email,pkg);}

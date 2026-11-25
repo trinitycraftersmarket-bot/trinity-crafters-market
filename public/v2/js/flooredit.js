@@ -14,11 +14,11 @@
 // organizer's concurrent edits instead of overwriting them, the canvas
 // composite print, and the setup instructions email. Native confirm()
 // dialogs are replaced by the shared sheet system (§6.2).
-import { api, esc, nice, clock, marketName } from './api.js?v=20261124-85';
+import { api, esc, nice, clock, marketName } from './api.js?v=20261124-86';
 import {
-  imageAllowed, standardizeArea, spotId, spotIds, clampPct, vendorLabel,
+  imageAllowed, standardizeArea, spotId, spotIds, spotLabel, clampPct, vendorLabel,
   resolvePinPosition, resolvePins, fitPins, composePlanCanvas, printFloorPlan, printBoothList
-} from './floorplan.js?v=20261124-85';
+} from './floorplan.js?v=20261124-86';
 
 let view = { eventId: '' };
 const clone = data => JSON.parse(JSON.stringify(data));
@@ -249,9 +249,9 @@ export function renderFloorEditor(ctx, root, params = {}) {
       pin.style.top = y + '%';
       // §85: the tag carries the full spot ID under the name, so the
       // plan reads MR-06 / H1-02 instead of the artwork's bare number.
-      pin.innerHTML = esc(String(vendor.business || vendor.name)) + '<span class="pin-spot">' + esc(id) + '</span>';
-      pin.title = id + ' — drag to move ' + String(vendor.business || vendor.name);
-      pin.setAttribute('aria-label', 'Drag ' + id + ' ' + String(vendor.business || vendor.name) + ' to reposition');
+      pin.innerHTML = esc(String(vendor.business || vendor.name)) + '<span class="pin-spot">' + esc(spotLabel(id)) + '</span>';
+      pin.title = spotLabel(id) + ' — drag to move ' + String(vendor.business || vendor.name);
+      pin.setAttribute('aria-label', 'Drag ' + spotLabel(id) + ' ' + String(vendor.business || vendor.name) + ' to reposition');
       let drag = null;
       pin.addEventListener('pointerdown', ev => {
         if (ev.button !== 0) return;
@@ -347,7 +347,7 @@ export function renderFloorEditor(ctx, root, params = {}) {
       <section class="card fe-card">
         <h3 class="section-title first">Assign a booth</h3>
         <div class="filter-row">
-          <label class="picker-label">Booth number<select id="fe-spot" class="picker">${spotAreas.map(area => `<optgroup label="${esc(area.title)} (${area.capacity} spots)">${spotIds(area).map(id => `<option value="${esc(id)}" ${id === selected ? 'selected' : ''}>${esc(id)}${area.assignments[id]?.vendor_id ? ' · Assigned' : ' · Open'}</option>`).join('')}</optgroup>`).join('')}</select></label>
+          <label class="picker-label">Booth number<select id="fe-spot" class="picker">${spotAreas.map(area => `<optgroup label="${esc(area.title)} (${area.capacity} spots)">${spotIds(area).map(id => `<option value="${esc(id)}" ${id === selected ? 'selected' : ''}>${esc(spotLabel(id))}${area.assignments[id]?.vendor_id ? ' · Assigned' : ' · Open'}</option>`).join('')}</optgroup>`).join('')}</select></label>
           <label class="picker-label">Vendor — what they sell<select id="fe-vendor" class="picker">${choices(entry.vendor_id || '', a)}</select></label>
         </div>
         ${hampton ? '<p class="note">Choose HI-01–HI-09 for the room or HW-01 / HW-02 for the hallway. The floor-plan area changes automatically.</p>' : ''}
@@ -364,7 +364,7 @@ export function renderFloorEditor(ctx, root, params = {}) {
         <summary>View all ${a.capacity} booths (${assignedInArea} assigned)</summary>
         <div class="panel-body">${ids.map(id => {
           const v = state.vendors.find(x => String(x.id) === String(a.assignments[id]?.vendor_id || ''));
-          return `<button type="button" class="mini-row fe-booth-row" data-open-spot="${esc(id)}"><strong>${esc(id)}</strong><span>${v ? esc(v.business || v.name) : 'Open'}</span></button>`;
+          return `<button type="button" class="mini-row fe-booth-row" data-open-spot="${esc(id)}"><strong>${esc(spotLabel(id))}</strong><span>${v ? esc(v.business || v.name) : 'Open'}</span></button>`;
         }).join('')}</div>
       </details>
       <details class="card panel-details">

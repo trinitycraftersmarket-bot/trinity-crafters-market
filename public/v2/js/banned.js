@@ -6,7 +6,7 @@
 // is silent — neither creating nor re-applying a ban emails the vendor;
 // if a banned vendor asks why from the app, that question arrives by
 // email instead (the ban-inquiry action).
-import { api, esc } from './api.js?v=20261124-85';
+import { api, esc } from './api.js?v=20261124-86';
 
 export function renderBanned(ctx, root) {
   root.innerHTML = `
