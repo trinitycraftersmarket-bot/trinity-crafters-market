@@ -6,7 +6,7 @@
 // emails the vendor), same arrival slots (8:15 / 8:30 / 8:45 / 9:00 AM),
 // same 24-hour close. The vendor side of check-in already lives in the
 // v2 vendor portal (vendor.js); this is the organizer side.
-import { esc, getToken, nice } from './api.js?v=20261125-99';
+import { esc, getToken, nice } from './api.js?v=20261125-100';
 
 const timeLabel = t => ({ '08:15': '8:15 AM', '08:30': '8:30 AM', '08:45': '8:45 AM', '09:00': '9:00 AM' }[String(t || '').slice(0, 5)] || 'Not selected');
 
@@ -30,6 +30,36 @@ export function renderCheckin(ctx, root) {
 
   const slot = root.querySelector('#v2-ci-slot');
   let rows = [], eventId = '';
+  let proofCache = { eventId: '', vendors: null };
+  let proofEmail = '';
+
+  const fmtWhen = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+
+  async function drawProof() {
+    const pslot = slot.querySelector('#v2-ci-proof-slot');
+    if (!pslot) return;
+    if (!proofEmail) { pslot.innerHTML = ''; return; }
+    const match = rows.find(r => String(r.event_id) === eventId && String(r.email || '').toLowerCase() === proofEmail);
+    if (!match) { pslot.innerHTML = '<p class="note">That vendor is not on this market date.</p>'; return; }
+    if (!proofCache.vendors || proofCache.eventId !== eventId) {
+      pslot.innerHTML = '<p class="note">Loading email history…</p>';
+      try {
+        const rep = await scCall({ action: 'email-report', event_id: eventId });
+        proofCache = { eventId, vendors: rep.vendors || [] };
+      } catch (e) { pslot.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+    }
+    const v = (proofCache.vendors || []).find(x => String(x.email || '').toLowerCase() === proofEmail);
+    if (!v) { pslot.innerHTML = '<p class="note">No email history found for this vendor.</p>'; return; }
+    pslot.innerHTML = `
+      <p><strong>${esc(v.business || v.name || '')}</strong> · ${esc(v.email || '')}</p>
+      <p class="note">Emailed <strong>${v.sends.length} time${v.sends.length === 1 ? '' : 's'}</strong> to the address on file.</p>
+      ${v.sends.length ? `<div class="vendor-list">${v.sends.map(snd => `
+        <article class="card vendor">
+          <div class="contact">${esc(fmtWhen(snd.sent_at || snd.created_at))}</div>
+          <div><strong>${esc(snd.error ? 'FAILED TO SEND — ' + (snd.subject || '') : (snd.subject || ''))}</strong></div>
+          <div class="contact">${snd.opened_at ? 'Opened ✓ ' + esc(fmtWhen(snd.opened_at)) + (Number(snd.open_count) > 1 ? ' · ' + snd.open_count + ' opens' : '') : 'Not opened'}</div>
+        </article>`).join('')}</div>` : '<p class="note">No emails sent to this vendor yet.</p>'}`;
+  }
 
   const load = async () => {
     const d = await scCall(null);
@@ -131,8 +161,20 @@ export function renderCheckin(ctx, root) {
           ${r.setup_tables ? `<p class="note">Bringing <strong>${esc(r.setup_tables)} table${Number(r.setup_tables) === 1 ? '' : 's'}</strong></p>` : ''}
           ${!r.setup_arrival_time && r.checkin_open ? `<div class="vendor-actions"><button class="btn small" data-remind="${esc(r.record_id)}" ${r.email ? '' : 'disabled title="No email address is available for this vendor."'}>Send Check-In Reminder</button></div>` : ''}
         </article>`).join('') || '<div class="card empty-card">No vendors for this date.</div>'}
-      </div>`;
-    slot.querySelector('#v2-ci-date').onchange = e => { eventId = e.target.value; draw(); };
+      </div>
+      <section class="card" style="margin-top:14px">
+        <h3>📧 Email Proof</h3>
+        <p class="note">Pick a vendor on this date to see every email sent to the address on file — and whether they opened it. Same proof as the printout, without the paper.</p>
+        <label class="picker-label">Vendor<select id="v2-ci-proof-vendor" class="picker">
+          <option value="">Choose a vendor…</option>
+          ${[...new Map(selected.filter(r => r.email).map(r => [String(r.email).toLowerCase(), r])).values()].map(r => `<option value="${esc(String(r.email).toLowerCase())}" ${String(r.email).toLowerCase() === proofEmail ? 'selected' : ''}>${esc(r.business || r.name || '')}</option>`).join('')}
+        </select></label>
+        <div id="v2-ci-proof-slot"></div>
+      </section>`;
+    slot.querySelector('#v2-ci-date').onchange = e => { eventId = e.target.value; proofEmail = ''; draw(); };
+    const proofSel = slot.querySelector('#v2-ci-proof-vendor');
+    if (proofSel) proofSel.onchange = e => { proofEmail = e.target.value; drawProof(); };
+    if (proofEmail) drawProof();
     const allBtn = slot.querySelector('#v2-ci-remind-all');
     if (allBtn) allBtn.onclick = () => remindAllSheet(pending.length, allBtn);
     const tablesBtn = slot.querySelector('#v2-ci-remind-tables');
