@@ -65,7 +65,7 @@ test('§73: the attendance print composites names onto the plan pages and prints
   assert.ok(ATT.includes('composePlanCanvas(a, floorRows || [])'), 'plan pages are composited canvases, not bare layout images');
   const attPrint = PRINT.slice(PRINT.indexOf('export function printAttendance'), PRINT.indexOf('export function printExpenseReport'));
   assert.ok(attPrint.includes('size:letter portrait'), 'the attendance list prints portrait since §84 (was landscape §73–§83)');
-  assert.ok(attPrint.includes('table{min-width:0}'), 'portrait fits without the old forced min-width');
+  assert.ok(attPrint.includes('table{min-width:680px}'), '§87: the phone SCREEN view keeps readable columns (print itself still fits the portrait page — the min-width is screen-only)');
   assert.ok(PRINT.includes('legend = \'\'') && PRINT.includes('class="legend"'), 'printAttendance renders the optional legend line');
 });
 

@@ -9,11 +9,11 @@
 // (above all a failed / refused inspection) is never overwritten. Same
 // server-is-truth rule: every action is a server call, then a full re-fetch,
 // then a re-render from fresh data.
-import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261124-86';
-import { attendeeRows, eventStats } from './data.js?v=20261124-86';
-import { parseAttendeePdf } from './pdfimport.js?v=20261124-86';
-import { printAttendance } from './print.js?v=20261124-86';
-import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261124-86';
+import { api, fn, esc, money, nice, clock, marketName } from './api.js?v=20261124-87';
+import { attendeeRows, eventStats } from './data.js?v=20261124-87';
+import { parseAttendeePdf } from './pdfimport.js?v=20261124-87';
+import { printAttendance } from './print.js?v=20261124-87';
+import { imageAllowed, standardizeArea, findVendorSpot, resolvePins, composePlanCanvas, spotIds, spotLabel, spotLegend } from './floorplan.js?v=20261124-87';
 
 const INSP_LABEL = { not_inspected: 'Inspection: Pending', approved: 'Inspection: Approved', needs_correction: 'Needs correction', refused: 'Inspection: Refused' };
 const INSP_PRINT = { not_inspected: 'Not inspected', approved: 'Approved', needs_correction: 'Needs correction', refused: 'Refused' };
@@ -51,14 +51,14 @@ export function renderAttendees(ctx, root, params = {}) {
       <select id="v2-att-picker" class="picker">${events.map(e => `<option value="${esc(e.id)}" ${String(e.id) === String(event.id) ? 'selected' : ''}>${esc(nice(e.date))} — ${esc(marketName(e))}</option>`).join('')}</select>
     </label>
     <div class="search"><input id="v2-att-search" type="search" placeholder="Search business, name, email or phone…" autocomplete="off" value="${esc(view.q)}"></div>
-    <div class="vendor-list" id="v2-att-list"></div>
     <div class="vendor-actions att-tools">
       <button class="btn small" id="v2-att-csv">Export CSV</button>
       <button class="btn small" id="v2-att-import">Import attendees from PDF</button>
       <button class="btn small" id="v2-att-print">Print attendance list</button>
       <button class="btn small" id="v2-att-insp-all">✓ Approve all inspections</button>
       <button class="btn small ghost" data-go-eventday>Open Event Day for inspections &amp; check-in</button>
-    </div>`;
+    </div>
+    <div class="vendor-list" id="v2-att-list"></div>`;
 
   const rowsNow = () => attendeeRows(ctx.state.admin, event.id);
   const findRow = (id, imported) => rowsNow().find(r => String(r.id) === String(id) && r.imported === imported);

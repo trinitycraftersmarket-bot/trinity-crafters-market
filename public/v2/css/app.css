@@ -231,7 +231,7 @@ button.stat-btn:active{transform:scale(.99)}
 .select-line{margin:0;align-items:center;font-size:13.5px}
 .sheet-photo{display:block;max-width:100%;border-radius:12px;margin-top:10px}
 .amount-due{font-size:19px;white-space:nowrap}
-.att-tools{margin-top:14px}
+.att-tools{margin:14px 0}
 .section-title.first{margin-top:0}
 .invite-card{padding:16px;margin-bottom:14px}
 .vdetails{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
