@@ -478,6 +478,20 @@ ${description}`;
   }
   await audit(sql,u,'vendor table count update',{id:p.id,source:p.source,tables});return json({ok:true});
  }
+ if(action==='vendor-setup-update'&&req.method==='POST'){
+  const p=await req.json(),allowed=['08:15','08:30','08:45','09:00'];if(!allowed.includes(p.arrival_time))throw Error('Choose an available setup arrival time.');const tables=Number(p.tables);if(![1,2].includes(tables))throw Error('Choose how many tables you are bringing: 1 or 2.');
+  let row;
+  if(p.source==='imported'){
+   [row]=await sql`select i.id,e.date,e.start_time from market.imported_attendees i join market.events e on e.id=i.event_id where i.id=${p.id} and lower(trim(both ' ,' from i.email))=lower(${u.email}) and not i.cancelled and (i.setup_checkin_at is not null or i.setup_arrival_time is not null)`;if(!row)throw Error('Booking not found.');
+  }else{
+   [row]=await sql`select b.id,e.date,e.start_time from market.bookings b join market.applications a on a.id=b.application_id join market.events e on e.id=b.event_id where b.id=${p.id} and a.user_id=${u.id} and b.status in ('approved','held','paid') and (b.setup_checkin_at is not null or b.setup_arrival_time is not null)`;if(!row)throw Error('Booking not found.');
+  }
+  const [w]=await sql`select now()<(((${row.date}::date+coalesce(${row.start_time}::time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') as open`;
+  const arrivalSaved=!!w?.open;
+  if(p.source==='imported'){if(arrivalSaved)await sql`update market.imported_attendees set setup_arrival_time=${p.arrival_time},setup_tables=${tables} where id=${row.id}`;else await sql`update market.imported_attendees set setup_tables=${tables} where id=${row.id}`;}
+  else{if(arrivalSaved)await sql`update market.bookings set setup_arrival_time=${p.arrival_time},setup_tables=${tables} where id=${row.id}`;else await sql`update market.bookings set setup_tables=${tables} where id=${row.id}`;}
+  await audit(sql,u,'vendor check-in update',{id:p.id,source:p.source,arrival_time:p.arrival_time,tables,arrival_saved:arrivalSaved});return json({ok:true,arrival_saved:arrivalSaved});
+ }
  if(action==='upload-ticket'&&req.method==='POST'){
  const p=await req.json();if(!['image/jpeg','image/png','image/webp'].includes(p.type))throw Error('Choose a JPG, PNG or WebP photo.');
  if(!Number.isInteger(p.size)||p.size<12||p.size>10485760)throw Error('Each photo must be 10 MB or smaller.');

@@ -106,7 +106,7 @@ export default async req=>{
     const [dateInfo]=await sql`select to_char(${event.date}::date,'FMDay, FMMonth FMDD, YYYY') label`;
     const day=dateInfo?.label||String(event.date).slice(0,10),market=event.market_name||event.title||'Trinity Crafters Market';
     const subject='Quick update needed: how many tables are you bringing?';
-    await sql.begin(async tx=>{for(const v of rows)await queue(tx,normalizedEmail(v.email),subject,`Hi ${v.name||'Vendor'},\n\nGood news \u2014 you are already checked in online for ${market} on ${day}. We just need one more detail: how many tables are you bringing, 1 or 2?\n\nIndoor spaces are 6x9 and outdoor spaces are 10x10, so please plan your setup to fit your space.\n\nSign in and add your table count here:\nhttps://trinitylutzmarkets.com/#account\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'table count request to checked-in vendors',{event_id:String(p.event_id),count:rows.length});});
+    await sql.begin(async tx=>{for(const v of rows)await queue(tx,normalizedEmail(v.email),subject,`Hi ${v.name||'Vendor'},\n\nGood news \u2014 you are already checked in online for ${market} on ${day}. We just need one more detail: how many tables are you bringing, 1 or 2?\n\nIndoor spaces are 6x9 and outdoor spaces are 10x10, so please plan your setup to fit your space.\n\nSign in, open your booking for this market, and tap Update check-in to add it:\nhttps://trinitylutzmarkets.com/#account\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'table count request to checked-in vendors',{event_id:String(p.event_id),count:rows.length});});
     await flushMail();
     return json({ok:true,count:rows.length});
    }

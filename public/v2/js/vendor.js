@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261125-96';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261125-96';
+import { api, fn, esc, nice, money } from './api.js?v=20261125-97';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261125-97';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -71,15 +71,19 @@ function bookingCard(ctx, r) {
         </label>
         <div class="vendor-actions"><button class="btn small">Save check-in</button></div>
       </form>` : ''}
-    ${booked(r) && upcoming(r) && (r.setup_checkin_at || r.setup_arrival_time) && !r.setup_tables ? `
-      <form class="checkin-form" data-tables="${esc(r.id)}" data-source="${esc(r.source)}">
-        <label class="sheet-field">How many tables are you bringing? Indoor spaces are 6x9, outdoor spaces are 10x10.
-          <select name="tables" required><option value="">Choose</option><option value="1">1 table</option><option value="2">2 tables</option></select>
+    ${booked(r) && upcoming(r) && (r.setup_checkin_at || r.setup_arrival_time) ? `
+      <form class="checkin-form" data-update="${esc(r.id)}" data-source="${esc(r.source)}" hidden>
+        <label class="sheet-field">Setup arrival time
+          <select name="arrival_time" required>${[['08:15', '8:15 AM'], ['08:30', '8:30 AM'], ['08:45', '8:45 AM'], ['09:00', '9:00 AM']].map(([v, t]) => `<option value="${v}" ${String(r.setup_arrival_time || '').slice(0, 5) === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
         </label>
-        <div class="vendor-actions"><button class="btn small">Save table count</button></div>
+        <label class="sheet-field">How many tables are you bringing? Indoor spaces are 6x9, outdoor spaces are 10x10.
+          <select name="tables" required><option value="">Choose</option><option value="1" ${Number(r.setup_tables) === 1 ? 'selected' : ''}>1 table</option><option value="2" ${Number(r.setup_tables) === 2 ? 'selected' : ''}>2 tables</option></select>
+        </label>
+        <div class="vendor-actions"><button class="btn small">Save updates</button></div>
       </form>` : ''}
     ${moveChip(ctx, r)}
     <div class="vendor-actions">
+      ${booked(r) && upcoming(r) && (r.setup_checkin_at || r.setup_arrival_time) ? `<button type="button" class="btn small" data-update-open="${esc(r.id)}">Update check-in</button>` : ''}
       ${booked(r) && upcoming(r) ? `<button type="button" class="btn small" data-floorplan="${esc(r.id)}">🗺️ Where will you be</button>` : ''}
       ${booked(r) ? `<button type="button" class="btn small" data-move="${esc(r.id)}">Request a date change</button>` : ''}
     </div>
@@ -99,12 +103,14 @@ function wireBookingCard(ctx, root, r) {
       renderVendorBookings(ctx, root); // re-render from the fresh payload
     } catch (err) { ctx.toast(err.message, true); }
   };
-  const tform = root.querySelector(`[data-tables="${CSS.escape(r.id)}"]`);
-  if (tform) tform.onsubmit = async e => {
+  const ubtn = root.querySelector(`[data-update-open="${CSS.escape(r.id)}"]`);
+  const uform = root.querySelector(`[data-update="${CSS.escape(r.id)}"]`);
+  if (ubtn && uform) ubtn.onclick = () => { uform.hidden = !uform.hidden; };
+  if (uform) uform.onsubmit = async e => {
     e.preventDefault();
     try {
-      await api('vendor-setup-tables', { id: r.id, source: r.source, tables: new FormData(tform).get('tables') });
-      ctx.toast('Table count saved.');
+      const v = await api('vendor-setup-update', { id: r.id, source: r.source, arrival_time: new FormData(uform).get('arrival_time'), tables: new FormData(uform).get('tables') });
+      ctx.toast(v.arrival_saved === false ? 'Table count saved. Arrival time is locked — online check-in has closed for this market.' : 'Check-in updated.');
       await ctx.refreshData();
       renderVendorBookings(ctx, root);
     } catch (err) { ctx.toast(err.message, true); }
