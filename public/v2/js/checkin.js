@@ -6,7 +6,7 @@
 // emails the vendor), same arrival slots (8:15 / 8:30 / 8:45 / 9:00 AM),
 // same 24-hour close. The vendor side of check-in already lives in the
 // v2 vendor portal (vendor.js); this is the organizer side.
-import { esc, getToken, nice } from './api.js?v=20261125-106';
+import { esc, getToken, nice } from './api.js?v=20261125-107';
 
 const timeLabel = t => ({ '08:15': '8:15 AM', '08:30': '8:30 AM', '08:45': '8:45 AM', '09:00': '9:00 AM' }[String(t || '').slice(0, 5)] || 'Not selected');
 
@@ -171,7 +171,7 @@ export function renderCheckin(ctx, root) {
           </div>
           ${r.setup_checkin_at ? `<p class="note">Submitted ${esc(new Date(r.setup_checkin_at).toLocaleString('en-US', { timeZone: 'America/New_York' }))}</p>` : ''}
           ${r.setup_tables ? `<p class="note">Bringing <strong>${esc(r.setup_tables)} table${Number(r.setup_tables) === 1 ? '' : 's'}</strong></p>` : ''}
-          ${!r.setup_arrival_time && r.checkin_open ? `<div class="vendor-actions"><button class="btn small" data-remind="${esc(r.record_id)}" ${r.email ? '' : 'disabled title="No email address is available for this vendor."'}>Send Check-In Reminder</button></div>` : ''}
+          ${r.email ? `<div class="vendor-actions">${!r.setup_arrival_time && r.checkin_open ? `<button class="btn small" data-remind="${esc(r.record_id)}">Send Check-In Reminder</button>` : ''}<button class="btn small" data-resend-setup="${esc(r.record_id)}" data-source="${esc(r.source || 'booking')}">↻ Resend setup email</button></div>` : ''}
         </article>`).join('') || '<div class="card empty-card">No vendors for this date.</div>'}
       </div>
       <section class="card" style="margin-top:14px">
@@ -194,6 +194,16 @@ export function renderCheckin(ctx, root) {
     slot.querySelectorAll('[data-remind]').forEach(btn => btn.onclick = () => {
       const r = selected.find(x => String(x.record_id) === btn.dataset.remind);
       if (r) remindSheet(r, btn);
+    });
+    slot.querySelectorAll('[data-resend-setup]').forEach(btn => btn.onclick = async () => {
+      const r = selected.find(x => String(x.record_id) === btn.dataset.resendSetup);
+      if (!r) return;
+      btn.disabled = true;
+      try {
+        await scCall({ action: 'resend-setup', record_id: r.record_id, source: r.source || 'booking' });
+        ctx.toast('Setup email resent to ' + (r.business || r.name) + '.');
+      } catch (e) { ctx.toast(e.message, true); }
+      btn.disabled = false;
     });
   }
 
