@@ -5,9 +5,9 @@
 // `manager` payload does not carry (prices, payment internals,
 // inspection on booking rows) are not rendered at all. Everything
 // renders from the manager payload; every mutation re-fetches it.
-import { api, fn, esc, nice } from './api.js?v=20261125-101';
-import { managerAttendeeRows } from './data.js?v=20261125-101';
-import { renderSavedFloorPlan } from './floorplan.js?v=20261125-101';
+import { api, fn, esc, nice } from './api.js?v=20261125-102';
+import { managerAttendeeRows } from './data.js?v=20261125-102';
+import { renderSavedFloorPlan } from './floorplan.js?v=20261125-102';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const fmtWhen = v => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
