@@ -78,7 +78,7 @@ export async function queue(tx,to,subject,body,htmlBody=null,attachments=null){
 export async function flushMail(){
  if(!process.env.RESEND_API_KEY||!process.env.MAIL_FROM)return {sent:0,failed:0};
  await ensureOutboxTracking(db());
- let sent=0,failed=0;
+ let sent=0,failed=0,paced=false;
  for(let batch=0;batch<25;batch++){
   let processed=0;
   // §53: the batch transaction is guarded end to end. One SQL-level
@@ -103,7 +103,18 @@ export async function flushMail(){
      let html;
      if(r.html_body){html=/<\/body>/i.test(r.html_body)?r.html_body.replace(/<\/body>/i,pixel+'</body>'):r.html_body+pixel;}
      else{html='<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1a1a1a;max-width:640px">'+String(r.body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')+'</div>'+pixel;}
-     const res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body,...(html?{html}:{}),...(attachments.length?{attachments}:{})}),signal:AbortSignal.timeout(10000)});
+     // §111: Resend caps the account at 10 requests/second — a mass blast
+     // (Remind All) fired faster than that and individual sends bounced
+     // with 429s (Chase Life Designs, Nov 25, both reminder rounds).
+     // Pace every send after the first, and retry a 429 in place with
+     // backoff before the row is stamped failed.
+     if(paced)await new Promise(s2=>setTimeout(s2,250)); paced=true;
+     let res=null;
+     for(let attempt=0;;attempt++){
+      res=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json','Idempotency-Key':r.id},body:JSON.stringify({from:process.env.MAIL_FROM,reply_to:"trinitycraftersmarket@gmail.com",to:[r.recipient],subject:r.subject,text:r.body,...(html?{html}:{}),...(attachments.length?{attachments}:{})}),signal:AbortSignal.timeout(10000)});
+      if(res.status!==429||attempt>=2)break;
+      await new Promise(s2=>setTimeout(s2,1500*(attempt+1)));
+     }
      if(!res.ok){const info=await res.json().catch(()=>({}));const detail=String(info.message||info.error||info.name||'').slice(0,300);throw Error('Email delivery failed: '+res.status+(detail?' — '+detail:''));}
      await tx`update market.outbox set sent_at=now(),error=null where id=${r.id}`;sent++;
     }catch(e){await tx`update market.outbox set error=${e.message} where id=${r.id}`;failed++;}
