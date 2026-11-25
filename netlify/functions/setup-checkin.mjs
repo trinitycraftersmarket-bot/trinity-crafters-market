@@ -3,7 +3,7 @@ import {db,identity,audit,queue,flushMail} from '../../server/core.mjs';
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 const ARRIVALS=new Set(['08:15','08:30','08:45','09:00']);
 const normalizedEmail=s=>String(s||'').trim().toLowerCase().replace(/[;,]+$/,'').trim();
-const hamptonNote=loc=>/hampton/i.test(String(loc||''))?'\n\nFor Hampton Inn events: this market has just 9 indoor spots. Outside vendors do not normally move indoors, but if an indoor spot opens up because an indoor vendor does not complete check-in, it will go to a checked-in outside vendor. Outside spots are first come, first served — and outside vendors who do not complete online check-in will be assumed not coming.':'';
+const hamptonNote=loc=>/hampton/i.test(String(loc||''))?'\n\nFor Hampton Inn events: this market has just 9 indoor spots. Indoor spots are filled first from the vendors who completed online check-in. Outside vendors do not normally move indoors, but if an indoor spot is still open, it will go to a checked-in outside vendor, first come, first served. Outside spots are also first come, first served in check-in order. And for everyone: no vendors are admitted after 9:00 AM — arrive after 9:00 AM and you will likely lose your spot.':'';
 
 export default async req=>{
  try{

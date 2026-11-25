@@ -1385,7 +1385,7 @@ trinitycraftersmarket@gmail.com`;
   const day=marketDateLabel(v.date);
   const link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';
   const subject='Online check-in is required — Trinity Crafters Market';
-  const hampton=/hampton/i.test(v.location||'')?'\n\nFor Hampton Inn events: this market has just 9 indoor spots. Outside vendors do not normally move indoors, but if an indoor spot opens up because an indoor vendor does not complete check-in, it will go to a checked-in outside vendor. Outside spots are first come, first served — and outside vendors who do not complete online check-in will be assumed not coming.':'';
+  const hampton=/hampton/i.test(v.location||'')?'\n\nFor Hampton Inn events: this market has just 9 indoor spots. Indoor spots are filled first from the vendors who completed online check-in. Outside vendors do not normally move indoors, but if an indoor spot is still open, it will go to a checked-in outside vendor, first come, first served. Outside spots are also first come, first served in check-in order. And for everyone: no vendors are admitted after 9:00 AM — arrive after 9:00 AM and you will likely lose your spot.':'';
   const body=`Hi ${v.name||'Vendor'},
 
 This is a reminder that online check-in is required for ${day}.
