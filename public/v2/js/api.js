@@ -11,7 +11,7 @@
 // the device so the user stays signed in across app restarts and
 // windows. api.js only re-exports its API; existing importers of
 // getToken/setToken/clearToken/TOKEN_KEY are unchanged.
-import { getToken, setToken, clearToken, TOKEN_KEY, getRefreshToken, setRefreshToken, isPersistentSession, setPersistentSession, tokenExpiresAt } from './token.js?v=20261125-97';
+import { getToken, setToken, clearToken, TOKEN_KEY, getRefreshToken, setRefreshToken, isPersistentSession, setPersistentSession, tokenExpiresAt } from './token.js?v=20261125-98';
 export { getToken, setToken, clearToken, TOKEN_KEY, getRefreshToken, setRefreshToken, isPersistentSession, setPersistentSession, tokenExpiresAt };
 
 // --- formatting helpers (ported semantics from the legacy UI) -------------

@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261125-97';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261125-97';
+import { api, fn, esc, nice, money } from './api.js?v=20261125-98';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261125-98';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -46,6 +46,7 @@ function moveChip(ctx, r) {
 
 function bookingCard(ctx, r) {
   const dl = offerDeadline(r);
+  const isOut = /out/i.test(String(r.space || ''));
   return `<article class="card vendor" id="v2-booking-${esc(r.id)}">
     <div class="vendor-top"><div>
       <h3>${esc(nice(r.date))}</h3>
@@ -66,7 +67,7 @@ function bookingCard(ctx, r) {
         <label class="sheet-field">Choose your setup arrival time
           <select name="arrival_time" required><option value="">Choose arrival time</option><option>08:15</option><option>08:30</option><option>08:45</option><option>09:00</option></select>
         </label>
-        <label class="sheet-field">How many tables are you bringing?
+        <label class="sheet-field">How many tables are you bringing?${isOut ? '' : ' Indoor spaces are 6x9 and that size is strictly enforced.'}
           <select name="tables" required><option value="">Choose</option><option value="1">1 table</option><option value="2">2 tables</option></select>
         </label>
         <div class="vendor-actions"><button class="btn small">Save check-in</button></div>
@@ -76,9 +77,9 @@ function bookingCard(ctx, r) {
         <label class="sheet-field">Setup arrival time
           <select name="arrival_time" required>${[['08:15', '8:15 AM'], ['08:30', '8:30 AM'], ['08:45', '8:45 AM'], ['09:00', '9:00 AM']].map(([v, t]) => `<option value="${v}" ${String(r.setup_arrival_time || '').slice(0, 5) === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
         </label>
-        <label class="sheet-field">How many tables are you bringing? Indoor spaces are 6x9, outdoor spaces are 10x10.
+        ${isOut ? '' : `<label class="sheet-field">How many tables are you bringing? Indoor spaces are 6x9 and that size is strictly enforced.
           <select name="tables" required><option value="">Choose</option><option value="1" ${Number(r.setup_tables) === 1 ? 'selected' : ''}>1 table</option><option value="2" ${Number(r.setup_tables) === 2 ? 'selected' : ''}>2 tables</option></select>
-        </label>
+        </label>`}
         <div class="vendor-actions"><button class="btn small">Save updates</button></div>
       </form>` : ''}
     ${moveChip(ctx, r)}
@@ -110,7 +111,7 @@ function wireBookingCard(ctx, root, r) {
     e.preventDefault();
     try {
       const v = await api('vendor-setup-update', { id: r.id, source: r.source, arrival_time: new FormData(uform).get('arrival_time'), tables: new FormData(uform).get('tables') });
-      ctx.toast(v.arrival_saved === false ? 'Table count saved. Arrival time is locked — online check-in has closed for this market.' : 'Check-in updated.');
+      ctx.toast(v.arrival_saved === false ? 'Saved. Arrival time is locked — online check-in has closed for this market.' : 'Check-in updated.');
       await ctx.refreshData();
       renderVendorBookings(ctx, root);
     } catch (err) { ctx.toast(err.message, true); }

@@ -6,7 +6,7 @@
 // emails the vendor), same arrival slots (8:15 / 8:30 / 8:45 / 9:00 AM),
 // same 24-hour close. The vendor side of check-in already lives in the
 // v2 vendor portal (vendor.js); this is the organizer side.
-import { esc, getToken, nice } from './api.js?v=20261125-97';
+import { esc, getToken, nice } from './api.js?v=20261125-98';
 
 const timeLabel = t => ({ '08:15': '8:15 AM', '08:30': '8:30 AM', '08:45': '8:45 AM', '09:00': '9:00 AM' }[String(t || '').slice(0, 5)] || 'Not selected');
 
@@ -114,7 +114,7 @@ export function renderCheckin(ctx, root) {
     const selected = rows.filter(r => String(r.event_id) === eventId);
     const checked = selected.filter(r => r.setup_arrival_time).length;
     const pending = selected.filter(r => !r.setup_arrival_time && r.checkin_open);
-    const missingTables = selected.filter(r => (r.setup_checkin_at || r.setup_arrival_time) && !r.setup_tables);
+    const missingTables = selected.filter(r => (r.setup_checkin_at || r.setup_arrival_time) && !r.setup_tables && !/out/i.test(String(r.space || '')));
     slot.innerHTML = `
       <label class="picker-label">Market date<select id="v2-ci-date" class="picker">${dates.map(r => `<option value="${esc(r.event_id)}" ${String(r.event_id) === eventId ? 'selected' : ''}>${esc(nice(r.date))} — ${esc(r.market_name || r.title || 'Crafters Market')}</option>`).join('')}</select></label>
       <p class="note"><strong>${checked} of ${selected.length}</strong> vendors checked in online.</p>
