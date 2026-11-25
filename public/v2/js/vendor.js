@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261125-93';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261125-93';
+import { api, fn, esc, nice, money } from './api.js?v=20261125-94';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261125-94';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -320,7 +320,7 @@ export function renderVendorApply(ctx, root) {
     <h2 class="display">Vendor application</h2>
     <p class="lede">One application can cover several market dates. Applying as <strong>${esc(ctx.state.user.email)}</strong>.</p>
     <p class="apply-banner"><strong>We do not hold space without payment</strong> — please only select dates you can pay for.</p>
-    <p class="apply-banner"><strong>NO VENDORS ARE ADMITTED AFTER 9:00 AM</strong> — on market day, arrive after 9:00 AM and you will likely lose your spot. This applies to every event.</p>
+    <p class="apply-banner"><strong>NO VENDORS ARE ADMITTED AFTER 9:00 AM</strong> — on market day, arrive after 9:00 AM and you will likely lose your spot, with absolutely no refund. This applies to every event.</p>
     <form id="v2-apply" novalidate>
       <section class="card">
         <h3 class="section-title">Your details</h3>
