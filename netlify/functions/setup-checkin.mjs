@@ -77,6 +77,24 @@ export default async req=>{
     return json({ok:true,recipient,sent_at:delivery.sent_at});
    }
 
+   if(p.action==='remind-all'){
+    if(!u.admin&&!u.manager)return json({error:'Organizer access required.'},403);
+    if(!p.event_id)throw Error('Choose a market date.');
+    const [event]=await sql`select e.id,e.date,e.start_time,e.title,l.name location,l.market_name from market.events e join market.locations l on l.id=e.location_id where e.id=${p.event_id}`;
+    if(!event)return json({error:'Market date not found.'},404);
+    const [window]=await sql`select now()<(((${event.date}::date+coalesce(${event.start_time}::time,time '10:00')) at time zone 'America/New_York')-interval '24 hours') as open`;
+    if(!window?.open)throw Error('Online setup check-in is already closed for this market.');
+    const regular=await sql`select a.name,a.email from market.bookings b join market.applications a on a.id=b.application_id where b.event_id=${p.event_id} and b.status in ('approved','held','paid') and b.setup_checkin_at is null and nullif(trim(a.email),'') is not null`;
+    const imported=await sql`select i.name,i.email from market.imported_attendees i where i.event_id=${p.event_id} and not i.cancelled and i.payment_status='paid' and i.setup_checkin_at is null and nullif(trim(i.email),'') is not null`;
+    const seen=new Set(),rows=[...regular,...imported].filter(x=>{const k=normalizedEmail(x.email);if(!k||seen.has(k))return false;seen.add(k);return true;});
+    const [dateInfo]=await sql`select to_char(${event.date}::date,'FMDay, FMMonth FMDD, YYYY') label`;
+    const day=dateInfo?.label||String(event.date).slice(0,10),market=event.market_name||event.title||'Trinity Crafters Market';
+    const subject='Online check-in required, final plan sent Friday';
+    await sql.begin(async tx=>{for(const v of rows)await queue(tx,normalizedEmail(v.email),subject,`Hi ${v.name||'Vendor'},\n\nThis is a reminder that online check-in is required for ${day}.\n\nPlease sign in and choose your planned setup arrival time:\nhttps://trinitylutzmarkets.com/#account\n\nMarket: ${market}\nDate: ${day}\nLocation: ${event.location}\n\nAll booth spots are tentative. Booth assignments are finalized from the completed check-ins, and the main room will be filled first. If you do not complete online check-in, you risk losing your assigned spot — we will fill the main room from the vendors who have checked in, and vendors who have not checked in will be placed in whatever spaces remain. Final floor plan assignments will be sent Friday.\n\nIf you have already completed online check-in since this reminder was prepared, no further action is needed.\n\nThank you,\nTrinity Crafters Market\ntrinitycraftersmarket@gmail.com`);await audit(tx,u,'online check-in mass reminder',{event_id:String(p.event_id),count:rows.length});});
+    await flushMail();
+    return json({ok:true,count:rows.length});
+   }
+
    const arrival=String(p.arrival_time||'').slice(0,5);
    if(!recordId||!ARRIVALS.has(arrival))throw Error('Choose an available setup arrival time.');
    const tables=Number(p.tables);if(![1,2].includes(tables))throw Error('Choose how many tables you are bringing: 1 or 2.');
