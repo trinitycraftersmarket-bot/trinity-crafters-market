@@ -1,1 +1,14 @@
-{"android":{"backgroundColor":"#123f38"},"appId":"com.trinitylutzmarkets.app","appName":"Trinity Crafters Market","backgroundColor":"#123f38","server":{"androidScheme":"https","cleartext":false,"url":"https://trinitylutzmarkets.com"},"webDir":"app-shell"}
+{
+  "android": {
+    "backgroundColor": "#ffffff"
+  },
+  "appId": "com.trinitylutzmarkets.app",
+  "appName": "Trinity Crafters Market",
+  "backgroundColor": "#ffffff",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false,
+    "url": "https://trinitylutzmarkets.com"
+  },
+  "webDir": "app-shell"
+}

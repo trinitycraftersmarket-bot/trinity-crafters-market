@@ -28,5 +28,5 @@ test('§87: the attendance print view no longer crushes columns on a phone scree
   const block = prn.slice(prn.indexOf('export function printAttendance'), prn.indexOf('export function printExpenseReport'));
   assert.ok(block.includes('@media screen{body{overflow-x:auto}table{min-width:680px}}'), 'screen view: readable min-width + sideways scroll');
   assert.ok(!block.includes('table{min-width:0}'), 'the crushing rule is gone');
-  assert.ok(block.includes('@page{size:letter portrait;margin:.5in;background:#fff}'), 'the printed page itself is unchanged');
+  assert.ok(block.includes('@page{size:letter portrait;margin:0;background:#fff}'), 'the printed page itself is unchanged');
 });

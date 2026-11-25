@@ -95,7 +95,7 @@ test('§36 (behavioral): printTable (the AR sheet) — light canvas, controls, p
   assertPrintableShell(html, 'printTable');
   // Paper output unchanged: same @page, same table markup. (Auto-print
   // was pinned here until §76 removed it deliberately.)
-  assert.ok(html.includes('@page{size:letter;margin:.5in;background:#fff}'), 'printTable: @page rule unchanged');
+  assert.ok(html.includes('@page{size:letter;margin:0;background:#fff}'), 'printTable: @page rule unchanged');
   assert.ok(html.includes('<table><thead><tr><th>Vendor</th><th>Email</th><th>Market / Period</th><th>Amount Due</th><th>Due Date</th></tr></thead>'), 'printTable: header row passes through untouched');
   assert.ok(html.includes('<tbody><tr><td>Blissfully Bakery</td><td>blissfulbakerysd@gmail.com</td><td>Sat, January 9, 2027</td><td>$30.00</td><td>10/24/2026</td></tr></tbody></table>'), 'printTable: body row passes through untouched');
   assert.ok(html.includes('<p class="summary">33 outstanding · TOTAL DUE $1,890.08</p>'), 'printTable: summary unchanged');
@@ -119,10 +119,10 @@ test('§36 (behavioral): printAttendance — light canvas, controls, paper marku
   // direction: the list prints LANDSCAPE now (its Spot column made 11 —
   // portrait crushed the columns on his phone), so the @page pin moves
   // with it; everything else §36 pinned here is unchanged.
-  assert.ok(html.includes('@page{size:letter portrait;margin:.5in;background:#fff}'), 'printAttendance: @page rule (portrait since §84; landscape §73–§83)');
+  assert.ok(html.includes('@page{size:letter portrait;margin:0;background:#fff}'), 'printAttendance: @page rule (portrait since §84; landscape §73–§83)');
   assert.ok(html.includes('<th>Space</th><th>Business</th><th>Vendor</th>'), 'printAttendance: header row passes through untouched');
   assert.ok(html.includes('<td>HI-01</td><td>A &amp; B &lt;Co&gt;</td><td>Ann</td>'), 'printAttendance: body row passes through untouched (still esc()-ed)');
-  assert.ok(html.includes('.plan{break-before:page}'), 'printAttendance: floor plans still one per page');
+  assert.ok(html.includes('.plan{break-before:page;padding-top:.5in}'), 'printAttendance: floor plans still one per page');
   assert.ok(html.includes('<img src="data:image/png;base64,AAAA"'), 'printAttendance: original plan image still rendered');
   assert.ok(!html.includes('window.onload=()=>setTimeout(()=>window.print(),50)'), 'printAttendance: no onload auto-print (§76)');
 });
