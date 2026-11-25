@@ -5,8 +5,8 @@
 // from fresh server payloads (mine / move-requests mine / vendor-credit
 // mine / public / vendor-profile get), and every mutation re-fetches
 // before re-rendering — no optimistic local copies.
-import { api, fn, esc, nice, money } from './api.js?v=20261125-94';
-import { renderVendorFloorPlan } from './floorplan.js?v=20261125-94';
+import { api, fn, esc, nice, money } from './api.js?v=20261125-95';
+import { renderVendorFloorPlan } from './floorplan.js?v=20261125-95';
 
 const todayStr = () => new Date().toLocaleDateString('en-CA');
 const upcoming = r => String(r.date || '') >= todayStr();
@@ -71,6 +71,13 @@ function bookingCard(ctx, r) {
         </label>
         <div class="vendor-actions"><button class="btn small">Save check-in</button></div>
       </form>` : ''}
+    ${booked(r) && upcoming(r) && (r.setup_checkin_at || r.setup_arrival_time) && !r.setup_tables ? `
+      <form class="checkin-form" data-tables="${esc(r.id)}" data-source="${esc(r.source)}">
+        <label class="sheet-field">How many tables are you bringing? Indoor spaces are 6x9, outdoor spaces are 10x10.
+          <select name="tables" required><option value="">Choose</option><option value="1">1 table</option><option value="2">2 tables</option></select>
+        </label>
+        <div class="vendor-actions"><button class="btn small">Save table count</button></div>
+      </form>` : ''}
     ${moveChip(ctx, r)}
     <div class="vendor-actions">
       ${booked(r) && upcoming(r) ? `<button type="button" class="btn small" data-floorplan="${esc(r.id)}">🗺️ Where will you be</button>` : ''}
@@ -90,6 +97,16 @@ function wireBookingCard(ctx, root, r) {
       ctx.toast('Check-in saved.');
       await ctx.refreshData();
       renderVendorBookings(ctx, root); // re-render from the fresh payload
+    } catch (err) { ctx.toast(err.message, true); }
+  };
+  const tform = root.querySelector(`[data-tables="${CSS.escape(r.id)}"]`);
+  if (tform) tform.onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await api('vendor-setup-tables', { id: r.id, source: r.source, tables: new FormData(tform).get('tables') });
+      ctx.toast('Table count saved.');
+      await ctx.refreshData();
+      renderVendorBookings(ctx, root);
     } catch (err) { ctx.toast(err.message, true); }
   };
 }

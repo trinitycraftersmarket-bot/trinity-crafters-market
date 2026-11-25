@@ -467,6 +467,17 @@ ${description}`;
   }
   await audit(sql,u,'vendor online check-in',{id:p.id,source:p.source,arrival_time:p.arrival_time,tables});return json({ok:true});
  }
+ if(action==='vendor-setup-tables'&&req.method==='POST'){
+  const p=await req.json(),tables=Number(p.tables);if(![1,2].includes(tables))throw Error('Choose how many tables you are bringing: 1 or 2.');
+  if(p.source==='imported'){
+   const [x]=await sql`select i.id from market.imported_attendees i where i.id=${p.id} and lower(trim(both ' ,' from i.email))=lower(${u.email}) and not i.cancelled and (i.setup_checkin_at is not null or i.setup_arrival_time is not null)`;if(!x)throw Error('Booking not found.');
+   await sql`update market.imported_attendees set setup_tables=${tables} where id=${x.id}`;
+  }else{
+   const [x]=await sql`select b.id from market.bookings b join market.applications a on a.id=b.application_id where b.id=${p.id} and a.user_id=${u.id} and b.status in ('approved','held','paid') and (b.setup_checkin_at is not null or b.setup_arrival_time is not null)`;if(!x)throw Error('Booking not found.');
+   await sql`update market.bookings set setup_tables=${tables} where id=${x.id}`;
+  }
+  await audit(sql,u,'vendor table count update',{id:p.id,source:p.source,tables});return json({ok:true});
+ }
  if(action==='upload-ticket'&&req.method==='POST'){
  const p=await req.json();if(!['image/jpeg','image/png','image/webp'].includes(p.type))throw Error('Choose a JPG, PNG or WebP photo.');
  if(!Number.isInteger(p.size)||p.size<12||p.size>10485760)throw Error('Each photo must be 10 MB or smaller.');
