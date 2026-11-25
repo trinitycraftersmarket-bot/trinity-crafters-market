@@ -1384,10 +1384,10 @@ trinitycraftersmarket@gmail.com`;
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('This vendor does not have a valid email address on file.');
   const day=marketDateLabel(v.date);
   const link=(process.env.SITE_URL||'https://trinitylutzmarkets.com')+'/#account';
-  const subject='Reminder: complete your online check-in — Trinity Crafters Market';
+  const subject='Online check-in is required — Trinity Crafters Market';
   const body=`Hi ${v.name||'Vendor'},
 
-This is a reminder to complete your online check-in for ${day}.
+This is a reminder that online check-in is required for ${day}.
 
 Please sign in and choose your planned setup arrival time:
 ${link}
@@ -1395,6 +1395,8 @@ ${link}
 Market: ${v.market_name||v.title||'Trinity Crafters Market'}
 Date: ${day}
 Location: ${v.location||''}
+
+All booth spots are tentative. Booth assignments are finalized from the completed check-ins, and the main room will be filled first. If you do not complete online check-in, you risk losing your assigned spot — we will fill the main room from the vendors who have checked in, and vendors who have not checked in will be placed in whatever spaces remain.
 
 If you have already completed online check-in since this reminder was prepared, no further action is needed.
 
