@@ -6,7 +6,7 @@
 // vendors are excluded from a Market Date email server-side. Past sends
 // double as templates: "Use again" loads a previous subject + body into
 // the composer. Sending re-fetches the history, per the state rule.
-import { fnq, esc, nice } from './api.js?v=20261125-107';
+import { fnq, esc, nice, todayKey } from './api.js?v=20261126-108';
 
 const FLYER_MAX_BYTES = 10 * 1024 * 1024; // §57 — mirrors server/flyer.mjs
 
@@ -62,6 +62,12 @@ export function renderComms(ctx, root) {
       box.innerHTML = `<p class="note flag-note"><strong>Vendor Communications couldn't load.</strong><br>${esc(e.message)}</p>`;
       return;
     }
+    // §114 (Scott, Nov 26, 2026): the Market date picker offers only today
+    // and future market dates — past dates are removed from this email
+    // flow's list. The filter runs on e.date (YYYY-MM-DD) against
+    // todayKey() (today in America/New_York); the server order (newest
+    // first) and the option labels are unchanged. The events endpoint
+    // itself is untouched: other screens keep the full list.
     box.innerHTML = `
       <form id="v2-comms-form">
         <div class="sheet-grid">
@@ -69,7 +75,7 @@ export function renderComms(ctx, root) {
             <select id="comm-mode"><option value="event">Market Date</option><option value="all">All Vendors</option></select>
           </label>
           <label class="sheet-field" id="comm-event-wrap">Market date
-            <select id="comm-event">${(events || []).map(e => `<option value="${esc(e.id)}">${esc(nice(e.date))} — ${esc(e.market_name || e.title || '')} — ${esc(e.location || '')}</option>`).join('')}</select>
+            <select id="comm-event">${(events || []).filter(e => String(e.date || '').slice(0, 10) >= todayKey()).map(e => `<option value="${esc(e.id)}">${esc(nice(e.date))} — ${esc(e.market_name || e.title || '')} — ${esc(e.location || '')}</option>`).join('')}</select>
           </label>
         </div>
         <div class="note" id="comm-preview">Choose recipients to preview the list.</div>

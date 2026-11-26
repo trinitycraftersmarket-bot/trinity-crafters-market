@@ -3,5 +3,5 @@
 // public/v2 carries ?v=<VERSION>; bump this one value and the matching
 // literals in index.html / module imports together — tests/v2-frontend
 // verifies they agree.
-export const VERSION = '20261125-107';
+export const VERSION = '20261126-108';
 export const STAGE = 'Stage 3b';
